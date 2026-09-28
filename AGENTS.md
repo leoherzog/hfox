@@ -31,6 +31,7 @@ uv run ruff check .      # lint
 uv run ruff check --fix .# autofix imports/format
 uv build                 # build sdist + wheel into dist/
 uvx --from . hfox ...    # smoke-test the packaged entry point (simulates `uvx hfox`)
+uv run Docs/sync.py      # refresh Docs/ from HappyFox's REST API help articles
 ```
 
 Use the `python -m pytest` module form rather than bare `uv run pytest`: it is the
