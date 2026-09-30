@@ -5,7 +5,7 @@ from __future__ import annotations
 import typer
 
 from ..core.errors import ValidationError
-from ._util import compact, confirm, parse_json, require_nonblank, split_csv_ints
+from ._util import compact, confirm, filter_help, parse_json, require_nonblank, split_csv_ints
 from .cf import CF_HELP, CF_JSON_HELP, parse_asset_cf, parse_cf_json
 from .context import get_ctx
 
@@ -13,6 +13,8 @@ app = typer.Typer(no_args_is_help=True, help="Manage assets, asset types, and as
 
 #: Documented limit on an asset name.
 MAX_NAME_LENGTH = 200
+
+_FILTER_NAME_HELP = filter_help("name", paged=True)
 
 _NEW_CONTACT_HELP = (
     "JSON array of new contacts to create and link; needs Manage all Contacts permission."
@@ -66,11 +68,12 @@ def list_assets(
     ),
     page: int = typer.Option(1, "--page", min=1, help="Page number to fetch."),
     size: int = typer.Option(10, "--size", min=1, max=50, help="Records per page."),
+    name: str = typer.Option(None, "--name", help=_FILTER_NAME_HELP),
 ) -> None:
     """List assets of one asset type."""
     obj = get_ctx(ctx)
     params = compact({"asset_type": asset_type, "size": size, "page": page})
-    body = obj.paginate("assets/", params=params)
+    body = obj.paginate("assets/", params=params, filters={"name": name})
     obj.render_list(body)
 
 
@@ -198,10 +201,13 @@ types = typer.Typer(no_args_is_help=True, help="Read asset types.")
 
 
 @types.command("list")
-def list_asset_types(ctx: typer.Context) -> None:
+def list_asset_types(
+    ctx: typer.Context,
+    name: str = typer.Option(None, "--name", help=_FILTER_NAME_HELP),
+) -> None:
     """List asset types."""
     obj = get_ctx(ctx)
-    body = obj.paginate("asset_types/")
+    body = obj.paginate("asset_types/", filters={"name": name})
     obj.render_list(body)
 
 
@@ -233,11 +239,12 @@ def list_asset_custom_fields(
     ),
     page: int = typer.Option(1, "--page", min=1, help="Page number to fetch."),
     size: int = typer.Option(10, "--size", min=1, max=50, help="Records per page."),
+    name: str = typer.Option(None, "--name", help=_FILTER_NAME_HELP),
 ) -> None:
     """List asset custom field definitions for one asset type."""
     obj = get_ctx(ctx)
     params = compact({"asset_type": asset_type, "size": size, "page": page})
-    body = obj.paginate("asset_custom_fields/", params=params)
+    body = obj.paginate("asset_custom_fields/", params=params, filters={"name": name})
     obj.render_list(body)
 
 

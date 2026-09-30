@@ -56,6 +56,15 @@ def test_validation_failure_exit_code_exactly_3_and_json_on_stdout():
     assert "exit_code" not in proc.stderr
 
 
+def test_local_filter_without_page_all_exits_3():
+    proc = run_app(["--dry-run", "assets", "list", "--name", "x"])
+    assert proc.returncode == 3
+    payload = json.loads(proc.stdout)
+    assert payload["exit_code"] == 3
+    hint = "global --page-all before the resource (hfox --page-all <resource> ...)"
+    assert hint in payload["error"]
+
+
 def test_missing_required_staff_id_exits_3():
     env = {k: v for k, v in ENV.items() if k != "HFOX_STAFF_ID"}
     proc = run_app(

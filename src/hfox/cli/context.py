@@ -13,6 +13,7 @@ from ..core.client import HappyFoxClient, first_page_params, request_url
 from ..core.config import Config
 from ..core.errors import HfoxError, ValidationError
 from . import output
+from ._util import PAGE_ALL_PLACEMENT, filter_needles, filter_rows
 from .output import OutputFormat
 
 
@@ -97,12 +98,22 @@ class AppContext:
         *,
         params: dict[str, Any] | None = None,
         root_key: str = "data",
+        filters: dict[str, str | None] | None = None,
     ) -> Any:
         """Fetch a listing.
 
         --page-all in JSON streams one NDJSON page per line, then exits; in other
         formats it returns the flat record list. Otherwise returns the single page.
+        `filters` keep matching rows on every page (see filter_rows) and require --page-all.
         """
+        filters = filters or {}
+        needles = filter_needles(filters)
+        if needles and not self.page_all:
+            flags = ", ".join(f"--{field.replace('_', '-')}" for field in needles)
+            raise ValidationError(
+                f"{flags} filters locally and needs the global {PAGE_ALL_PLACEMENT} "
+                "to search every page."
+            )
         if self.dry_run:
             if self.page_all:
                 params = first_page_params(params)
@@ -118,10 +129,12 @@ class AppContext:
             "on_truncated": _warn_truncated,
         }
         if self.fmt is not OutputFormat.JSON:
-            return list(self.client.paginate(path, **walk))
+            return filter_rows(list(self.client.paginate(path, **walk)), filters)
         try:
             for page in self.client.paginate_pages(path, **walk):
-                output.render_ndjson_line(page)
+                output.render_ndjson_line(
+                    filter_rows(page, filters, root_key=root_key, paged=True)
+                )
         except Exception as exc:
             # A multi-line error object would break line-oriented NDJSON readers.
             err = as_hfox_error(exc)

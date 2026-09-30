@@ -334,6 +334,50 @@ def test_groups_list_bare_list_body(mock_api):
     assert captured[0].url.path.endswith("/contact_groups/")
 
 
+# Docs/1092 section 8 example response.
+_DOC_GROUPS = [
+    {
+        "tagged_domains": "example.com",
+        "id": 1,
+        "name": "test group",
+        "description": "example description",
+    },
+    {"tagged_domains": "", "id": 2, "name": "test1 group", "description": ""},
+]
+
+
+def test_groups_list_name_filter_is_local(mock_api):
+    captured = mock_api(lambda req: httpx.Response(200, json=_DOC_GROUPS))
+
+    result = run("contacts", "groups", "list", "--name", "TEST1")
+    assert result.exit_code == 0, result.stdout
+    assert [g["id"] for g in json.loads(result.stdout)] == [2]
+
+    result = run("contacts", "groups", "list", "--name", "group")
+    assert [g["id"] for g in json.loads(result.stdout)] == [1, 2]
+    assert all(req.url.query == b"" for req in captured)
+
+
+def test_groups_list_name_filter_inside_envelope(mock_api):
+    body = {"data": [{"id": 1, "name": "VIPs"}, {"id": 2, "name": "Beta"}]}
+    mock_api(lambda req: httpx.Response(200, json=body))
+    result = run("contacts", "groups", "list", "--name", "vip")
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {"data": [{"id": 1, "name": "VIPs"}]}
+
+
+def test_groups_list_name_filter_zero_matches(mock_api):
+    mock_api(lambda req: httpx.Response(200, json=_DOC_GROUPS))
+    result = run("contacts", "groups", "list", "--name", "zzz")
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == []
+
+    mock_api(lambda req: httpx.Response(200, json={"data": _DOC_GROUPS}))
+    result = run("contacts", "groups", "list", "--name", "zzz")
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout) == {"data": []}
+
+
 # -- groups get ------------------------------------------------------------
 def test_groups_get(mock_api):
     group = {"id": 3, "name": "VIPs", "tagged_domains": "acme.com,foo.com"}

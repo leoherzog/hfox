@@ -15,7 +15,7 @@ from typer.testing import CliRunner
 
 import hfox.cli.main as main_mod
 from hfox.cli.main import app, cli
-from hfox.core.errors import APIError, AuthError, HfoxError, NotFoundError
+from hfox.core.errors import APIError, AuthError, ExitCode, HfoxError, NotFoundError
 
 runner = CliRunner()
 
@@ -328,3 +328,81 @@ def test_system_staff_filters_client_side(mock_api):
 
     result = run("system", "staff", "--email", "bob@", "--name", "jones")
     assert [a["id"] for a in json.loads(result.stdout)] == [2]
+
+
+# ---------------------------------------------------------------------------
+# system.py :: local --name/--email filters
+# ---------------------------------------------------------------------------
+SYSTEM_COMMANDS = [
+    ("categories", "/categories/"),
+    ("priorities", "/priorities/"),
+    ("staff", "/staff/"),
+    ("statuses", "/statuses/"),
+    ("ticket-custom-fields", "/ticket_custom_fields/"),
+    ("contact-custom-fields", "/user_custom_fields/"),
+]
+_LEVELS = [{"id": 1, "name": "High"}, {"id": 2, "name": "Low"}]
+
+
+@pytest.mark.parametrize("command, path", SYSTEM_COMMANDS)
+def test_system_name_filter_is_local(mock_api, command, path):
+    captured = mock_api(lambda req: httpx.Response(200, json=_LEVELS))
+    result = run("system", command, "--name", "hi")
+    assert result.exit_code == 0
+    assert json.loads(result.stdout) == [{"id": 1, "name": "High"}]
+    assert captured[0].url.path.endswith(path)
+    assert captured[0].url.query == b""
+
+
+def test_system_staff_email_filter_skips_null_email(mock_api):
+    mock_api(lambda req: httpx.Response(200, json=[{"id": 3, "name": "Alicia", "email": None}]))
+    result = run("system", "staff", "--email", "none")
+    assert result.exit_code == 0
+    assert json.loads(result.stdout) == []
+
+
+@pytest.mark.parametrize("command", ["ticket-custom-fields", "contact-custom-fields"])
+def test_custom_fields_name_filter_runs_before_flattening(mock_api, command):
+    mock_api(lambda req: httpx.Response(200, json=_FIELDS))
+    result = run("-f", "csv", "system", command, "--name", "survey")
+    assert result.exit_code == 0
+    assert result.stdout.splitlines() == [
+        "id,name,type,choices",
+        '61,Request Survey,choice,"No=2, Yes=1"',
+    ]
+    result = run("system", command, "--name", "account")
+    assert json.loads(result.stdout) == [_FIELDS[1]]
+
+
+@pytest.mark.parametrize("fmt", ["json", "table", "csv", "yaml"])
+@pytest.mark.parametrize("command", [command for command, _ in SYSTEM_COMMANDS])
+def test_system_filter_zero_matches(mock_api, command, fmt):
+    body = _FIELDS if command.endswith("custom-fields") else _LEVELS
+    mock_api(lambda req: httpx.Response(200, json=body))
+    result = run("-f", fmt, "system", command, "--name", "urgent")
+    assert result.exit_code == 0
+    if fmt == "json":
+        assert json.loads(result.stdout) == []
+    elif fmt == "table":
+        assert result.stdout == ""
+        assert "(no results)" in result.stderr
+    elif fmt == "csv":
+        assert result.stdout == ""
+    else:
+        assert result.stdout == "[]\n"
+
+
+@pytest.mark.parametrize("value", ["", "  "])
+def test_system_filter_blank_is_ignored(mock_api, value):
+    mock_api(lambda req: httpx.Response(200, json=_LEVELS))
+    result = run("system", "priorities", "--name", value)
+    assert result.exit_code == 0
+    assert json.loads(result.stdout) == _LEVELS
+
+
+def test_system_filter_unexpected_body_raises(mock_api):
+    mock_api(lambda req: httpx.Response(200, json={"error": "x"}))
+    result = run("system", "priorities", "--name", "x")
+    assert isinstance(result.exception, HfoxError)
+    assert result.exception.exit_code is ExitCode.OTHER
+    assert result.stdout == ""

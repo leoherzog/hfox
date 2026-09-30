@@ -75,6 +75,16 @@ On `tickets list` and `contacts list`, `-q` means `--query`:
 - Contacts: `field:value` filters on `name`, `email`, `phone`, `updated_since` or
   `created_since`, ANDed when space-separated. Omit `+` from phone numbers.
 
+Endpoints without server-side search take local filters instead. Every `system` command and
+`contacts groups list` take `--name`, and `system staff` also takes `--email`. A filter keeps
+rows whose field contains the text, ignoring case; every filter must match, and a missing or
+non-text field never matches. Filters are never sent to HappyFox, and no match prints an empty
+listing with exit `0`.
+
+`assets list`, `assets types list` and `assets custom-fields list` take `--name` only with the
+global `--page-all`, since one page would miss matches. Each NDJSON line keeps the server's
+`page_info`, which counts rows before filtering.
+
 Exit codes are stable: `0` success, `1` API error, `2` auth error, `3` validation, `4` not
 found, `5` other. Usage errors exit `3` with a JSON error on stdout. Bulk and group-membership
 commands print the response, then exit `1` if any entry failed; removing a contact that is not
@@ -103,6 +113,7 @@ the contact with the same email and resets custom fields it does not send.
 # Reference data (ids you need elsewhere)
 hfox -f table system priorities
 hfox -f table system ticket-custom-fields    # choices shown as text=id
+hfox system staff --email jane@               # find your staff id
 
 # Tickets
 hfox -f table tickets list --status _all --size 50 --fields id,display_id,subject
@@ -125,6 +136,7 @@ hfox contacts groups add-contacts 12 --contacts 41,200 --access-tickets
 
 # Assets
 hfox -f table assets list --asset-type 1
+hfox --page-all -f table assets list --asset-type 1 --size 50 --name latitude
 hfox assets create --asset-type 1 --name "MBP-14" --display-id "LAP-001" \
   --cf 5=4 --cf '6=[3,4]'
 ```

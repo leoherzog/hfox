@@ -1,4 +1,6 @@
-"""Shared command helpers: prompts, validation, CSV splitting, JSON, attachments, bulk results."""
+"""Shared command helpers: prompts, validation, CSV splitting, JSON, attachments, bulk results
+and local row filters.
+"""
 
 from __future__ import annotations
 
@@ -7,12 +9,13 @@ import json
 import math
 import re
 import sys
+import unicodedata
 from pathlib import Path
 from typing import Any
 
 import typer
 
-from ..core.errors import ValidationError
+from ..core.errors import HfoxError, ValidationError
 from . import output
 
 #: Documented cap on the combined size of one request's attachments.
@@ -182,3 +185,71 @@ def exit_on_failures(result: Any, *, benign: str | None = None) -> None:
     if failed:
         output.warn(f"{failed} of {len(result)} entries failed.")
         raise typer.Exit(1)
+
+
+def fold(value: Any) -> str | None:
+    """Return a string stripped and NFKC-casefolded for caseless matching; else None.
+
+    NFKC runs again after casefold, since casefold can emit non-NFKC sequences (e.g. U+0390).
+    """
+    if not isinstance(value, str):
+        return None
+    return unicodedata.normalize("NFKC", unicodedata.normalize("NFKC", value.strip()).casefold())
+
+
+def filter_needles(filters: dict[str, str | None]) -> dict[str, str]:
+    """Map each field to its folded filter text, dropping missing or whitespace-only texts."""
+    return {field: fold(text) for field, text in filters.items() if nonblank_or_none(text)}
+
+
+def filter_rows(
+    body: Any, filters: dict[str, str | None], *, root_key: str = "data", paged: bool = False
+) -> Any:
+    """Keep the rows whose string field contains every active filter text, ignoring case.
+
+    Takes a bare list or an envelope, whose other keys are kept; never mutates `body`. With no
+    active filter returns `body`. A body without a row list raises HfoxError unless `paged`,
+    which reads rows as client._unwrap_page does, so every --page-all format keeps the same rows.
+    """
+    needles = filter_needles(filters)
+    if not needles:
+        return body
+    key, rows = root_key, body
+    if isinstance(body, dict):
+        # Same key rule as client._unwrap_page and render_list: root_key, then reports "rows".
+        if body.get(root_key) is None and "rows" in body:
+            key = "rows"
+        rows = body.get(key)
+        if paged and not isinstance(rows, list):
+            rows = [] if rows is None else [rows]
+    elif paged and not isinstance(body, list):
+        rows = []
+    if not isinstance(rows, list):
+        raise HfoxError(
+            f"Cannot filter by {', '.join(needles)}: the response holds no list of rows."
+        )
+    kept = [row for row in rows if _row_matches(row, needles)]
+    return {**body, key: kept} if isinstance(body, dict) else kept
+
+
+def _row_matches(row: Any, needles: dict[str, str]) -> bool:
+    """True when `row` is a dict and each needled field is a string containing its needle."""
+    if not isinstance(row, dict):
+        return False
+    for field, needle in needles.items():
+        text = fold(row.get(field))
+        if text is None or needle not in text:
+            return False
+    return True
+
+
+# --page-all is a root flag, so appending it after the subcommand is a usage error.
+PAGE_ALL_PLACEMENT = "--page-all before the resource (hfox --page-all <resource> ...)"
+
+
+def filter_help(field: str, *, paged: bool = False) -> str:
+    """Help text for a local filter flag on `field`; `paged` adds that it needs --page-all."""
+    text = f"Only rows whose {field} contains this (case-insensitive, filtered locally)."
+    if not paged:
+        return text
+    return f"{text} Requires the global {PAGE_ALL_PLACEMENT}."

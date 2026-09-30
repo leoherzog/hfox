@@ -113,6 +113,24 @@ def test_resolve_staff_id_match_is_case_insensitive():
     assert _resolve_staff_id(staff, " agent@x.org ") == 9
 
 
+def test_resolve_staff_id_null_email_never_matches():
+    assert _resolve_staff_id([{"id": 5, "email": None}], "None") is None
+    assert _resolve_staff_id([{"id": 6}], "None") is None
+
+
+def test_resolve_staff_id_is_exact_not_substring():
+    staff = [{"id": 1, "email": "jimbob@x.org"}, {"id": 2, "email": "bob@x.org"}]
+    assert _resolve_staff_id(staff, "bob@x.org") == 2
+
+
+def test_resolve_staff_id_blank_email_returns_none():
+    assert _resolve_staff_id([{"id": 1, "email": ""}], "  ") is None
+
+
+def test_resolve_staff_id_casefold():
+    assert _resolve_staff_id([{"id": 3, "email": "straße@x.org"}], "STRASSE@x.org") == 3
+
+
 # =========================================================================
 # auth.py: login branches
 # =========================================================================

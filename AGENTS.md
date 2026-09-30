@@ -46,7 +46,7 @@ src/hfox/
     ├── output.py         # OutputFormat enum + json/table/csv/yaml rendering, stderr
     ├── auth.py           # `hfox auth` login/status/logout
     ├── cf.py             # custom-field parsing (t-cf-/c-cf-/ccf-/asset)
-    ├── _util.py          # input validation, CSV/JSON parsing, attach(), bulk results
+    ├── _util.py          # input validation, CSV/JSON parsing, attach(), bulk results, filters
     ├── tickets.py        # `hfox tickets`  (one module per resource)
     ├── contacts.py       # `hfox contacts` (+ `groups` sub-app)
     ├── assets.py         # `hfox assets`   (+ `types`, `custom-fields` sub-apps)
@@ -77,7 +77,7 @@ the only API a command module uses to talk to HappyFox or emit output:
 | Method | Use for |
 |--------|---------|
 | `obj.call(method, path, *, params, json, data, files)` | single GETs and **all writes**; returns parsed JSON; `--dry-run` prints the exact wire request and exits |
-| `obj.paginate(path, *, params, root_key="data")` | paginated lists; honors `--dry-run`. `--page-all` + JSON **streams NDJSON**, one compact line per page or error, then exits, so `render_list` never runs; other formats get the flat record list. Without `--page-all`, the single page. Warns on stderr when `--page-limit` truncates |
+| `obj.paginate(path, *, params, root_key="data", filters=None)` | paginated lists; honors `--dry-run`. `--page-all` + JSON **streams NDJSON**, one compact line per page or error, then exits, so `render_list` never runs; other formats get the flat record list. Without `--page-all`, the single page. Warns on stderr when `--page-limit` truncates. `filters={field: text}` applies `filter_rows` to every page, NDJSON lines included; without `--page-all` it raises `ValidationError`, even under `--dry-run`. Filters never reach the request |
 | `obj.render(data)` | render one object/list in the active `--format` |
 | `obj.render_list(body, *, root_key="data")` | render a listing: JSON keeps the `{page_info, data}` envelope; other formats unwrap to rows |
 | `obj.resolve_staff_id(explicit)` | staff id: explicit arg → `--staff-id` → configured default; may be `None` |
@@ -89,9 +89,16 @@ Helpers:
 
 - `cli/_util.py`: `compact(dict)` drops `None`; `comma_join(list)`→`"a,b"`;
   `split_csv("a,b")`→`["a","b"]`, `None` when blank; `split_csv_ints("1,2")`→`[1,2]`, ASCII
-  digits only, `[]` when blank. `require_nonblank`, `validate_ticket_id` and
-  `validate_contact_ref` raise `ValidationError`. `parse_json`/`load_json_file` accept
-  strict UTF-8 JSON (no NaN/Infinity).
+  digits only, `[]` when blank. `nonblank_or_none` returns `None` for a blank value.
+  `require_nonblank`, `validate_ticket_id` and `validate_contact_ref` raise
+  `ValidationError`. `parse_json`/`load_json_file` accept strict UTF-8 JSON (no NaN/Infinity).
+- `filter_rows(body, {field: text}, *, root_key="data", paged=False)` keeps the rows of a bare
+  list or an envelope whose top-level string `field` contains every non-blank `text`, compared
+  through `fold` (strip, NFKC, casefold, NFKC). Other keys such as `page_info` pass through.
+  With no active filter it returns `body`. A body without a row list raises `HfoxError`
+  (exit 5) unless `paged`, which reads rows as `client._unwrap_page` does so NDJSON pages match
+  the flat list. `filter_help(field, *, paged=False)` is the flag's help text. `auth login`
+  shares `fold` but matches emails exactly.
 - `attach(body, attachments, *, field="attachments")` → kwargs to splat into `obj.call`.
   JSON bodies go as given, so `compact()` the base body before merging custom fields.
   Multipart drops `None` and caps files at `MAX_ATTACHMENT_BYTES` in total.
@@ -135,6 +142,11 @@ Helpers:
   do not `print()` errors or call `sys.exit()`.
 - Keep stdout pure data: status and warnings go to stderr (`obj.success`, `output.warn`,
   `output.info`).
+- Local filters go only on listings whose endpoint has no server-side search; `tickets list`
+  and `contacts list` use `-q`. The flag is long-only and named after the top-level string
+  field it matches. A single-GET listing wraps `obj.call` in `filter_rows` before any
+  formatting step; a paginated listing passes `filters=` to `obj.paginate`, never filtering
+  one page.
 
 ## HappyFox API quirks
 
@@ -156,6 +168,11 @@ Sourced from `Docs/` unless marked observed. Honor them exactly.
   In filters a comma means any-of, and the docs' `+` is an encoded space.
 - **Multi-word `q` is AND (observed):** `q=degree works` returns tickets
   containing both words in any order; quoting does not force phrase matching.
+- **Reference lists take no query params:** `categories/`, `priorities/`, `staff/`,
+  `statuses/`, `ticket_custom_fields/`, `user_custom_fields/` and `contact_groups/` document
+  none; all but `priorities/`, whose response is undocumented, return the whole set as a bare
+  array. `staff/` ignores params (observed). `assets/`, `asset_types/` and
+  `asset_custom_fields/` page but offer no search.
 - **Bulk endpoints cap at 100 entries** (tickets create-bulk, contacts create-bulk,
   group update_contacts). Enforce it with a `ValidationError` before the request.
 - **Contact create is add-or-edit:** POST `users/` edits the contact with the same email, as
@@ -224,6 +241,8 @@ other exception becomes a JSON error naming its type, exit 5, without a tracebac
   layer uses `httpx.MockTransport` with an injected `sleep`, so backoff is instant.
 - A new command needs a `--dry-run` test asserting method/URL/body, plus a unit test if it
   touches the client or encoding.
+- A local filter needs a dry-run test showing it is not sent and a zero-match test; on a
+  paginated listing, also a test that it requires `--page-all`.
 - CliRunner bypasses `main.app()`; test exit codes that depend on it through `app()`.
 - PyYAML is a dev-only dependency for YAML round-trip tests.
 

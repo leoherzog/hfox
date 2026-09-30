@@ -19,17 +19,19 @@ from ..core.config import (
 )
 from ..core.errors import AuthError, HfoxError
 from . import output
+from ._util import fold, nonblank_or_none
 from .context import emit_dry_run, get_ctx
 
 app = typer.Typer(no_args_is_help=True, help="Manage HappyFox credentials.")
 
 
 def _resolve_staff_id(staff: list, email: str | None) -> int | None:
-    if not email:
+    """Return the first agent id whose email equals `email`, ignoring case and outer spaces."""
+    target = fold(nonblank_or_none(email))
+    if target is None:
         return None
-    target = email.strip().lower()
     for member in staff:
-        if isinstance(member, dict) and str(member.get("email", "")).lower() == target:
+        if isinstance(member, dict) and fold(member.get("email")) == target:
             return member.get("id")
     return None
 

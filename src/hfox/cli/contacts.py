@@ -9,6 +9,8 @@ from ._util import (
     NOT_IN_GROUP,
     compact,
     exit_on_failures,
+    filter_help,
+    filter_rows,
     load_json_file,
     nonblank_or_none,
     require_nonblank,
@@ -203,11 +205,13 @@ app.add_typer(groups, name="groups")
 
 
 @groups.command("list")
-def list_groups(ctx: typer.Context) -> None:
+def list_groups(
+    ctx: typer.Context,
+    name: str = typer.Option(None, "--name", help=filter_help("name")),
+) -> None:
     """List all contact groups."""
     obj = get_ctx(ctx)
-    body = obj.call("GET", "contact_groups/")
-    obj.render_list(body)
+    obj.render_list(filter_rows(obj.call("GET", "contact_groups/"), {"name": name}))
 
 
 @groups.command("get")

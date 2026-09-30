@@ -20,6 +20,10 @@ from hfox.cli._util import (
     compact,
     count_failures,
     exit_on_failures,
+    filter_help,
+    filter_needles,
+    filter_rows,
+    fold,
     load_json_file,
     require_nonblank,
     split_csv,
@@ -29,6 +33,7 @@ from hfox.cli._util import (
 )
 from hfox.cli.context import AppContext
 from hfox.cli.output import OutputFormat
+from hfox.core.client import _unwrap_page
 from hfox.core.config import Config
 from hfox.core.errors import (
     APIError,
@@ -184,6 +189,121 @@ def test_call_dry_run_emits_post(capsys):
     out = json.loads(capsys.readouterr().out)
     assert out["method"] == "POST"
     assert out["body"] == {"subject": "x"}
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_paginate_filters_require_page_all(capsys, monkeypatch, dry_run):
+    captured = _install_client(monkeypatch, _page_handler)
+    ctx = make_ctx(page_all=False, dry_run=dry_run)
+    with pytest.raises(ValidationError, match="global --page-all before the resource"):
+        ctx.paginate("assets/", filters={"name": "x"})
+    assert captured == []
+    assert capsys.readouterr().out == ""
+
+
+def test_paginate_blank_filters_behave_as_none(monkeypatch):
+    body = {"page_info": {"page_count": 3, "count": 9}, "data": [{"id": 1, "name": "x"}]}
+    _install_client(monkeypatch, lambda r: httpx.Response(200, json=body))
+    ctx = make_ctx(page_all=False)
+    assert ctx.paginate("assets/", filters={"name": "  "}) == body
+
+
+_NAMED_PAGE_INFO = {"page_count": 2, "count": 2}
+
+
+def _named_page_handler(request):
+    page = int(httpx.QueryParams(request.url.query).get("page", "1"))
+    rows = (
+        [{"id": 10, "name": "Laptop"}, {"id": 11, "name": "Phone"}]
+        if page == 1
+        else [{"id": 20, "name": "Phone"}]
+    )
+    return httpx.Response(200, json={"page_info": _NAMED_PAGE_INFO, "data": rows})
+
+
+def test_paginate_page_all_json_filters_each_ndjson_page(capsys, monkeypatch):
+    _install_client(monkeypatch, _named_page_handler)
+    ctx = make_ctx(page_all=True, page_delay_ms=0)
+    with pytest.raises(typer.Exit) as ei:
+        ctx.paginate("assets/", filters={"name": "LAP"})
+    assert ei.value.exit_code == 0
+    lines = [json.loads(line) for line in capsys.readouterr().out.strip().splitlines()]
+    assert [[r["id"] for r in page["data"]] for page in lines] == [[10], []]
+    assert [page["page_info"] for page in lines] == [_NAMED_PAGE_INFO, _NAMED_PAGE_INFO]
+
+
+def test_paginate_page_all_non_json_filters_flat_list(monkeypatch):
+    _install_client(monkeypatch, _named_page_handler)
+    ctx = make_ctx(page_all=True, page_delay_ms=0, fmt=OutputFormat.TABLE)
+    assert ctx.paginate("assets/", filters={"name": "LAP"}) == [{"id": 10, "name": "Laptop"}]
+
+
+def test_paginate_dry_run_page_all_never_sends_filters(capsys, monkeypatch):
+    captured = _install_client(monkeypatch, _named_page_handler)
+    ctx = make_ctx(dry_run=True, page_all=True)
+    with pytest.raises(typer.Exit) as ei:
+        ctx.paginate("assets/", filters={"name": "LAP"})
+    assert ei.value.exit_code == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["params"] == {"size": 50, "page": 1}
+    assert "name" not in out["url"]
+    assert captured == []
+
+
+def test_paginate_filtered_walk_warns_when_truncated(capsys, monkeypatch):
+    _install_client(monkeypatch, _named_page_handler)
+    ctx = make_ctx(page_all=True, page_limit=1, page_delay_ms=0)
+    with pytest.raises(typer.Exit) as ei:
+        ctx.paginate("assets/", filters={"name": "LAP"})
+    assert ei.value.exit_code == 0
+    out = capsys.readouterr()
+    assert len(out.out.strip().splitlines()) == 1
+    assert "incomplete" in out.err
+
+
+_EMPTY_INFO = {"page_count": 1, "count": 0}
+
+
+@pytest.mark.parametrize(
+    ("page", "rows"),
+    [
+        ({"page_info": _EMPTY_INFO, "data": None}, []),
+        ({"page_info": _EMPTY_INFO}, []),
+        ({"data": {"id": 1, "name": "x"}}, [{"id": 1, "name": "x"}]),
+        ({"data": {"id": 2, "name": "y"}}, []),
+        ([{"id": 1, "name": "x"}, {"id": 2}, "x"], [{"id": 1, "name": "x"}]),
+    ],
+)
+def test_paginate_filter_odd_pages_agree_across_formats(capsys, monkeypatch, page, rows):
+    _install_client(monkeypatch, lambda r: httpx.Response(200, json=page))
+    table = make_ctx(page_all=True, page_delay_ms=0, fmt=OutputFormat.TABLE)
+    assert table.paginate("assets/", filters={"name": "x"}) == rows
+
+    ctx = make_ctx(page_all=True, page_delay_ms=0)
+    with pytest.raises(typer.Exit) as ei:
+        ctx.paginate("assets/", filters={"name": "x"})
+    assert ei.value.exit_code == 0
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert len(lines) == 1
+    line = json.loads(lines[0])
+    if isinstance(page, list):
+        assert line == rows
+    else:
+        assert line["data"] == rows
+        assert line.get("page_info") == page.get("page_info")
+
+
+def test_paginate_filtered_walk_api_error_becomes_ndjson_line(capsys, monkeypatch):
+    _install_client(monkeypatch, lambda r: httpx.Response(500, json={"error": "boom"}))
+    ctx = make_ctx(page_all=True, page_delay_ms=0)
+    with pytest.raises(typer.Exit) as ei:
+        ctx.paginate("assets/", filters={"name": "x"})
+    assert ei.value.exit_code == 1
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert len(lines) == 1
+    line = json.loads(lines[0])
+    assert set(line) >= {"error", "exit_code"}
+    assert line["exit_code"] == 1
 
 
 def test_call_executes_request(monkeypatch):
@@ -510,6 +630,135 @@ def test_exit_on_failures_silent_when_all_succeed(capsys):
     exit_on_failures(CONTACTS_BULK)
     exit_on_failures([GROUP_REMOVE[1]], benign=NOT_IN_GROUP)
     assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(" Straße ", "strasse"), ("José", "josé"), ("ＡB", "ab")],
+)
+def test_fold(value, expected):
+    assert fold(value) == expected
+
+
+def test_fold_is_closed_under_case():
+    # casefold turns U+0390 into a non-NFKC sequence; the uppercase form must still match.
+    assert fold("ΐ") == fold("Ϊ́")
+    assert fold("Πρωτεΐνη") == fold("ΠΡΩΤΕΪ́ΝΗ")
+
+
+def test_fold_non_string_is_none():
+    assert fold(None) is None
+    assert fold(5) is None
+    assert fold(True) is None
+    assert fold({"a": "b"}) is None
+
+
+def test_filter_needles_drops_blank_and_folds():
+    assert filter_needles({"name": " Ali ", "email": None, "role": "  ", "x": ""}) == {
+        "name": "ali"
+    }
+
+
+# Staff rows: mixed-case email, a substring shared across names and emails, and a null email.
+STAFF = [
+    {"id": 1, "name": "Alice Smith", "email": "alice@x.org"},
+    {"id": 2, "name": "Bob Jones", "email": "BOB@x.org"},
+    {"id": 3, "name": "Alicia Bob", "email": None},
+]
+
+
+def _ids(rows):
+    return [row["id"] for row in rows]
+
+
+def test_filter_rows_casefolded_substring_all_must_match():
+    assert _ids(filter_rows(STAFF, {"name": "ALI"})) == [1, 3]
+    assert _ids(filter_rows(STAFF, {"name": "ali", "email": "x.org"})) == [1]
+    assert _ids(filter_rows(STAFF, {"email": "BOB@"})) == [2]
+
+
+@pytest.mark.parametrize(
+    ("value", "needle"),
+    [
+        (None, "none"),
+        (0, "0"),
+        (False, "false"),
+        (True, "true"),
+        (12, "12"),
+        ({"x": "a"}, "a"),
+        (["a"], "a"),
+    ],
+)
+def test_filter_rows_non_text_values_never_match(value, needle):
+    assert filter_rows([{"f": value}], {"f": needle}) == []
+    assert filter_rows([{"g": needle}], {"f": needle}) == []
+
+
+def test_filter_rows_drops_non_dict_rows():
+    assert filter_rows(["Alice", {"name": "Alice"}, None], {"name": "ali"}) == [{"name": "Alice"}]
+
+
+@pytest.mark.parametrize("body", [[{"id": 1}], {"data": 1}, "text", None])
+@pytest.mark.parametrize("filters", [{}, {"name": None}, {"name": "  "}])
+def test_filter_rows_without_active_filter_returns_body(body, filters):
+    assert filter_rows(body, filters) is body
+
+
+@pytest.mark.parametrize(
+    ("body", "root_key", "key"),
+    [
+        ({"page_info": {"page_count": 1, "count": 2}, "data": list(STAFF)}, "data", "data"),
+        ({"page_info": {"page_count": 1, "count": 2}, "items": list(STAFF)}, "items", "items"),
+        ({"page_count": 1, "rows": list(STAFF)}, "data", "rows"),
+    ],
+)
+def test_filter_rows_envelope_keeps_other_keys(body, root_key, key):
+    result = filter_rows(body, {"name": "bob"}, root_key=root_key)
+    assert _ids(result[key]) == [2, 3]
+    assert result.get("page_info") == body.get("page_info")
+    assert result.get("page_count") == body.get("page_count")
+    assert set(result) == set(body)
+    assert body[key] == STAFF
+
+
+@pytest.mark.parametrize("body", ["text", None, {"error": "x"}, {"data": {"id": 1}}, 5])
+def test_filter_rows_rejects_body_without_rows(body):
+    with pytest.raises(HfoxError) as exc:
+        filter_rows(body, {"name": "x"})
+    assert exc.value.exit_code is ExitCode.OTHER
+    assert "name" in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ({"page_info": {"count": 0}, "data": None}, {"page_info": {"count": 0}, "data": []}),
+        ({"page_info": {"count": 0}}, {"page_info": {"count": 0}, "data": []}),
+        ({"data": None, "rows": None}, {"data": None, "rows": []}),
+        ({"data": {"id": 1, "name": "x"}}, {"data": [{"id": 1, "name": "x"}]}),
+        ({"data": "x"}, {"data": []}),
+        ({"data": [{"id": 1, "name": "x"}, {"id": 2}]}, {"data": [{"id": 1, "name": "x"}]}),
+        ([{"id": 1, "name": "x"}, {"id": 2}, "x"], [{"id": 1, "name": "x"}]),
+        ("text", []),
+        (None, []),
+    ],
+)
+def test_filter_rows_paged_reads_rows_like_the_walk(body, expected):
+    result = filter_rows(body, {"name": "x"}, paged=True)
+    assert result == expected
+    walk_rows = _unwrap_page(body, "data")[0]
+    kept = result if isinstance(result, list) else result["rows" if "rows" in result else "data"]
+    assert kept == filter_rows(walk_rows, {"name": "x"})
+
+
+def test_filter_help():
+    text = filter_help("name")
+    assert "name" in text
+    assert "case-insensitive" in text
+    assert "--page-all" not in text
+    paged = filter_help("name", paged=True)
+    assert paged.startswith(text)
+    assert "global --page-all before the resource (hfox --page-all <resource> ...)" in paged
 
 
 # ----------------------------------------------------------------------------

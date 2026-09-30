@@ -465,3 +465,69 @@ def test_create_accepts_200_character_name():
 def test_assets_cf_help_shows_list_syntax(verb):
     result = run("assets", verb, "--help")
     assert "'<id>=[a,b]'" in result.stdout
+
+
+# --------------------------------------------------------------------------- #
+# local --name filter
+# --------------------------------------------------------------------------- #
+LISTINGS = [
+    (("assets", "list"), "/assets/"),
+    (("assets", "types", "list"), "/asset_types/"),
+    (("assets", "custom-fields", "list"), "/asset_custom_fields/"),
+]
+_NAMED_PAGE_INFO = {"page_count": 2, "count": 3}
+
+
+def _named_pages(request):
+    page = request.url.params.get("page", "1")
+    rows = (
+        [{"id": 1, "name": "Dell Latitude"}, {"id": 2, "name": "MacBook"}]
+        if page == "1"
+        else [{"id": 3, "name": "dell optiplex"}]
+    )
+    return httpx.Response(200, json={"page_info": _NAMED_PAGE_INFO, "data": rows})
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+@pytest.mark.parametrize("argv, path", LISTINGS)
+def test_asset_listing_name_filter_requires_page_all(mock_api, argv, path, dry_run):
+    captured = mock_api(_named_pages)
+    flags = ["--dry-run"] if dry_run else []
+    result = run(*flags, *argv, "--name", "dell")
+    assert isinstance(result.exception, ValidationError), result.output
+    assert "global --page-all before the resource" in str(result.exception)
+    assert captured == []
+    assert result.stdout == ""
+
+
+@pytest.mark.parametrize("argv, path", LISTINGS)
+def test_asset_listing_name_filter_page_all_ndjson(mock_api, argv, path):
+    captured = mock_api(_named_pages)
+    result = run("--page-all", *argv, "--name", "DELL")
+    assert result.exit_code == 0, result.stdout
+    lines = [json.loads(line) for line in result.stdout.splitlines()]
+    assert [[r["id"] for r in line["data"]] for line in lines] == [[1], [3]]
+    assert all(line["page_info"] == _NAMED_PAGE_INFO for line in lines)
+    assert all(req.url.path.endswith(path) for req in captured)
+    assert all("name" not in dict(req.url.params) for req in captured)
+
+
+@pytest.mark.parametrize("argv, path", LISTINGS)
+def test_asset_listing_name_filter_zero_matches(mock_api, argv, path):
+    mock_api(_named_pages)
+    result = run("--page-all", *argv, "--name", "zzz")
+    assert result.exit_code == 0, result.stdout
+    lines = [json.loads(line) for line in result.stdout.splitlines()]
+    assert len(lines) == 2
+    assert all(line == {"page_info": _NAMED_PAGE_INFO, "data": []} for line in lines)
+
+    result = run("-f", "csv", "--page-all", *argv, "--name", "zzz")
+    assert result.exit_code == 0, result.stdout
+    assert result.stdout == ""
+
+
+def test_asset_listing_name_filter_page_all_csv(mock_api):
+    mock_api(_named_pages)
+    result = run("-f", "csv", "--page-all", "assets", "list", "--name", "dell")
+    assert result.exit_code == 0, result.stdout
+    assert result.stdout.splitlines() == ["id,name", "1,Dell Latitude", "3,dell optiplex"]

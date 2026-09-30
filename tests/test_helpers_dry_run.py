@@ -3,6 +3,7 @@
 import json
 import os
 
+import pytest
 from typer.testing import CliRunner
 
 from hfox.cli.main import cli
@@ -104,3 +105,31 @@ def test_create_bulk_rejects_nan(tmp_path):
     f = tmp_path / "bulk.json"
     f.write_text('[{"subject": "s", "t-cf-1": NaN}]', encoding="utf-8")
     rejected("--dry-run", "tickets", "create-bulk", "--file", str(f))
+
+
+@pytest.mark.parametrize(
+    "argv, url_suffix",
+    [
+        (("system", "categories", "--name", "x"), "/categories/"),
+        (("system", "priorities", "--name", "x"), "/priorities/"),
+        (("system", "staff", "--name", "x", "--email", "y"), "/staff/"),
+        (("system", "statuses", "--name", "x"), "/statuses/"),
+        (("system", "ticket-custom-fields", "--name", "x"), "/ticket_custom_fields/"),
+        (("system", "contact-custom-fields", "--name", "x"), "/user_custom_fields/"),
+        (("contacts", "groups", "list", "--name", "x"), "/contact_groups/"),
+        (("--page-all", "assets", "list", "--name", "x"), "/assets/?size=10&page=1"),
+        (("--page-all", "assets", "types", "list", "--name", "x"), "/asset_types/?size=50&page=1"),
+        (
+            ("--page-all", "assets", "custom-fields", "list", "--name", "x"),
+            "/asset_custom_fields/?size=10&page=1",
+        ),
+    ],
+)
+def test_local_filters_never_reach_the_request(argv, url_suffix):
+    p = preview("--dry-run", *argv)
+    assert p["method"] == "GET"
+    assert p["url"].endswith(url_suffix)
+    query = p["url"].partition("?")[2]
+    for key in ("name", "email"):
+        assert key not in (p["params"] or {})
+        assert key not in query
