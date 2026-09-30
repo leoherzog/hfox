@@ -1,9 +1,6 @@
-"""Output rendering: json (default), table, csv, yaml.
+"""Render command results to stdout as json (default), table, csv or yaml.
 
-Design follows gws: JSON is the default so output stays machine-parseable for
-agents/scripts; table is the human-friendly view (Rich), auto-discovering the
-union of columns across rows and flattening nested objects to dot-notation.
-Status/warning text always goes to stderr so stdout stays clean structured data.
+Table and CSV flatten nested objects to dot-notation keys. Status and warnings go to stderr.
 """
 
 from __future__ import annotations
@@ -11,6 +8,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import math
 import os
 import sys
 from enum import StrEnum
@@ -18,8 +16,7 @@ from typing import Any
 
 from rich.console import Console
 from rich.table import Table
-
-MAX_CELL_WIDTH = 60
+from rich.text import Text
 
 
 class OutputFormat(StrEnum):
@@ -38,7 +35,6 @@ class OutputFormat(StrEnum):
         try:
             return cls(normalized)
         except ValueError:
-            # Unknown format falls back to JSON with a warning (gws behavior).
             warn(f"Unknown format '{value}', falling back to json.")
             return cls.JSON
 
@@ -64,7 +60,7 @@ def info(message: str) -> None:
 
 
 def _flatten(obj: Any, prefix: str = "") -> dict[str, Any]:
-    """Flatten nested dicts into dot-notation keys for tabular display."""
+    """Flatten nested dicts into dot-notation keys; empty dicts stay as leaves."""
     out: dict[str, Any] = {}
     if isinstance(obj, dict):
         for key, value in obj.items():
@@ -72,8 +68,6 @@ def _flatten(obj: Any, prefix: str = "") -> dict[str, Any]:
             if isinstance(value, dict) and value:
                 out.update(_flatten(value, new_key))
             else:
-                # Keep empty dicts as a leaf so the key isn't silently dropped,
-                # symmetric with how empty lists are preserved.
                 out[new_key] = value
     else:
         out[prefix or "value"] = obj
@@ -82,17 +76,8 @@ def _flatten(obj: Any, prefix: str = "") -> dict[str, Any]:
 
 def _as_rows(data: Any) -> list[dict[str, Any]]:
     """Coerce arbitrary JSON into a list of flat row dicts."""
-    if isinstance(data, list):
-        rows = data
-    else:
-        rows = [data]
-    flat_rows: list[dict[str, Any]] = []
-    for row in rows:
-        if isinstance(row, dict):
-            flat_rows.append(_flatten(row))
-        else:
-            flat_rows.append({"value": row})
-    return flat_rows
+    rows = data if isinstance(data, list) else [data]
+    return [_flatten(row) if isinstance(row, dict) else {"value": row} for row in rows]
 
 
 def _column_union(rows: list[dict[str, Any]]) -> list[str]:
@@ -109,23 +94,17 @@ def _column_union(rows: list[dict[str, Any]]) -> list[str]:
 def _stringify(value: Any) -> str:
     if value is None:
         return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
     if isinstance(value, (dict, list)):
         return json.dumps(value, ensure_ascii=False, default=str)
     return str(value)
 
 
-def _truncate(text: str, width: int = MAX_CELL_WIDTH) -> str:
-    if len(text) <= width:
-        return text
-    return text[: width - 1] + "…"
-
-
 def render(data: Any, fmt: OutputFormat, *, stream=None) -> None:
-    """Render data to the given stream in the requested format.
+    """Render data in the requested format.
 
-    ``stream`` defaults to the *current* ``sys.stdout`` resolved at call time
-    (not import time), so redirects — e.g. ``typer.testing.CliRunner`` — are
-    honored.
+    `stream` defaults to sys.stdout resolved at call time, so CliRunner redirects are honored.
     """
     if stream is None:
         stream = sys.stdout
@@ -139,42 +118,50 @@ def render(data: Any, fmt: OutputFormat, *, stream=None) -> None:
         _render_yaml(data, stream)
 
 
+def _ascii_only(stream) -> bool:
+    # A non-UTF stream backslash-replaces raw non-ASCII, which is not valid JSON.
+    encoding = (getattr(stream, "encoding", None) or "utf-8").lower().replace("-", "")
+    return not encoding.startswith("utf")
+
+
 def _render_json(data: Any, stream) -> None:
-    stream.write(json.dumps(data, indent=2, ensure_ascii=False, default=str) + "\n")
+    stream.write(json.dumps(data, indent=2, ensure_ascii=_ascii_only(stream), default=str) + "\n")
 
 
 def render_ndjson_line(data: Any, *, stream=None) -> None:
-    """Write one compact JSON document on a single line (NDJSON), flushed.
-
-    Used by --page-all in JSON format: one page envelope per line, emitted as
-    each page arrives — mirrors gws's streaming pagination output.
-    """
+    """Write one compact JSON document as a single flushed line (NDJSON)."""
     if stream is None:
         stream = sys.stdout
-    stream.write(json.dumps(data, ensure_ascii=False, default=str, separators=(",", ":")) + "\n")
+    line = json.dumps(data, ensure_ascii=_ascii_only(stream), default=str, separators=(",", ":"))
+    stream.write(line + "\n")
     stream.flush()
 
 
 def _render_table(data: Any, stream) -> None:
-    rows = _as_rows(data)
-    if not rows:
+    """Render a list as one row per item and a single dict as field/value rows."""
+    # Cells are Text so data containing Rich markup or :emoji: codes prints verbatim.
+    if isinstance(data, dict):
+        columns = ["field", "value"]
+        cells = [[key, _stringify(value)] for key, value in _flatten(data).items()]
+    else:
+        rows = _as_rows(data)
+        columns = _column_union(rows)
+        cells = [[_stringify(row.get(col)) for col in columns] for row in rows]
+    if not cells:
         info("(no results)")
         return
-    columns = _column_union(rows)
     table = Table(show_header=True, header_style="bold")
     for col in columns:
-        table.add_column(col, overflow="fold", no_wrap=False)
-    for row in rows:
-        table.add_row(*[_truncate(_stringify(row.get(col))) for col in columns])
-    console = Console(file=stream, highlight=False, soft_wrap=False)
-    console.print(table)
+        table.add_column(Text(col), overflow="fold", no_wrap=False)
+    for row in cells:
+        table.add_row(*[Text(cell) for cell in row])
+    Console(file=stream, highlight=False, soft_wrap=False).print(table)
 
 
 def _render_csv(data: Any, stream) -> None:
     rows = _as_rows(data)
     if not rows:
-        # Empty result -> empty file (no header). Table prints "(no results)";
-        # CSV stays header-less so the output remains parseable by csv readers.
+        # No header either, so an empty result stays a valid empty CSV.
         return
     columns = _column_union(rows)
     buffer = io.StringIO()
@@ -186,98 +173,91 @@ def _render_csv(data: Any, stream) -> None:
 
 
 def _render_yaml(data: Any, stream) -> None:
-    """Minimal YAML emitter (avoids a PyYAML dependency for a read-mostly need)."""
-    text = _to_yaml(data, 0)
-    if not text.endswith("\n"):
-        text += "\n"
-    stream.write(text)
+    """Emit block-style YAML that loads back to the same data under YAML 1.1 and 1.2."""
+    stream.write(_to_yaml(data, 0) + "\n")
 
 
 def _to_yaml(obj: Any, indent: int) -> str:
     pad = "  " * indent
-    if isinstance(obj, dict):
-        if not obj:
-            return "{}"
-        lines = []
-        for key, value in obj.items():
-            if isinstance(value, (dict, list)) and value:
-                lines.append(f"{pad}{key}:")
-                lines.append(_to_yaml(value, indent + 1))
-            else:
-                lines.append(f"{pad}{key}: {_yaml_scalar(value)}")
-        return "\n".join(lines)
-    if isinstance(obj, list):
-        if not obj:
-            return "[]"
-        lines = []
-        for item in obj:
-            if isinstance(item, (dict, list)) and item:
-                lines.append(f"{pad}-")
-                lines.append(_to_yaml(item, indent + 1))
-            else:
-                lines.append(f"{pad}- {_yaml_scalar(item)}")
-        return "\n".join(lines)
-    return f"{pad}{_yaml_scalar(obj)}"
+    if isinstance(obj, dict) and obj:
+        items = [(f"{_yaml_scalar(str(key))}:", value) for key, value in obj.items()]
+    elif isinstance(obj, list) and obj:
+        items = [("-", value) for value in obj]
+    else:
+        return f"{pad}{_yaml_scalar(obj)}"
+    lines = []
+    for head, value in items:
+        if isinstance(value, (dict, list)) and value:
+            lines.append(f"{pad}{head}\n{_to_yaml(value, indent + 1)}")
+        else:
+            lines.append(f"{pad}{head} {_yaml_scalar(value)}")
+    return "\n".join(lines)
 
 
-# YAML 1.1 bool/null literals (every case variant a 1.1 parser would coerce).
-_YAML_RESERVED_WORDS = frozenset(
-    {
-        "true",
-        "false",
-        "yes",
-        "no",
-        "on",
-        "off",
-        "null",
-        "~",
-    }
-)
-# Indicators that have special meaning at the start of a plain scalar.
-_YAML_LEADING_INDICATORS = frozenset("*&!|>%@`,[]{}#:-?")
+# YAML 1.1 bool and null words; the check is case-insensitive.
+_YAML_RESERVED_WORDS = frozenset({"y", "n", "yes", "no", "true", "false", "on", "off", "null"})
+_YAML_ESCAPES = {'"': '\\"', "\\": "\\\\", "\n": "\\n", "\t": "\\t", "\r": "\\r"}
 
 
 def _needs_quoting(text: str) -> bool:
-    """Whether a string scalar would be misread by a YAML 1.1 parser unquoted."""
-    if text == "":
-        return True
-    # Whitespace at the edges, or characters that break plain flow scalars.
-    if text.strip() != text or any(c in text for c in ":#\n\"'"):
-        return True
-    # YAML 1.1 bool/null literals (case-insensitive) would be coerced.
-    if text.lower() in _YAML_RESERVED_WORDS:
-        return True
-    # Leading reserved indicator (incl. things like '-1' handled by the
-    # numeric check below, but '- ' / '-x' need quoting).
-    if text[0] in _YAML_LEADING_INDICATORS:
-        return True
-    # Numeric-looking strings (incl. leading-zero like '0123', floats, signs)
-    # would be parsed as numbers, losing the string type.
-    candidate = text.replace("_", "")
-    if candidate and candidate[0] in "+-":
-        candidate = candidate[1:]
-    if candidate:
-        try:
-            int(candidate)
-            return True
-        except ValueError:
-            pass
-        try:
-            float(candidate)
-            return True
-        except ValueError:
-            pass
-    return False
+    """Whether a string would not load back as itself if emitted as a plain scalar.
+
+    Plain output is limited to printable text starting with a letter or '_', which no
+    YAML 1.1 or 1.2 number, timestamp, merge or value resolver matches.
+    """
+    return not (
+        (text[:1].isalpha() or text[:1] == "_")
+        and text.isprintable()
+        and text == text.rstrip()
+        and not any(c in text for c in ":#\"'")
+        and text.lower() not in _YAML_RESERVED_WORDS
+    )
+
+
+def _yaml_quote(text: str) -> str:
+    """Double-quote text, escaping every character YAML cannot carry raw."""
+    out = []
+    for char in text:
+        code = ord(char)
+        if char in _YAML_ESCAPES:
+            out.append(_YAML_ESCAPES[char])
+        elif char.isprintable():
+            out.append(char)
+        elif code <= 0xFF:
+            out.append(f"\\x{code:02x}")
+        elif code <= 0xFFFF:
+            out.append(f"\\u{code:04x}")
+        else:
+            out.append(f"\\U{code:08x}")
+    return '"' + "".join(out) + '"'
+
+
+def _yaml_float(value: float) -> str:
+    if math.isnan(value):
+        return ".nan"
+    if math.isinf(value):
+        return ".inf" if value > 0 else "-.inf"
+    text = repr(value)
+    # YAML 1.1 floats need a '.' in the mantissa, so 1e+16 becomes 1.0e+16.
+    if "e" in text and "." not in text:
+        mantissa, exponent = text.split("e")
+        text = f"{mantissa}.0e{exponent}"
+    return text
 
 
 def _yaml_scalar(value: Any) -> str:
+    """Render a scalar or an empty container as a YAML flow value."""
     if value is None:
         return "null"
     if isinstance(value, bool):
         return "true" if value else "false"
-    if isinstance(value, (int, float)):
+    if isinstance(value, int):
         return str(value)
+    if isinstance(value, float):
+        return _yaml_float(value)
+    if isinstance(value, dict):
+        return "{}"
+    if isinstance(value, list):
+        return "[]"
     text = str(value)
-    if _needs_quoting(text):
-        return json.dumps(text, ensure_ascii=False)
-    return text
+    return _yaml_quote(text) if _needs_quoting(text) else text

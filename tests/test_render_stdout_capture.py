@@ -1,18 +1,13 @@
-"""Regression: rendered (non-dry-run) command output must reach the *current*
-sys.stdout so typer.testing.CliRunner can capture it.
+"""Rendered output reaches the current sys.stdout, even when its codec cannot encode the data."""
 
-output.render() previously bound ``stream=sys.stdout`` as a default argument,
-which captured the stdout object that existed at import time. Under CliRunner
-(which swaps sys.stdout per-invocation) that meant rendered data was written to
-the real terminal and ``result.stdout`` came back empty. render() now resolves
-sys.stdout at call time; this test fails if that regresses.
-"""
-
+import io
 import json
+import sys
 
 import httpx
 from typer.testing import CliRunner
 
+from hfox.cli import main
 from hfox.cli.main import cli
 
 runner = CliRunner()
@@ -35,3 +30,18 @@ def test_rendered_get_is_captured_on_stdout(mock_api):
     assert result.exit_code == 0, result.stdout
     # The default JSON render must land in captured stdout, not the real terminal.
     assert json.loads(result.stdout) == ticket
+
+
+def test_unencodable_output_is_escaped_not_a_crash(monkeypatch, tmp_path):
+    raw_out, raw_err = io.BytesIO(), io.BytesIO()
+    stdout = io.TextIOWrapper(raw_out, encoding="ascii")
+    monkeypatch.setattr(sys, "stdout", stdout)
+    monkeypatch.setattr(sys, "stderr", io.TextIOWrapper(raw_err, encoding="ascii"))
+    monkeypatch.setattr(sys, "argv", ["hfox", "--dry-run", "tickets", "list", "-q", "café—x"])
+    for key, value in {**ENV, "HFOX_CONFIG_DIR": str(tmp_path)}.items():
+        monkeypatch.setenv(key, value)
+
+    main.app()
+
+    stdout.flush()
+    assert json.loads(raw_out.getvalue().decode("ascii"))["params"]["q"] == "café—x"
