@@ -7,6 +7,7 @@ execute, and we exercise the ValidationError / require_staff_id error paths.
 """
 
 import json
+import os
 import subprocess
 import sys
 
@@ -40,15 +41,11 @@ _INVOKER = (
 
 
 def run_app(argv, base_env=None):
-    """Run the real `app()` entry point in a subprocess to assert exact exit codes.
-
-    HfoxError -> JSON-on-stdout + stable exit code mapping lives in `app()`, not
-    in the bare `cli` object CliRunner invokes. These cases fail during input
-    validation, before any HTTP request, so they stay offline.
-    """
+    """Run the real `app()` entry point; --dry-run keeps a regression off the network."""
     env = dict(base_env if base_env is not None else ENV)
+    env["HFOX_CONFIG_DIR"] = os.environ["HFOX_CONFIG_DIR"]
     return subprocess.run(
-        [sys.executable, "-c", _INVOKER, *argv],
+        [sys.executable, "-c", _INVOKER, "--dry-run", *argv],
         env=env,
         capture_output=True,
         text=True,
@@ -64,13 +61,13 @@ def ok_json(payload):
     return handler
 
 
-# -- list: collection read + render_list (line 51-52) -----------------------
+# -- list: collection read + render_list -----------------------
 def test_list_renders_collection_and_passes_filters(mock_api):
     body = {"page_info": {"page_count": 1, "count": 2}, "data": [{"id": 1}, {"id": 2}]}
     captured = mock_api(ok_json(body))
     result = run(
         "tickets", "list",
-        "--status", "Open", "--category", "Sales", "-q", "broken",
+        "--status", "2", "--category", "3", "-q", "broken",
         "--sort", "updated", "--minify", "--fields", "id,subject",
         "--page", "2", "--size", "25",
     )
@@ -79,8 +76,8 @@ def test_list_renders_collection_and_passes_filters(mock_api):
     assert req.method == "GET"
     assert req.url.path.endswith("/tickets/")
     qp = dict(req.url.params)
-    assert qp["status"] == "Open"
-    assert qp["category"] == "Sales"
+    assert qp["status"] == "2"
+    assert qp["category"] == "3"
     assert qp["q"] == "broken"
     assert qp["sort"] == "updated"
     assert qp["minify_response"] == "true"
@@ -122,10 +119,10 @@ def test_list_query_defaults_status_to_all(mock_api):
 
 def test_list_query_with_explicit_status_is_kept(mock_api):
     captured = mock_api(ok_json({"page_info": {"page_count": 1, "count": 0}, "data": []}))
-    result = run("tickets", "list", "-q", "foo", "--status", "closed")
+    result = run("tickets", "list", "-q", "foo", "--status", "_pending")
     assert result.exit_code == 0
     qp = dict(captured[0].url.params)
-    assert qp["status"] == "closed"
+    assert qp["status"] == "_pending"
     assert qp["q"] == "foo"
 
 
@@ -184,7 +181,7 @@ def test_get_with_show_cf_changes_param(mock_api):
     assert dict(captured[0].url.params)["show_cf_changes"] == "true"
 
 
-# -- create: response render + success message (lines 139-142) --------------
+# -- create: response render + success message --------------
 def test_create_renders_result_and_success(mock_api):
     captured = mock_api(ok_json({"id": 7, "display_id": "T-7"}))
     result = run(
@@ -218,7 +215,7 @@ def test_create_existing_client_no_name_email(mock_api):
     assert out["id"] == 8
 
 
-# -- create: validation branches (lines 110-115) ----------------------------
+# -- create: validation branches ----------------------------
 def test_create_no_body_is_validation_error():
     proc = run_app(
         ["tickets", "create",
@@ -231,7 +228,7 @@ def test_create_no_body_is_validation_error():
 
 
 def test_create_no_contact_is_validation_error():
-    # Has body but neither (name+email) nor client -> line 112-115.
+    # Has body but neither (name+email) nor client.
     proc = run_app(["tickets", "create", "--subject", "x", "--category", "1", "--text", "hi"])
     assert proc.returncode == 3
     assert "contact" in json.loads(proc.stdout)["error"].lower()
@@ -246,11 +243,14 @@ def test_create_name_without_email_is_validation_error():
     assert "contact" in json.loads(proc.stdout)["error"].lower()
 
 
-# -- create-bulk: list payload + validation (lines 151-158) -----------------
+# -- create-bulk: list payload + validation -----------------
 def test_create_bulk_posts_array(mock_api, tmp_path):
     f = tmp_path / "bulk.json"
     f.write_text(json.dumps([{"subject": "a"}, {"subject": "b"}]))
-    captured = mock_api(ok_json([{"id": 1}, {"id": 2}]))
+    captured = mock_api(ok_json([
+        {"display_id": "#DC00000001", "id": 1, "success": True},
+        {"display_id": "#DC00000002", "id": 2, "success": True},
+    ]))
     result = run("tickets", "create-bulk", "--file", str(f))
     assert result.exit_code == 0
     assert captured[0].url.path.endswith("/tickets/")
@@ -274,7 +274,7 @@ def test_create_bulk_empty_array_is_validation_error(tmp_path):
     assert "between 1 and 100" in json.loads(proc.stdout)["error"]
 
 
-# -- reply / note: body-required validation (lines 209-210, 280-281) --------
+# -- reply / note: a body, a file or a property is required ----------------
 def test_reply_without_body_is_validation_error():
     proc = run_app(["tickets", "reply", "42"])
     assert proc.returncode == 3
@@ -287,7 +287,7 @@ def test_note_without_body_is_validation_error():
     assert "note body" in json.loads(proc.stdout)["error"].lower()
 
 
-# -- reply / note: real POST renders the result (lines 235-238, 301-304) ----
+# -- reply / note: real POST renders the result ----
 def test_reply_posts_and_renders(mock_api):
     captured = mock_api(ok_json({"id": 100, "status": "open"}))
     result = run("tickets", "reply", "42", "--text", "ok", "--status", "5")
@@ -325,7 +325,7 @@ def test_note_posts_with_alert_and_renders(mock_api):
     assert json.loads(result.stdout)["id"] == 101
 
 
-# -- user-reply: required user+text, real POST (lines 320-332) --------------
+# -- user-reply: required user+text, real POST --------------
 def test_user_reply_posts_and_renders(mock_api):
     captured = mock_api(ok_json({"id": 200}))
     result = run(
@@ -349,10 +349,10 @@ def test_user_reply_missing_required_user_errors():
     assert result.exit_code == 2
 
 
-# -- update-cf: fields required + POST render (lines 351-359) ---------------
+# -- update-cf: fields required + POST render ---------------
 def test_update_cf_posts_and_renders(mock_api):
     captured = mock_api(ok_json({"id": 1, "updated": True}))
-    result = run("tickets", "update-cf", "42", "--cf", "7=Urgent", "--cf", "6=3,4")
+    result = run("tickets", "update-cf", "42", "--cf", "7=Urgent", "--cf", "6=[3,4]")
     assert result.exit_code == 0
     req = captured[0]
     assert req.url.path.endswith("/ticket/42/update_custom_fields/")
@@ -377,7 +377,7 @@ def test_update_cf_json_payload(mock_api):
     assert body["t-cf-1"] == "Acme, Inc."
 
 
-# -- tags: add/remove required + POST render (lines 371-382) ----------------
+# -- tags: add/remove required + POST render ----------------
 def test_tags_posts_and_renders(mock_api):
     captured = mock_api(ok_json({"tags": ["vip"]}))
     result = run("tickets", "tags", "42", "--add", "vip,urgent", "--remove", "old")
@@ -397,7 +397,7 @@ def test_tags_without_add_or_remove_is_validation_error():
     assert "add" in json.loads(proc.stdout)["error"].lower()
 
 
-# -- subscribe / unsubscribe: real POST render (lines 402-403, 413-416) -----
+# -- subscribe / unsubscribe: real POST render -----
 def test_subscribe_posts_and_renders(mock_api):
     captured = mock_api(ok_json({"subscribed": [3, 4]}))
     result = run("tickets", "subscribe", "42", "--agents", "3,4")
@@ -422,14 +422,14 @@ def test_unsubscribe_posts_and_renders(mock_api):
 
 
 def test_unsubscribe_missing_staff_id_is_validation_error():
-    # No --staff-id, no HFOX_STAFF_ID env -> require_staff_id raises (line 414).
+    # No --staff-id, no HFOX_STAFF_ID env -> require_staff_id raises.
     env = {k: v for k, v in ENV.items() if k != "HFOX_STAFF_ID"}
     proc = run_app(["tickets", "unsubscribe", "42"], base_env=env)
     assert proc.returncode == 3
     assert "staff id" in json.loads(proc.stdout)["error"].lower()
 
 
-# -- forward: full body + render (lines 454-472) ----------------------------
+# -- forward: full body + render ----------------------------
 def test_forward_posts_full_body_and_renders(mock_api):
     captured = mock_api(ok_json({"forwarded": True}))
     result = run(
@@ -472,7 +472,7 @@ def test_forward_defaults_send_all_and_convert(mock_api):
     assert "ticket_attachments" not in body
 
 
-# -- move: real POST render (line 495) --------------------------------------
+# -- move: real POST render --------------------------------------
 def test_move_posts_and_renders(mock_api):
     captured = mock_api(ok_json({"moved": True}))
     result = run("tickets", "move", "42", "--to-category", "9", "--note", "rerouted")
@@ -485,7 +485,7 @@ def test_move_posts_and_renders(mock_api):
     assert json.loads(result.stdout)["moved"] is True
 
 
-# -- delete: confirm/abort + --yes path + success (lines 506-512) -----------
+# -- delete: confirm/abort + --yes path + success -----------
 def test_delete_with_yes_posts_and_renders(mock_api):
     captured = mock_api(ok_json({"deleted": True}))
     result = run("tickets", "delete", "42", "--yes")
@@ -506,12 +506,15 @@ def test_delete_confirm_yes_via_prompt(mock_api):
     result = runner.invoke(cli, ["tickets", "delete", "42"], input="y\n", env=env)
     assert result.exit_code == 0
     assert captured and captured[0].url.path.endswith("/ticket/42/delete/")
+    assert "Delete ticket 42?" in result.stderr
+    assert json.loads(result.stdout)["deleted"] is True
 
 
-def test_delete_abort_when_declined():
-    # Decline the confirmation -> typer abort, no request issued (exit != 0).
+def test_delete_abort_when_declined(mock_api):
+    captured = mock_api(lambda r: httpx.Response(200, json={}))
     result = runner.invoke(cli, ["tickets", "delete", "42"], input="n\n", env=dict(ENV))
-    assert result.exit_code != 0
+    assert result.exit_code == 1
+    assert captured == []
 
 
 # -- API error surfaces as exit code 1 --------------------------------------
