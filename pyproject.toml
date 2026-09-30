@@ -8,9 +8,9 @@ license = { text = "MIT" }
 authors = [{ name = "Leo Herzog" }]
 keywords = ["happyfox", "helpdesk", "cli", "support", "tickets"]
 dependencies = [
-    "typer>=0.15.1",
+    "typer>=0.27.2",
     "httpx>=0.28.1",
-    "rich>=13.9.4",
+    "rich>=15.0.0",
 ]
 
 [project.urls]
@@ -29,9 +29,10 @@ packages = ["src/hfox"]
 
 [dependency-groups]
 dev = [
-    "pytest>=8.3.4",
+    "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
-    "ruff>=0.9.1",
+    "pyyaml>=6.0.3",
+    "ruff>=0.16.9",
 ]
 
 [tool.ruff]

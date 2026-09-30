@@ -105,9 +105,9 @@ def app() -> None:
     command = typer.main.get_command(cli)
     try:
         command(args=None, standalone_mode=False)
-    except click_exceptions.Exit as exc:  # typer.Exit / --help / --version
+    except typer.Exit as exc:  # typer.Exit / --help / --version
         raise SystemExit(exc.exit_code) from None
-    except click_exceptions.Abort:
+    except typer.Abort:
         output.warn("Aborted.")
         raise SystemExit(1) from None
     except click_exceptions.NoArgsIsHelpError as exc:

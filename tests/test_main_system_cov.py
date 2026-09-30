@@ -12,6 +12,7 @@ import sys
 
 import httpx
 import pytest
+import typer
 from typer._click import exceptions as click_exceptions
 from typer.testing import CliRunner
 
@@ -88,14 +89,14 @@ def _install_stub_command(monkeypatch, exc):
 
 def test_app_exit_branch(monkeypatch):
     # typer.Exit / --help / --version path -> SystemExit(exit_code) (108-109)
-    _install_stub_command(monkeypatch, click_exceptions.Exit(0))
+    _install_stub_command(monkeypatch, typer.Exit(0))
     with pytest.raises(SystemExit) as ei:
         app()
     assert ei.value.code == 0
 
 
 def test_app_exit_branch_nonzero(monkeypatch):
-    _install_stub_command(monkeypatch, click_exceptions.Exit(7))
+    _install_stub_command(monkeypatch, typer.Exit(7))
     with pytest.raises(SystemExit) as ei:
         app()
     assert ei.value.code == 7
@@ -103,7 +104,7 @@ def test_app_exit_branch_nonzero(monkeypatch):
 
 def test_app_abort_branch(monkeypatch, capsys):
     # click Abort -> warn("Aborted.") + SystemExit(1) (110-112)
-    _install_stub_command(monkeypatch, click_exceptions.Abort())
+    _install_stub_command(monkeypatch, typer.Abort())
     with pytest.raises(SystemExit) as ei:
         app()
     assert ei.value.code == 1
