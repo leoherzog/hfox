@@ -1,13 +1,9 @@
-"""Coverage for hfox assets, assets types, and assets custom-fields.
-
-Read paths (list/get) exercised via the mock_api fixture; write request shape
-via --dry-run. Also covers the _parse_new_contacts JSON validation branches and
-the delete confirmation-abort path.
-"""
+"""Coverage for hfox assets, asset types and asset custom fields."""
 
 import json
 
 import httpx
+import pytest
 from typer.testing import CliRunner
 
 from hfox.cli.main import cli
@@ -39,7 +35,7 @@ def _collection(rows):
 
 
 # --------------------------------------------------------------------------- #
-# assets list / get  (lines 61-64, 73-75)
+# assets list / get
 # --------------------------------------------------------------------------- #
 def test_assets_list_get_request_and_params(mock_api):
     def handler(request):
@@ -95,7 +91,7 @@ def test_assets_get_single_resource(mock_api):
 
 
 # --------------------------------------------------------------------------- #
-# assets create  (line 123: POST + render)
+# assets create
 # --------------------------------------------------------------------------- #
 def test_assets_create_posts_and_renders(mock_api):
     def handler(request):
@@ -140,12 +136,9 @@ def test_assets_create_new_contact_json_sent_as_contacts(mock_api):
 
 
 # --------------------------------------------------------------------------- #
-# _parse_new_contacts validation branches  (lines 31-43)
+# _parse_new_contacts validation branches
 # --------------------------------------------------------------------------- #
 def test_create_new_contact_json_invalid_json(mock_api):
-    # Should never reach the network: _parse_new_contacts raises ValidationError.
-    # The bare `cli` object surfaces it as a raised exception (exit 1); the JSON
-    # error-object + exact exit code 3 contract is exercised by app() elsewhere.
     captured = mock_api(lambda r: httpx.Response(200, json={}))
     result = run(
         "assets", "create",
@@ -154,7 +147,7 @@ def test_create_new_contact_json_invalid_json(mock_api):
     )
     assert result.exit_code != 0
     assert isinstance(result.exception, ValidationError)
-    assert "Invalid --new-contact-json" in str(result.exception)
+    assert "Invalid JSON in --new-contact-json" in str(result.exception)
     assert captured == []
 
 
@@ -183,7 +176,7 @@ def test_create_new_contact_json_element_not_object(mock_api):
 
 
 # --------------------------------------------------------------------------- #
-# assets update  (line 167-168: PUT + render)
+# assets update
 # --------------------------------------------------------------------------- #
 def test_assets_update_puts_and_renders(mock_api):
     def handler(request):
@@ -209,7 +202,7 @@ def test_assets_update_puts_and_renders(mock_api):
 
 
 # --------------------------------------------------------------------------- #
-# assets delete  (lines 185-186 abort, 187-189 success + render)
+# assets delete
 # --------------------------------------------------------------------------- #
 def test_assets_delete_with_yes_renders_and_succeeds(mock_api):
     def handler(request):
@@ -244,10 +237,12 @@ def test_assets_delete_confirm_yes_prompt(mock_api):
     assert result.exit_code == 0, result.stdout
     assert len(captured) == 1
     assert captured[0].method == "DELETE"
+    assert "Delete asset 10?" in result.stderr
+    assert json.loads(result.stdout) == {"ok": 1}
 
 
 # --------------------------------------------------------------------------- #
-# asset types  (lines 201-203 list, 212-214 get)
+# asset types
 # --------------------------------------------------------------------------- #
 def test_asset_types_list(mock_api):
     def handler(request):
@@ -262,6 +257,18 @@ def test_asset_types_list(mock_api):
     assert req.url.path.endswith("/asset_types/")
     body = json.loads(result.stdout)
     assert body["data"][0]["name"] == "Laptops"
+
+
+def test_dry_run_page_all_previews_the_first_wire_request(mock_api):
+    result = run("--dry-run", "--page-all", "assets", "types", "list")
+    assert result.exit_code == 0, result.stdout
+    preview = json.loads(result.stdout)
+    assert preview["url"].endswith("/asset_types/?size=50&page=1")
+
+    captured = mock_api(lambda request: httpx.Response(200, json=_collection([])))
+    result = run("--page-all", "assets", "types", "list")
+    assert result.exit_code == 0, result.stdout
+    assert str(captured[0].url) == preview["url"]
 
 
 def test_asset_types_get(mock_api):
@@ -279,7 +286,7 @@ def test_asset_types_get(mock_api):
 
 
 # --------------------------------------------------------------------------- #
-# asset custom fields  (lines 238-241 list, 250-252 get)
+# asset custom fields
 # --------------------------------------------------------------------------- #
 def test_asset_custom_fields_list(mock_api):
     def handler(request):
@@ -312,7 +319,7 @@ def test_asset_custom_fields_get(mock_api):
 
     req = captured[0]
     assert req.method == "GET"
-    assert req.url.path.endswith("/asset_custom_fields/5/")
+    assert req.url.path.endswith("/asset_custom_field/5/")
     assert json.loads(result.stdout) == {"id": 5, "name": "RAM"}
 
 
@@ -330,3 +337,131 @@ def test_assets_create_requires_staff_id(mock_api):
     assert isinstance(result.exception, ValidationError)
     assert "staff id" in str(result.exception).lower()
     assert captured == []
+
+
+# --------------------------------------------------------------------------- #
+# Dry-run request shapes and client-side validation
+# --------------------------------------------------------------------------- #
+def dry(*args):
+    result = run("--dry-run", *args)
+    assert result.exit_code == 0, result.output
+    return json.loads(result.stdout)
+
+
+def test_dry_run_create_sends_contact_group_ids():
+    p = dry(
+        "assets", "create", "--asset-type", "2", "--name", "MBP", "--display-id", "L-1",
+        "--contact-ids", "5", "--contact-group-ids", "1, 3",
+    )
+    assert p["method"] == "POST"
+    assert p["url"].endswith("/assets/?asset_type=2")
+    assert p["body"] == {
+        "name": "MBP",
+        "display_id": "L-1",
+        "created_by": 1,
+        "contact_ids": [5],
+        "contact_group_ids": [1, 3],
+    }
+
+
+def test_dry_run_update_sends_contact_group_ids():
+    p = dry("assets", "update", "10", "--contact-group-ids", "4")
+    assert p["method"] == "PUT"
+    assert p["url"].endswith("/asset/10/")
+    assert p["body"] == {"updated_by": 1, "contact_group_ids": [4]}
+
+
+def test_dry_run_custom_field_get_uses_singular_path():
+    p = dry("assets", "custom-fields", "get", "5")
+    assert p["method"] == "GET"
+    assert p["url"].endswith("/asset_custom_field/5/")
+    assert p["body"] is None
+
+
+def test_dry_run_cf_json_keeps_null_and_bare_ids():
+    p = dry(
+        "assets", "update", "10", "--cf", "6=[3,4]", "--cf-json", '{"7": null, "8": "02"}',
+    )
+    assert p["body"]["custom_fields"] == {"6": [3, 4], "7": None, "8": "02"}
+
+
+def test_dry_run_blank_new_contact_json_is_omitted():
+    p = dry("assets", "update", "10", "--name", "X", "--new-contact-json", "[]")
+    assert p["body"] == {"updated_by": 1, "name": "X"}
+
+
+def test_dry_run_list_sends_size_and_page():
+    p = dry("assets", "list", "--size", "50", "--page", "2")
+    assert p["method"] == "GET"
+    assert p["url"].endswith("/assets/?size=50&page=2")
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("assets", "get", "0"),
+        ("assets", "update", "0", "--name", "x"),
+        ("assets", "delete", "-y", "--", "-1"),
+        ("assets", "types", "get", "0"),
+        ("assets", "custom-fields", "get", "0"),
+        ("assets", "list", "--asset-type", "0"),
+        ("assets", "list", "--size", "51"),
+        ("assets", "list", "--size", "0"),
+        ("assets", "list", "--page", "0"),
+        ("assets", "custom-fields", "list", "--size", "100"),
+        ("assets", "custom-fields", "list", "--page", "-1"),
+    ],
+)
+def test_out_of_range_ids_and_paging_are_usage_errors(mock_api, args):
+    captured = mock_api(lambda r: httpx.Response(200, json={}))
+    result = run(*args)
+    assert result.exit_code == 2  # click usage error; main.app() maps it to 3
+    assert "range" in result.output
+    assert captured == []
+
+
+@pytest.mark.parametrize(
+    "args, message",
+    [
+        (("create", "--name", "  ", "--display-id", "D"), "--name must not be blank"),
+        (("create", "--name", "X", "--display-id", ""), "--display-id must not be blank"),
+        (("create", "--name", "x" * 201, "--display-id", "D"), "200 characters"),
+        (("update", "10", "--name", ""), "--name must not be blank"),
+        (("update", "10", "--display-id", " "), "--display-id must not be blank"),
+        (("create", "--name", "X", "--display-id", "D", "--cf-json", '{"t-cf-5": 1}'), "t-cf-5"),
+        (("create", "--name", "X", "--display-id", "D", "--contact-group-ids", "a"), "integers"),
+        (("create", "--name", "X", "--display-id", "D", "--contact-ids", " , "), "--contact-ids"),
+        (("update", "10", "--new-contact-json", "[NaN]"), "--new-contact-json"),
+        (("update", "10"), "Nothing to update"),
+        (("update", "10", "--new-contact-json", "[]"), "Nothing to update"),
+        (("update", "10", "--cf-json", "{}"), "Nothing to update"),
+    ],
+)
+def test_invalid_input_raises_before_request(mock_api, args, message):
+    captured = mock_api(lambda r: httpx.Response(200, json={}))
+    result = run("assets", *args)
+    assert isinstance(result.exception, ValidationError), result.output
+    assert message in str(result.exception)
+    assert captured == []
+
+
+@pytest.mark.parametrize(
+    "flag, value, key",
+    [("--contact-ids", "", "contact_ids"), ("--contact-group-ids", " , ", "contact_group_ids")],
+)
+def test_update_blank_id_list_sends_empty_list(flag, value, key):
+    p = dry("assets", "update", "2", flag, value)
+    assert p["method"] == "PUT"
+    assert p["url"].endswith("/asset/2/")
+    assert p["body"] == {"updated_by": 1, key: []}
+
+
+def test_create_accepts_200_character_name():
+    p = dry("assets", "create", "--name", "x" * 200, "--display-id", "D")
+    assert len(p["body"]["name"]) == 200
+
+
+@pytest.mark.parametrize("verb", ["create", "update"])
+def test_assets_cf_help_shows_list_syntax(verb):
+    result = run("assets", verb, "--help")
+    assert "'<id>=[a,b]'" in result.stdout

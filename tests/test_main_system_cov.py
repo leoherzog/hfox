@@ -1,12 +1,9 @@
 """Coverage for hfox.cli.main (root callback, global flags, version, app() wrapper)
 and hfox.cli.system (read-only reference-data commands).
-
-main.py targets: 44-45 (_version_callback), 85 (--no-color), 105-120 (app() error
-handling branches), 124 (__main__).
-system.py targets: every command (categories/staff/statuses/ticket-cf/contact-cf).
 """
 
 import json
+import os
 import subprocess
 import sys
 
@@ -39,7 +36,7 @@ def run(*args, env_extra=None):
 
 
 # ---------------------------------------------------------------------------
-# main.py :: --version (_version_callback, lines 44-45)
+# main.py :: --version (_version_callback)
 # ---------------------------------------------------------------------------
 def test_version_flag_prints_version_and_exits_zero():
     from hfox import __version__
@@ -50,17 +47,18 @@ def test_version_flag_prints_version_and_exits_zero():
 
 
 # ---------------------------------------------------------------------------
-# main.py :: --no-color sets NO_COLOR env (line 85)
+# main.py :: --no-color sets NO_COLOR env
 # ---------------------------------------------------------------------------
 def test_no_color_flag_sets_env(monkeypatch):
     monkeypatch.delenv("NO_COLOR", raising=False)
-    # --dry-run short-circuits before any network; the callback still runs and
-    # must set NO_COLOR=1 from the --no-color flag (line 85).
     result = run("--no-color", "--dry-run", "tickets", "reply", "9", "--text", "hi")
     assert result.exit_code == 0
-    import os
-
     assert os.environ.get("NO_COLOR") == "1"
+
+
+def test_any_no_color_value_is_accepted():
+    result = run("--dry-run", "system", "statuses", env_extra={"NO_COLOR": "yes-please"})
+    assert result.exit_code == 0
 
 
 # ---------------------------------------------------------------------------
@@ -74,7 +72,7 @@ def test_format_flag_resolves(mock_api):
 
 
 # ---------------------------------------------------------------------------
-# main.py :: app() entry-point error handling (lines 105-120)
+# main.py :: app() entry-point error handling
 #
 # CliRunner invokes the bare `cli`; the structured wrapper lives in app(). We
 # drive app() directly, swapping the constructed command for a stub that raises
@@ -87,23 +85,18 @@ def _install_stub_command(monkeypatch, exc):
     monkeypatch.setattr(main_mod.typer.main, "get_command", lambda _cli: fake_command)
 
 
-def test_app_exit_branch(monkeypatch):
-    # typer.Exit / --help / --version path -> SystemExit(exit_code) (108-109)
-    _install_stub_command(monkeypatch, typer.Exit(0))
-    with pytest.raises(SystemExit) as ei:
-        app()
-    assert ei.value.code == 0
+def test_app_returns_exit_code(monkeypatch):
+    def fake_command(args=None, standalone_mode=True):
+        return 7
 
-
-def test_app_exit_branch_nonzero(monkeypatch):
-    _install_stub_command(monkeypatch, typer.Exit(7))
+    monkeypatch.setattr(main_mod.typer.main, "get_command", lambda _cli: fake_command)
     with pytest.raises(SystemExit) as ei:
         app()
     assert ei.value.code == 7
 
 
 def test_app_abort_branch(monkeypatch, capsys):
-    # click Abort -> warn("Aborted.") + SystemExit(1) (110-112)
+    # click Abort -> warn("Aborted.") + SystemExit(1)
     _install_stub_command(monkeypatch, typer.Abort())
     with pytest.raises(SystemExit) as ei:
         app()
@@ -147,7 +140,7 @@ def test_app_click_exception_branch(monkeypatch, capsys):
 
 
 def test_app_hfox_error_branch_emits_json(monkeypatch, capsys):
-    # HfoxError -> JSON on stdout + SystemExit(exit_code) (116-118)
+    # HfoxError -> JSON on stdout + SystemExit(exit_code)
     _install_stub_command(monkeypatch, AuthError("no creds"))
     with pytest.raises(SystemExit) as ei:
         app()
@@ -185,7 +178,7 @@ def test_app_base_hfox_error_exit_5(monkeypatch, capsys):
 
 
 def test_app_keyboard_interrupt_branch(monkeypatch):
-    # KeyboardInterrupt -> SystemExit(130) (119-120)
+    # KeyboardInterrupt -> SystemExit(130)
     _install_stub_command(monkeypatch, KeyboardInterrupt())
     with pytest.raises(SystemExit) as ei:
         app()
@@ -202,12 +195,12 @@ def test_app_success_path(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# main.py :: __main__ guard (line 124) — exercise via subprocess running app()
+# main.py :: __main__ guard, exercised via a subprocess running app()
 # ---------------------------------------------------------------------------
 def test_module_run_as_script_version():
     proc = subprocess.run(
         [sys.executable, "-m", "hfox.cli.main", "--version"],
-        env=ENV,
+        env={**ENV, "HFOX_CONFIG_DIR": os.environ["HFOX_CONFIG_DIR"]},
         capture_output=True,
         text=True,
     )
@@ -217,12 +210,13 @@ def test_module_run_as_script_version():
 
 # ---------------------------------------------------------------------------
 # system.py :: each read-only reference-data command
-# Endpoints return bare JSON arrays; commands render the list as-is.
+# Endpoints return bare JSON arrays.
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize(
     "command, path, sample",
     [
         ("categories", "/categories/", [{"id": 1, "name": "Sales"}]),
+        ("priorities", "/priorities/", [{"id": 6, "name": "High"}]),
         ("staff", "/staff/", [{"id": 2, "name": "Alice"}]),
         ("statuses", "/statuses/", [{"id": 3, "name": "Open"}]),
         ("ticket-custom-fields", "/ticket_custom_fields/", [{"id": 4, "name": "Priority"}]),
@@ -267,3 +261,53 @@ def test_system_dry_run_short_circuits(mock_api):
     assert payload["method"] == "GET"
     assert payload["url"].endswith("/statuses/")
     assert captured == []
+
+
+def test_system_priorities_dry_run():
+    result = run("--dry-run", "system", "priorities")
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert (payload["method"], payload["body"]) == ("GET", None)
+    assert payload["url"].endswith("/api/1.1/json/priorities/")
+
+
+_FIELDS = [
+    {
+        "id": 61,
+        "name": "Request Survey",
+        "type": "choice",
+        "choices": [
+            {"text": "No", "id": 2, "dependant_fields": []},
+            {"text": "Yes", "id": 1, "dependant_fields": [{"id": 9}]},
+        ],
+    },
+    {"id": 4, "name": "Account Number", "type": "text", "choices": None},
+]
+
+
+@pytest.mark.parametrize("command", ["ticket-custom-fields", "contact-custom-fields"])
+def test_custom_field_choices_flattened_in_csv(mock_api, command):
+    mock_api(lambda req: httpx.Response(200, json=_FIELDS))
+    result = run("-f", "csv", "system", command)
+    assert result.exit_code == 0
+    lines = result.stdout.splitlines()
+    assert lines[0] == "id,name,type,choices"
+    assert lines[1] == '61,Request Survey,choice,"No=2, Yes=1"'
+    assert lines[2] == "4,Account Number,text,"
+
+
+def test_custom_field_choices_flattened_in_table(mock_api):
+    many = [{"text": f"Option {i}", "id": 100 + i} for i in range(10)]
+    mock_api(lambda req: httpx.Response(200, json=[{"id": 5, "choices": many}]))
+    result = run(
+        "-f", "table", "system", "ticket-custom-fields", env_extra={"COLUMNS": "400"}
+    )
+    assert result.exit_code == 0
+    assert "Option 9=109" in result.stdout
+    assert "dependant" not in result.stdout
+
+
+def test_custom_field_choices_kept_nested_in_json(mock_api):
+    mock_api(lambda req: httpx.Response(200, json=_FIELDS))
+    result = run("system", "contact-custom-fields")
+    assert json.loads(result.stdout) == _FIELDS
