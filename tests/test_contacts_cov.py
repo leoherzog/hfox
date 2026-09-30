@@ -1,19 +1,15 @@
 """Coverage for `hfox contacts` and its `groups` sub-app.
 
-READ commands (list/get) exercise the live request path via the `mock_api`
-fixture; WRITE verbs (create/update/create-bulk, group create/update/
-add-contacts/remove-contacts) are verified with --dry-run so we assert the
-exact method/url/body HappyFox would receive without hitting the network.
-
-Targets src/hfox/cli/contacts.py lines: 37-42, 51-53, 75-85, 121, 133,
-144-149, 160-162, 171-173, 186-195, 208-216, 240, 252-255.
+Reads run against `mock_api`; writes are checked with --dry-run for method, URL and body.
 """
 
 import json
+import os
 import subprocess
 import sys
 
 import httpx
+import pytest
 from typer.testing import CliRunner
 
 from hfox.cli.main import cli
@@ -50,21 +46,16 @@ _INVOKER = (
 
 
 def run_app(argv):
-    """Run the real `app()` entry point in a subprocess to assert exact exit codes.
-
-    The HfoxError -> JSON-on-stdout + stable exit code mapping lives in `app()`,
-    not in the bare `cli` object CliRunner invokes. These cases fail during input
-    validation, before any HTTP request, so they stay offline.
-    """
+    """Run the real `app()` entry point; --dry-run keeps a regression off the network."""
     return subprocess.run(
-        [sys.executable, "-c", _INVOKER, *argv],
-        env=dict(ENV),
+        [sys.executable, "-c", _INVOKER, "--dry-run", *argv],
+        env={**ENV, "HFOX_CONFIG_DIR": os.environ["HFOX_CONFIG_DIR"]},
         capture_output=True,
         text=True,
     )
 
 
-# -- contacts list (lines 37-42) -------------------------------------------
+# -- contacts list ---------------------------------------------------------
 def test_contacts_list_get_params_and_renders(mock_api):
     body = {"page_info": {"page_count": 1, "count": 1}, "data": [{"id": 7, "name": "Ada"}]}
     captured = mock_api(lambda req: httpx.Response(200, json=body))
@@ -118,7 +109,7 @@ def test_contacts_list_page_all_walks_pages(mock_api):
     assert [page["data"][0]["id"] for page in out] == [1, 2]
 
 
-# -- contacts get (lines 51-53) --------------------------------------------
+# -- contacts get ----------------------------------------------------------
 def test_contacts_get_by_id(mock_api):
     contact = {"id": 55, "name": "Jane", "email": "j@x.org"}
     captured = mock_api(lambda req: httpx.Response(200, json=contact))
@@ -141,7 +132,7 @@ def test_contacts_get_by_email(mock_api):
     assert captured[0].url.path.endswith("/user/a@x.com/")
 
 
-# -- contacts create (lines 75-85) -----------------------------------------
+# -- contacts create -------------------------------------------------------
 def test_contacts_create_full_body_with_phone_and_cf():
     p = preview(
         "--dry-run", "contacts", "create",
@@ -207,18 +198,18 @@ def test_contacts_create_phone_only_sends_null_email():
 def test_contacts_create_no_phone_omits_phones_uses_cf_json():
     p = preview(
         "--dry-run", "contacts", "create",
-        "--name", "NoPhone",
-        "--cf-json", '{"7": ["a", "b"]}',
+        "--name", "NoPhone", "--email", "n@x.org",
+        "--cf-json", '{"7": ["a", "b"], "c-cf-8": null}',
     )
-    assert p["body"]["name"] == "NoPhone"
-    # No phone and no email -> compact drops them entirely.
-    assert "phones" not in p["body"]
-    assert "email" not in p["body"]
-    # cf-json passes values through verbatim under the c-cf- prefix.
-    assert p["body"]["c-cf-7"] == ["a", "b"]
+    assert p["body"] == {
+        "name": "NoPhone",
+        "email": "n@x.org",
+        "c-cf-7": ["a", "b"],
+        "c-cf-8": None,
+    }
 
 
-# -- contacts update (lines 121, 133) --------------------------------------
+# -- contacts update -------------------------------------------------------
 def test_contacts_update_set_login_true_maps_to_TRUE():
     p = preview(
         "--dry-run", "contacts", "update", "55",
@@ -230,12 +221,11 @@ def test_contacts_update_set_login_true_maps_to_TRUE():
     assert p["body"]["is_login_enabled"] == "TRUE"
 
 
-def test_contacts_update_no_set_login_omits_field():
+def test_contacts_update_no_set_login_sends_false():
     p = preview(
         "--dry-run", "contacts", "update", "55",
         "--email", "new@x.org", "--no-set-login",
     )
-    # --no-set-login -> FALSE; verifies the False branch of line 121.
     assert p["body"]["is_login_enabled"] == "FALSE"
     assert p["body"]["email"] == "new@x.org"
 
@@ -245,10 +235,8 @@ def test_contacts_update_phone_and_cf():
         "--dry-run", "contacts", "update", "12",
         "--phone", "999", "--cf", "3=Gold",
     )
-    # No --phone-id -> no id key, so HappyFox ADDS a new phone record.
-    assert p["body"]["phones"] == [
-        {"type": "o", "number": "999", "is_primary": True}
-    ]
+    # No --phone-id adds a phone; type and is_primary are sent only when given.
+    assert p["body"]["phones"] == [{"number": "999"}]
     assert p["body"]["c-cf-3"] == "Gold"
     # set_login untouched -> omitted.
     assert "is_login_enabled" not in p["body"]
@@ -259,10 +247,8 @@ def test_contacts_update_phone_id_and_type_edit_existing_record():
         "--dry-run", "contacts", "update", "12",
         "--phone", "999", "--phone-id", "77", "--phone-type", "w",
     )
-    # With --phone-id the record id is included so HappyFox EDITS that phone.
-    assert p["body"]["phones"] == [
-        {"id": 77, "type": "w", "number": "999", "is_primary": True}
-    ]
+    assert p["url"].endswith("/user/12/")
+    assert p["body"] == {"phones": [{"id": 77, "type": "w", "number": "999"}]}
 
 
 def test_contacts_update_bad_phone_type_exits_3():
@@ -273,7 +259,7 @@ def test_contacts_update_bad_phone_type_exits_3():
     assert "phone type" in json.loads(proc.stdout)["error"].lower()
 
 
-# -- contacts create-bulk (lines 144-149) ----------------------------------
+# -- contacts create-bulk --------------------------------------------------
 def test_contacts_create_bulk_posts_array(tmp_path):
     f = tmp_path / "contacts.json"
     f.write_text(json.dumps([{"name": "A"}, {"name": "B"}]))
@@ -286,9 +272,7 @@ def test_contacts_create_bulk_posts_array(tmp_path):
 def test_contacts_create_bulk_rejects_non_array(tmp_path):
     f = tmp_path / "contacts.json"
     f.write_text(json.dumps({"name": "A"}))
-    result = run("contacts", "create-bulk", "--file", str(f))
-    # A non-array bulk file raises ValidationError before any HTTP call.
-    assert result.exit_code != 0
+    result = run("--dry-run", "contacts", "create-bulk", "--file", str(f))
     assert isinstance(result.exception, ValidationError)
     assert "JSON array of contacts" in str(result.exception)
 
@@ -328,7 +312,7 @@ def test_contacts_create_bulk_missing_file():
     assert isinstance(result.exception, ValidationError)
 
 
-# -- groups list (lines 160-162) -------------------------------------------
+# -- groups list -----------------------------------------------------------
 def test_groups_list_renders(mock_api):
     body = {"data": [{"id": 1, "name": "VIPs"}, {"id": 2, "name": "Beta"}]}
     captured = mock_api(lambda req: httpx.Response(200, json=body))
@@ -350,9 +334,9 @@ def test_groups_list_bare_list_body(mock_api):
     assert captured[0].url.path.endswith("/contact_groups/")
 
 
-# -- groups get (lines 171-173) --------------------------------------------
+# -- groups get ------------------------------------------------------------
 def test_groups_get(mock_api):
-    group = {"id": 3, "name": "VIPs", "tagged_domains": ["acme.com"]}
+    group = {"id": 3, "name": "VIPs", "tagged_domains": "acme.com,foo.com"}
     captured = mock_api(lambda req: httpx.Response(200, json=group))
 
     result = run("contacts", "groups", "get", "3")
@@ -363,7 +347,7 @@ def test_groups_get(mock_api):
     assert json.loads(result.stdout) == group
 
 
-# -- groups create (lines 186-195) -----------------------------------------
+# -- groups create ---------------------------------------------------------
 def test_groups_create_full_body():
     p = preview(
         "--dry-run", "contacts", "groups", "create",
@@ -374,8 +358,8 @@ def test_groups_create_full_body():
     assert p["url"].endswith("/contact_groups/")
     assert p["body"]["name"] == "VIPs"
     assert p["body"]["description"] == "important"
-    # split_csv trims whitespace per entry.
-    assert p["body"]["tagged_domains"] == ["acme.com", "foo.com"]
+    # Sent as the documented comma string, entries trimmed.
+    assert p["body"]["tagged_domains"] == "acme.com,foo.com"
 
 
 def test_groups_create_minimal_omits_optional():
@@ -386,7 +370,7 @@ def test_groups_create_minimal_omits_optional():
     assert "tagged_domains" not in p["body"]
 
 
-# -- groups update (lines 208-216) -----------------------------------------
+# -- groups update ---------------------------------------------------------
 def test_groups_update_body():
     p = preview(
         "--dry-run", "contacts", "groups", "update", "3",
@@ -395,16 +379,14 @@ def test_groups_update_body():
     assert p["method"] == "POST"
     assert p["url"].endswith("/contact_group/3/")
     assert p["body"]["description"] == "new desc"
-    assert p["body"]["tagged_domains"] == ["x.com"]
+    assert p["body"]["tagged_domains"] == "x.com"
 
 
-def test_groups_update_empty_body():
-    p = preview("--dry-run", "contacts", "groups", "update", "3")
-    # Nothing supplied -> compact yields an empty body.
-    assert p["body"] is None or p["body"] == {}
+def test_groups_update_empty_body_rejected(mock_api):
+    _fails_offline(mock_api, "contacts", "groups", "update", "3", match="Nothing to update")
 
 
-# -- groups add-contacts (line 240) ----------------------------------------
+# -- groups add-contacts ---------------------------------------------------
 def test_groups_add_contacts_array_body():
     p = preview(
         "--dry-run", "contacts", "groups", "add-contacts", "3",
@@ -418,12 +400,23 @@ def test_groups_add_contacts_array_body():
     ]
 
 
-def test_groups_add_contacts_default_no_access():
+def test_groups_add_contacts_omits_access_tickets_by_default():
     p = preview(
         "--dry-run", "contacts", "groups", "add-contacts", "5",
         "--contacts", "1",
     )
-    assert p["body"] == [{"contact": 1, "access_tickets": False}]
+    assert p["body"] == [{"contact": 1}]
+
+
+def test_groups_add_contacts_no_access_tickets_applies_to_every_contact():
+    p = preview(
+        "--dry-run", "contacts", "groups", "add-contacts", "5",
+        "--contacts", "1,2", "--no-access-tickets",
+    )
+    assert p["body"] == [
+        {"contact": 1, "access_tickets": False},
+        {"contact": 2, "access_tickets": False},
+    ]
 
 
 def test_groups_add_contacts_over_100_is_validation_error(mock_api):
@@ -447,10 +440,8 @@ def test_groups_add_contacts_over_100_exits_3():
 
 def test_groups_add_contacts_rejects_non_int():
     result = run(
-        "contacts", "groups", "add-contacts", "3", "--contacts", "abc",
+        "--dry-run", "contacts", "groups", "add-contacts", "3", "--contacts", "abc",
     )
-    # split_csv_ints rejects non-integers -> ValidationError.
-    assert result.exit_code != 0
     assert isinstance(result.exception, ValidationError)
 
 
@@ -479,7 +470,7 @@ def test_contacts_update_live_renders_result(mock_api):
 def test_contacts_create_bulk_live_renders_result(mock_api, tmp_path):
     f = tmp_path / "c.json"
     f.write_text(json.dumps([{"name": "A"}]))
-    created = [{"id": 1, "name": "A"}]
+    created = [{"email": "a@x.org", "success": True, "id": 1}]
     captured = mock_api(lambda req: httpx.Response(200, json=created))
     result = run("contacts", "create-bulk", "--file", str(f))
     assert result.exit_code == 0, result.stdout
@@ -506,7 +497,7 @@ def test_groups_update_live_renders_result(mock_api):
 
 
 def test_groups_add_contacts_live_renders_result(mock_api):
-    resp = {"updated": 1}
+    resp = [{"data": {"access_tickets": False, "contact": 11}, "success": True}]
     captured = mock_api(lambda req: httpx.Response(200, json=resp))
     result = run("contacts", "groups", "add-contacts", "3", "--contacts", "11")
     assert result.exit_code == 0, result.stdout
@@ -515,7 +506,12 @@ def test_groups_add_contacts_live_renders_result(mock_api):
 
 
 def test_groups_remove_contacts_live_renders_result(mock_api):
-    resp = {"removed": 2}
+    resp = [
+        {"data": {"message": "Successfully removed contact from group", "contact": 11},
+         "success": True},
+        {"data": {"message": "Contact not part of the contact group", "contact": 12},
+         "success": False},
+    ]
     captured = mock_api(lambda req: httpx.Response(200, json=resp))
     result = run("contacts", "groups", "remove-contacts", "3", "--contacts", "11,12")
     assert result.exit_code == 0, result.stdout
@@ -523,7 +519,7 @@ def test_groups_remove_contacts_live_renders_result(mock_api):
     assert json.loads(result.stdout) == resp
 
 
-# -- groups remove-contacts (lines 252-255) --------------------------------
+# -- groups remove-contacts ------------------------------------------------
 def test_groups_remove_contacts_body():
     p = preview(
         "--dry-run", "contacts", "groups", "remove-contacts", "3",
@@ -532,3 +528,230 @@ def test_groups_remove_contacts_body():
     assert p["method"] == "POST"
     assert p["url"].endswith("/contact_group/3/delete_contacts/")
     assert p["body"] == {"contacts": [11, 12, 13]}
+
+
+# -- validation and request shapes ------------------------------------------
+def _fails_offline(mock_api, *args, match):
+    """Assert a ValidationError (exit 3) is raised before any request."""
+    captured = mock_api(lambda req: httpx.Response(200, json={}))
+    result = run(*args)
+    assert isinstance(result.exception, ValidationError), result.stdout
+    assert int(result.exception.exit_code) == 3
+    assert match in str(result.exception)
+    assert captured == []
+
+
+@pytest.mark.parametrize("query", ["", "   "])
+def test_contacts_list_blank_query_is_dropped(query):
+    p = preview("--dry-run", "contacts", "list", "-q", query)
+    assert p["method"] == "GET"
+    assert p["url"].endswith("/users/?page=1&size=10")
+    assert "q" not in p["params"]
+
+
+def test_contacts_list_query_sent_unchanged():
+    p = preview("--dry-run", "contacts", "list", "-q", "name:adam email:adam@x.com")
+    assert p["params"]["q"] == "name:adam email:adam@x.com"
+
+
+def test_contacts_list_size_and_page_bounds_exit_3():
+    for flag, value in (("--size", "51"), ("--size", "0"), ("--page", "0")):
+        proc = run_app(["contacts", "list", flag, value])
+        assert proc.returncode == 3, (flag, value, proc.stdout)
+        assert flag in json.loads(proc.stdout)["error"]
+
+
+def test_contacts_get_rejects_path_traversal(mock_api):
+    _fails_offline(mock_api, "contacts", "get", "5/../../tickets", match="Invalid contact")
+
+
+def test_contacts_update_rejects_path_traversal(mock_api):
+    _fails_offline(
+        mock_api, "contacts", "update", "5/../../tickets", "--name", "x",
+        match="Invalid contact",
+    )
+
+
+def test_contacts_update_by_email_set_login():
+    p = preview("--dry-run", "contacts", "update", "a@x.com", "--no-set-login")
+    assert p["method"] == "POST"
+    assert p["url"].endswith("/user/a@x.com/")
+    assert p["body"] == {"is_login_enabled": "FALSE"}
+
+
+def test_contacts_create_requires_email_or_phone(mock_api):
+    _fails_offline(mock_api, "contacts", "create", "--name", "Jane", match="--email or --phone")
+
+
+def test_contacts_create_blank_email_and_phone_fail(mock_api):
+    _fails_offline(
+        mock_api, "contacts", "create", "--name", "Jane", "--email", " ", "--phone", "",
+        match="--email or --phone",
+    )
+
+
+def test_contacts_create_blank_email_with_phone_sends_null():
+    p = preview(
+        "--dry-run", "contacts", "create", "--name", "Jane", "--email", "", "--phone", "555",
+    )
+    assert p["body"] == {
+        "name": "Jane",
+        "email": None,
+        "phones": [{"type": "o", "number": "555", "is_primary": True}],
+    }
+
+
+def test_contacts_create_blank_name_fails(mock_api):
+    _fails_offline(
+        mock_api, "contacts", "create", "--name", "  ", "--email", "j@x.org",
+        match="--name must not be blank",
+    )
+
+
+def test_contacts_create_repeated_phone_fails(mock_api):
+    _fails_offline(
+        mock_api, "contacts", "create", "--name", "J", "--phone", "1", "--phone", "2",
+        match="one number per call",
+    )
+
+
+def test_contacts_create_phone_type_without_phone_fails(mock_api):
+    _fails_offline(
+        mock_api, "contacts", "create", "--name", "J", "--email", "j@x.org",
+        "--phone-type", "w",
+        match="--phone-type requires --phone",
+    )
+
+
+def test_contacts_create_set_login_flags():
+    base = ("--dry-run", "contacts", "create", "--name", "J", "--email", "j@x.org")
+    assert "is_login_enabled" not in preview(*base)["body"]
+    assert preview(*base, "--set-login")["body"]["is_login_enabled"] == "TRUE"
+    assert preview(*base, "--no-set-login")["body"]["is_login_enabled"] == "FALSE"
+
+
+def test_contacts_create_cf_keys_allow_only_contact_prefix(mock_api):
+    p = preview(
+        "--dry-run", "contacts", "create", "--name", "J", "--email", "j@x.org",
+        "--cf", "c-cf-4=VIP", "--cf", "5=[1,2]",
+    )
+    assert p["body"]["c-cf-4"] == "VIP"
+    assert p["body"]["c-cf-5"] == [1, 2]
+    _fails_offline(
+        mock_api, "contacts", "create", "--name", "J", "--email", "j@x.org",
+        "--cf", "ccf-4=x",
+        match="Invalid custom-field key",
+    )
+
+
+def test_contacts_create_cf_help_shows_list_syntax():
+    result = run("contacts", "create", "--help")
+    assert "'<id>=[a,b]'" in result.stdout
+
+
+def test_contacts_update_primary_is_tri_state():
+    base = ("--dry-run", "contacts", "update", "12", "--phone", "999")
+    assert preview(*base, "--primary")["body"]["phones"] == [
+        {"number": "999", "is_primary": True}
+    ]
+    assert preview(*base, "--no-primary")["body"]["phones"] == [
+        {"number": "999", "is_primary": False}
+    ]
+
+
+def test_contacts_update_phone_id_requires_phone_type(mock_api):
+    _fails_offline(
+        mock_api, "contacts", "update", "12", "--phone", "999", "--phone-id", "31",
+        match="--phone-id requires --phone-type",
+    )
+
+
+def test_contacts_update_phone_options_require_phone(mock_api):
+    for extra in (("--phone-id", "31", "--phone-type", "w"), ("--primary",), ("--phone-type", "w")):
+        _fails_offline(
+            mock_api, "contacts", "update", "12", "--name", "x", *extra,
+            match="require --phone",
+        )
+
+
+def test_contacts_update_repeated_phone_fails(mock_api):
+    _fails_offline(
+        mock_api, "contacts", "update", "12", "--phone", "1", "--phone", "2",
+        match="one number per call",
+    )
+
+
+def test_contacts_update_empty_body_fails(mock_api):
+    _fails_offline(mock_api, "contacts", "update", "12", match="Nothing to update")
+
+
+def test_groups_ids_must_be_positive_ints():
+    for gid in ("abc", "0", "2/../7"):
+        proc = run_app(["contacts", "groups", "remove-contacts", gid, "--contacts", "1"])
+        assert proc.returncode == 3, (gid, proc.stdout)
+    proc = run_app(["contacts", "groups", "get", "abc"])
+    assert proc.returncode == 3
+
+
+def test_groups_update_blank_domains_clears():
+    p = preview("--dry-run", "contacts", "groups", "update", "3", "--domains", "")
+    assert p["method"] == "POST"
+    assert p["url"].endswith("/contact_group/3/")
+    assert p["body"] == {"tagged_domains": ""}
+
+
+def test_groups_create_blank_name_fails(mock_api):
+    _fails_offline(
+        mock_api, "contacts", "groups", "create", "--name", " ", match="--name must not be blank"
+    )
+
+
+# -- partial bulk failures exit 1 -------------------------------------------
+def test_contacts_create_bulk_failure_exits_1(mock_api, tmp_path):
+    f = tmp_path / "c.json"
+    f.write_text(json.dumps([{"name": "A", "email": "a@x.org"}, {"email": "b@x.org"}]))
+    resp = [
+        {"email": "a@x.org", "success": True, "id": 14},
+        {"email": "b@x.org", "success": False},
+    ]
+    mock_api(lambda req: httpx.Response(200, json=resp))
+    result = run("contacts", "create-bulk", "--file", str(f))
+    assert result.exit_code == 1
+    assert json.loads(result.stdout) == resp
+    assert "1 of 2 entries failed" in result.stderr
+
+
+def test_groups_add_contacts_failure_exits_1(mock_api):
+    resp = [
+        {"data": {"access_tickets": True, "contact": 1}, "success": True},
+        {"errors": [{"field": "contact", "errors": ["Select a valid choice."]}], "success": False},
+    ]
+    mock_api(lambda req: httpx.Response(200, json=resp))
+    result = run("contacts", "groups", "add-contacts", "3", "--contacts", "1,200")
+    assert result.exit_code == 1
+    assert json.loads(result.stdout) == resp
+    assert "1 of 2 entries failed" in result.stderr
+
+
+def test_groups_remove_contacts_missing_contact_exits_1(mock_api):
+    resp = [
+        {"data": {"message": "Contact not part of the contact group", "contact": 3},
+         "success": False},
+        {"data": {"message": "Contact does not exist", "contact": 100}, "success": False},
+    ]
+    mock_api(lambda req: httpx.Response(200, json=resp))
+    result = run("contacts", "groups", "remove-contacts", "3", "--contacts", "3,100")
+    assert result.exit_code == 1
+    assert json.loads(result.stdout) == resp
+    assert "1 of 2 entries failed" in result.stderr
+
+
+def test_groups_remove_contacts_not_in_group_is_benign(mock_api):
+    resp = [
+        {"data": {"message": "Contact not part of the contact group", "contact": 3},
+         "success": False},
+    ]
+    mock_api(lambda req: httpx.Response(200, json=resp))
+    result = run("contacts", "groups", "remove-contacts", "3", "--contacts", "3")
+    assert result.exit_code == 0, result.stderr
+    assert result.stderr == ""
