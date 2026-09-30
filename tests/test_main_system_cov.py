@@ -311,3 +311,20 @@ def test_custom_field_choices_kept_nested_in_json(mock_api):
     mock_api(lambda req: httpx.Response(200, json=_FIELDS))
     result = run("system", "contact-custom-fields")
     assert json.loads(result.stdout) == _FIELDS
+
+
+def test_system_staff_filters_client_side(mock_api):
+    staff = [
+        {"id": 1, "name": "Alice Smith", "email": "alice@x.org"},
+        {"id": 2, "name": "Bob Jones", "email": "BOB@x.org"},
+        {"id": 3, "name": "Alicia Bob", "email": None},
+    ]
+    captured = mock_api(lambda req: httpx.Response(200, json=staff))
+    result = run("system", "staff", "--name", "ALI")
+    assert result.exit_code == 0
+    assert [a["id"] for a in json.loads(result.stdout)] == [1, 3]
+    # Filters are not forwarded to the API (it ignores them).
+    assert captured[0].url.query == b""
+
+    result = run("system", "staff", "--email", "bob@", "--name", "jones")
+    assert [a["id"] for a in json.loads(result.stdout)] == [2]

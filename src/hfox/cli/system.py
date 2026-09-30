@@ -58,10 +58,31 @@ def priorities(ctx: typer.Context):
 
 
 @app.command("staff")
-def staff(ctx: typer.Context):
-    """List staff agents with their ids."""
+def staff(
+    ctx: typer.Context,
+    email: str = typer.Option(
+        None, "--email", help="Only agents whose email contains this (case-insensitive)."
+    ),
+    name: str = typer.Option(
+        None, "--name", help="Only agents whose name contains this (case-insensitive)."
+    ),
+):
+    """List staff agents with their ids.
+
+    HappyFox's staff/ endpoint takes no filter params, so --email/--name are
+    applied client-side to the returned array.
+    """
     obj = get_ctx(ctx)
-    obj.render_list(obj.call("GET", "staff/"))
+    agents = obj.call("GET", "staff/")
+    filters = {k: v.casefold() for k, v in {"email": email, "name": name}.items() if v}
+    if filters and isinstance(agents, list):
+        agents = [
+            a
+            for a in agents
+            if isinstance(a, dict)
+            and all(needle in str(a.get(k) or "").casefold() for k, needle in filters.items())
+        ]
+    obj.render_list(agents)
 
 
 @app.command("statuses")
