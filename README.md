@@ -1,51 +1,37 @@
 # hfox
 
-A modern command-line interface for the [HappyFox](https://www.happyfox.com/) REST API.
+A command-line interface for the [HappyFox](https://www.happyfox.com/) REST API.
 
-`hfox` gives you fast, scriptable access to every core HappyFox endpoint — tickets,
-contacts, contact groups, assets, asset types, and reference data — with a clean
-`noun verb` command structure inspired by the [Google Workspace CLI (`gws`)](https://github.com/googleworkspace/cli).
-It is dual-audience by design: friendly for humans (`--help` everywhere, tables,
-`--dry-run`) and first-class for scripts and AI agents (JSON by default, structured
-errors, stable exit codes).
+`hfox` covers tickets, contacts, contact groups, assets, asset types and reference data
+with a `noun verb` structure modeled on the [Google Workspace CLI (`gws`)](https://github.com/googleworkspace/cli).
+Humans get `--help`, tables and `--dry-run`; scripts and AI agents get JSON by default,
+structured errors and stable exit codes.
 
 ## Install / run
 
-`hfox` is distributed as a [`uv` tool](https://docs.astral.sh/uv/), so no manual
-virtualenv is needed.
+`hfox` is a [`uv` tool](https://docs.astral.sh/uv/) and requires Python 3.11+.
 
 ```bash
-# Run without installing (from a checkout):
-uvx --from . hfox --help
-
-# Or install it as a persistent tool:
-uv tool install .
-hfox --help
-
-# Once published to PyPI:
-uvx hfox --help
-uv tool install hfox
+uvx --from . hfox --help     # run from a checkout without installing
+uv tool install .            # or install it as a persistent tool
+uvx hfox --help              # once published to PyPI
 ```
-
-Requires Python 3.11+.
 
 ## Authenticate
 
-HappyFox authenticates with an **API key** and an **auth code** sent as HTTP Basic
-credentials. Generate them in HappyFox under *Manage → Integrations → HappyFox API*.
+`hfox` needs an **API key** and its **auth code**. In HappyFox, open *Apps → Goodies → API*,
+click **Enable**, add a key with **+**, then hover its row and click **see auth code**.
 
 ```bash
 hfox auth login            # prompts for subdomain, region, API key, auth code
-hfox auth login \
-  --subdomain acme --region us \
+hfox auth login --subdomain acme --region us \
   --api-key XXXX --auth-code YYYY \
-  --email agent@acme.com     # resolves a default staff id from your email
+  --email agent@acme.com   # sets a default staff id from your email
 hfox auth status
 hfox auth logout
 ```
 
-Login validates the credentials against `/staff/` and stores them in
-`~/.hfox/token.json` (chmod `0600`), with non-secret settings in `~/.hfox/config.toml`.
+Login checks the credentials against `/staff/` before saving them.
 
 ### Configuration
 
@@ -53,113 +39,123 @@ Everything lives under `~/.hfox/` (override with `HFOX_CONFIG_DIR`):
 
 | File | Contents |
 |------|----------|
-| `token.json` | secrets: `api_key`, `auth_code`, `subdomain`, `region` (mode `0600`) |
+| `token.json` | secrets: `api_key`, `auth_code`, `subdomain`, `region`, optional `base_url` (mode `0600`) |
 | `config.toml` | non-secret: `subdomain`, `region`, `default_format`, `default_staff_id` |
 
-Environment overrides (handy for CI): `HFOX_SUBDOMAIN`, `HFOX_REGION`,
-`HFOX_API_KEY`, `HFOX_AUTH_CODE`, `HFOX_BASE_URL`, `HFOX_STAFF_ID`, `HFOX_FORMAT`.
+Environment overrides: `HFOX_SUBDOMAIN`, `HFOX_REGION`, `HFOX_API_KEY`, `HFOX_AUTH_CODE`,
+`HFOX_BASE_URL`, `HFOX_STAFF_ID`, `HFOX_FORMAT`.
 
-EU-hosted accounts are reached automatically via `--region eu` (`*.happyfox.net`);
-custom domains work by passing the full host as `--subdomain` (e.g. `support.acme.com`).
+`--region eu` targets `*.happyfox.net`; a custom domain goes in `--subdomain` as the full host
+(`support.acme.com`). For proxied accounts, set `HFOX_BASE_URL` to an `http(s)://host` root;
+a trailing `/api/1.1/json` is stripped.
 
 ## Global flags
+
+Global flags go before the resource: `hfox -f table tickets list`, not `hfox tickets list -f table`.
 
 | Flag | Purpose |
 |------|---------|
 | `-f, --format {json\|table\|csv\|yaml}` | output format (default `json`) |
-| `--dry-run` | build and print the request without sending it |
-| `--page-all` | auto-paginate list commands; with `json` format, streams NDJSON (one page per line) |
-| `--page-limit N` / `--page-delay MS` | bound auto-pagination (default 10 pages / 100 ms) |
+| `--dry-run` | print the exact request without sending it |
+| `--page-all` | fetch up to `--page-limit` pages from `--page`; JSON streams NDJSON, one page per line |
+| `--page-limit N` / `--page-delay MS` | bound `--page-all` (default 10 pages / 100 ms); warns when the limit cuts it short |
 | `--staff-id N` | acting staff id for write actions |
 | `-q, --quiet` | suppress status messages |
-| `--config-dir DIR` | override the config directory (default `~/.hfox`; envvar `HFOX_CONFIG_DIR`) |
+| `--config-dir DIR` | override the config directory |
 | `--no-color` | disable color (also honors `NO_COLOR`) |
 | `--version` | show version and exit |
 
-> Note: `-q` is the global `--quiet` short flag, but `tickets list` and
-> `contacts list` rebind `-q` to `--query` (full-text search). On those commands
-> `-q` takes a search string rather than toggling quiet mode. Multi-word ticket
-> queries are ANDed — `-q "degree works"` matches tickets containing both words
-> anywhere, in any order; quoting does not force an exact-phrase match.
+For full exports, pass `--size 50`. On `tickets list`, add a stable `--sort` such as
+`ticketa`; `-q` searches always sort by relevance.
 
-Exit codes are stable: `0` success, `1` API error, `2` auth error, `3` validation,
-`4` not found, `5` other. Usage errors (unknown flag/command, missing argument)
-exit `3` with a JSON error on stdout; bare group invocations (`hfox tickets`)
-print help and exit `0`, like `--help`.
+On `tickets list` and `contacts list`, `-q` means `--query`:
+
+- Tickets: text or filters such as `status:"In Progress","New"`; a comma means any-of and a
+  space replaces the docs' `+`. Multi-word text is ANDed, which HappyFox does not document.
+- Contacts: `field:value` filters on `name`, `email`, `phone`, `updated_since` or
+  `created_since`, ANDed when space-separated. Omit `+` from phone numbers.
+
+Exit codes are stable: `0` success, `1` API error, `2` auth error, `3` validation, `4` not
+found, `5` other. Usage errors exit `3` with a JSON error on stdout. Bulk and group-membership
+commands print the response, then exit `1` if any entry failed; removing a contact that is not
+in the group does not count. Bare group invocations (`hfox tickets`) print help and exit `0`.
 
 ## Command overview
 
 ```
 hfox auth      login | status | logout
-hfox tickets   list | get | create | create-bulk | reply | note | user-reply
+hfox tickets   list | get | create | create-bulk | inline-attachment | reply | note | user-reply
                update-cf | tags | subscribe | unsubscribe | forward | move | delete
 hfox contacts  list | get | create | update | create-bulk
 hfox contacts groups   list | get | create | update | add-contacts | remove-contacts
 hfox assets    list | get | create | update | delete
 hfox assets types          list | get
 hfox assets custom-fields  list | get
-hfox system    categories | staff | statuses | ticket-custom-fields | contact-custom-fields
+hfox system    categories | priorities | staff | statuses | ticket-custom-fields | contact-custom-fields
 ```
+
+Ticket commands take the numeric ticket id, not the display id. `contacts create` also edits
+the contact with the same email and resets custom fields it does not send.
 
 ## Examples
 
 ```bash
 # Reference data (ids you need elsewhere)
-hfox system categories -f table
-hfox system staff -f table
+hfox -f table system priorities
+hfox -f table system ticket-custom-fields    # choices shown as text=id
 
 # Tickets
-hfox tickets list --status _all --size 50 -f table
-hfox tickets list -q 'priority:"CRITICAL"' --page-all
+hfox -f table tickets list --status _all --size 50 --fields id,display_id,subject
+hfox --page-all tickets list -q 'priority:"CRITICAL"' --size 50
+hfox tickets list -q 'id:DC00000003'         # find the numeric id of a display id
 hfox tickets get 1234 --show-cf-changes
 hfox tickets create --subject "Printer down" --category 3 \
   --name "Han Solo" --email han@rebels.org --text "It is on fire." \
   --cf 7=Urgent --attachment ./photo.png
 hfox tickets reply 1234 --text "On it." --status 5 --update-customer
+hfox tickets note 1234 --status 3 --unassign  # change properties without a message
+hfox tickets inline-attachment ./diagram.png  # temporary url for an <img src>
 hfox tickets move 1234 --to-category 4 --note "Wrong queue"
 hfox tickets delete 1234 --yes
 
 # Contacts & groups
-hfox contacts list -q han -f table
+hfox -f table contacts list -q name:han
 hfox contacts create --name "Leia" --email leia@rebels.org --cf 4=VIP
 hfox contacts groups add-contacts 12 --contacts 41,200 --access-tickets
 
 # Assets
-hfox assets list --asset-type 1 -f table
+hfox -f table assets list --asset-type 1
 hfox assets create --asset-type 1 --name "MBP-14" --display-id "LAP-001" \
-  --cf 5=4 --cf 6=3,4
+  --cf 5=4 --cf '6=[3,4]'
 ```
 
 ### Custom fields
 
-Pass `--cf <id>=<value>` (repeatable). Values with commas become multi-option
-arrays; numbers are coerced automatically:
+`--cf <id>=<value>` is repeatable. Canonical decimals become numbers, `<id>=[a,b]` sends a
+list, and anything else is sent as the exact string.
 
 ```bash
---cf 3="In Progress"     # text / dropdown label
---cf 5=4                 # dropdown option id
---cf 6=3,4,5             # multiple-option ids -> [3,4,5]
+--cf 3="In Progress"     # text field
+--cf 5=4                 # dropdown choice id
+--cf '6=[3,4,5]'         # multiple-option ids -> [3,4,5]; '6=[4]' -> [4]
 --cf 7=2025-12-25        # date
+--cf 8=02134             # stays the string "02134"
 ```
 
-An all-blank value such as `--cf 5=` is rejected with a validation error. To send a
-raw custom-field value with no coercion (commas, numbers, or explicit empties left
-as-is), use the `--cf-json` escape hatch with a JSON object mapping field id to value,
-e.g. `--cf-json '{"5": ""}'`.
+An all-blank value such as `--cf 5=` exits 3. `--cf-json '{"5": ""}'` sends values uncoerced.
+With `--attachment`, `null` values are dropped, or rejected on reply and note. `tickets create`,
+`reply` and `note` take contact fields through `--contact-cf` and `--contact-cf-json`.
 
-Custom-field ids come from `hfox system ticket-custom-fields` /
-`hfox system contact-custom-fields` / `hfox assets custom-fields list` — **not** the
-ids shown in agent-portal URLs.
+Keys are numeric ids from `hfox system ticket-custom-fields`, `contact-custom-fields` or
+`hfox assets custom-fields list`, not agent-portal URLs. A key may carry its endpoint's
+prefix (`t-cf-5`); any other key exits 3.
 
 ## Architecture
 
-A clean two-layer split (UI-agnostic library vs. presentation):
-
 ```
 src/hfox/
-├── core/     # HappyFoxClient (httpx, Basic auth, 429 backoff, pagination),
-│             # config/secrets, error + exit-code model — no Typer, no printing
-└── cli/      # Typer apps, output formatting, auth, one module per resource
+├── core/     # HTTP client, config/secrets, errors and exit codes; no Typer, no printing
+└── cli/      # Typer apps and output formatting, one module per resource
 ```
 
 ## Development
@@ -167,21 +163,13 @@ src/hfox/
 ```bash
 uv sync                          # set up the environment
 uv run hfox --help               # run from source
-uv run python -m pytest          # tests (offline — httpx MockTransport, no network)
+uv run python -m pytest          # offline tests
 uv run ruff check .              # lint
 uv build                         # build sdist + wheel
 ```
 
-Run `pytest` via `uv run python -m pytest` (rather than bare `uv run pytest`) — the
-module form is the reliable invocation; the bare `pytest` entrypoint shebang can break
-if the venv is not freshly created.
-
-Contributing or extending the CLI? See **[AGENTS.md](AGENTS.md)** for the architecture,
-the `AppContext` contract every command uses, how to add a command or resource, and the
-HappyFox API quirks (auth, base URL, custom-field encoding, pagination, rate limits).
+Read [AGENTS.md](AGENTS.md) before extending the CLI.
 
 ## Scope
 
-This first release covers tickets, contacts/groups, assets/types, system reference
-data, and auth. Reports, Knowledge Base export, and ticket custom-field choice
-management (dynamic dropdowns) are planned follow-ups.
+Reports, Knowledge Base export and ticket custom-field choice management are planned.

@@ -1,7 +1,7 @@
 [project]
 name = "hfox"
 version = "0.1.0"
-description = "A modern command-line interface for the HappyFox REST API"
+description = "Command-line interface for the HappyFox REST API"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }

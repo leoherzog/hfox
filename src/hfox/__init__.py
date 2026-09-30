@@ -1,3 +1,3 @@
-"""hfox — a modern command-line interface for the HappyFox REST API."""
+"""hfox: command-line interface for the HappyFox REST API."""
 
 __version__ = "0.1.0"
