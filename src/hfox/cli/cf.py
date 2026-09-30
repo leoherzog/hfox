@@ -1,130 +1,103 @@
-"""Helpers for HappyFox custom-field encoding.
-
-HappyFox addresses custom fields by internal id, not label:
-  * ticket custom fields use the key  t-cf-<id>
-  * contact custom fields use         c-cf-<id>  (on create) / ccf-<id> (on updates)
-  * asset custom fields are sent as a JSON object keyed by the bare field id
-
-Value encoding by field type:
-  text/textarea -> string
-  number        -> int/float
-  dropdown      -> single option id (int)
-  multiple opts -> list of option ids ([1,4,5])
-  date          -> "YYYY-MM-DD" string
-
-`--cf` options arrive as "<id>=<value>" or "<key>=<value>" strings. A value with
-commas becomes a list (multi-option); otherwise we coerce int/float when possible
-and fall back to the raw string. For full control over value types (and to bypass
-the comma/number coercion entirely), use `--cf-json` with a JSON object mapping
-field id -> value; see `parse_cf_json`.
-"""
+"""Custom-field option parsing and help text for ticket, contact and asset writes."""
 
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from ..core.errors import ValidationError
+from ._util import _DIGITS, parse_json
 
-#: Recognized custom-field key prefixes. A --cf key that already starts with one
-#: of these is used verbatim; a bare id gets the caller's prefix applied.
-KNOWN_CF_PREFIXES: tuple[str, ...] = ("t-cf-", "c-cf-", "ccf-")
+# Rich markup would swallow an unescaped [a,b].
+CF_HELP = "Custom field '<id>=<value>' (repeatable); '<id>=\\[a,b]' sends a list."
+CF_JSON_HELP = "Custom fields as JSON {id: value}, sent uncoerced."
 
-#: Lowercased value strings that Python's float() accepts but JSON cannot encode.
-#: We treat them as plain strings so we never emit float('inf')/float('nan').
-_NON_FINITE_FLOATS = frozenset(
-    {"inf", "-inf", "+inf", "nan", "-nan", "+nan", "infinity", "-infinity", "+infinity"}
-)
+_NUMBER = re.compile(r"-?(0|[1-9][0-9]*)(\.[0-9]+)?")
 
 
 def _coerce_scalar(text: str) -> Any:
-    text = text.strip()
-    if text == "":
+    if not _NUMBER.fullmatch(text):
         return text
     try:
-        return int(text)
-    except ValueError:
-        pass
-    if text.lower() not in _NON_FINITE_FLOATS:
-        try:
-            return float(text)
-        except ValueError:
-            pass
-    return text
+        number = float(text) if "." in text else int(text)
+    except ValueError:  # int() refuses more than 4300 digits
+        return text
+    # Keep a number only when it re-serializes to the same text, so 1.10 stays a string.
+    return number if json.dumps(number) == text else text
 
 
 def coerce_value(raw: str) -> Any:
-    """Coerce a raw --cf value string into the right JSON type."""
-    if "," in raw:
-        return [_coerce_scalar(part) for part in raw.split(",") if part.strip() != ""]
-    return _coerce_scalar(raw)
+    """Coerce a --cf value: canonical ASCII decimals become numbers, "[a,b]" a list.
+
+    Anything else is returned as the exact string, commas included.
+    """
+    if not (raw.startswith("[") and raw.endswith("]")):
+        return _coerce_scalar(raw)
+    inner = raw[1:-1]
+    if inner.strip() == "":
+        return []
+    items = [part.strip() for part in inner.split(",")]
+    if "" in items:
+        raise ValidationError(f"Empty item in custom-field list '{raw}'.")
+    return [_coerce_scalar(item) for item in items]
 
 
-def parse_cf_options(items: list[str] | None, *, prefix: str = "t-cf-") -> dict[str, Any]:
-    """Parse repeated --cf "<id>=<value>" options into a {prefix+id: value} dict.
+def _field_key(key: str, prefix: str, allowed: tuple[str, ...] | None) -> str:
+    """Map a numeric id to prefix+id; pass through a key carrying an allowed prefix."""
+    if _DIGITS.fullmatch(key):
+        return f"{prefix}{key}"
+    prefixes = [p for p in ((prefix,) if allowed is None else allowed) if p]
+    for p in prefixes:
+        if key.startswith(p) and _DIGITS.fullmatch(key[len(p):]):
+            return key
+    forms = ["<id>", *(f"{p}<id>" for p in prefixes)]
+    raise ValidationError(
+        f"Invalid custom-field key '{key}'; expected {' or '.join(forms)} with a numeric id."
+    )
 
-    A key that already starts with a known prefix (t-cf-/c-cf-/ccf-) is used
-    verbatim; a bare numeric id gets the given prefix applied. An all-blank value
-    raises ValidationError (use --cf-json to send an explicit empty value).
+
+def parse_cf_options(
+    items: list[str] | None,
+    *,
+    prefix: str = "t-cf-",
+    allowed: tuple[str, ...] | None = None,
+) -> dict[str, Any]:
+    """Parse repeated "<id>=<value>" options into {prefix+id: coerced value}.
+
+    Keys already carrying a prefix in `allowed` (default: `prefix` alone) pass through.
+    Raises ValidationError on a malformed item, an invalid key or an all-blank value.
     """
     out: dict[str, Any] = {}
     for item in items or []:
-        if "=" not in item:
-            raise ValidationError(
-                f"Invalid --cf value '{item}'. Expected '<id>=<value>' (e.g. '3=Urgent')."
-            )
-        key, _, value = item.partition("=")
-        key = key.strip()
+        key, sep, value = item.partition("=")
+        if not sep:
+            raise ValidationError(f"Invalid custom field '{item}'; expected '<id>=<value>'.")
         if value.strip() == "":
             raise ValidationError(
-                f"Invalid --cf value '{item}'. Empty value for '{key}'; "
-                "use --cf-json to send an explicit empty value."
+                f"Empty value in custom field '{item}'; use --cf-json to send an empty value."
             )
-        if key.startswith(KNOWN_CF_PREFIXES):
-            field_key = key
-        else:
-            field_key = f"{prefix}{key}"
-        out[field_key] = coerce_value(value)
+        out[_field_key(key.strip(), prefix, allowed)] = coerce_value(value)
     return out
 
 
 def parse_asset_cf(items: list[str] | None) -> dict[str, Any]:
-    """Parse --cf options for assets into a {"<id>": value} JSON object."""
-    out: dict[str, Any] = {}
-    for item in items or []:
-        if "=" not in item:
-            raise ValidationError(
-                f"Invalid --cf value '{item}'. Expected '<id>=<value>' (e.g. '5=4')."
-            )
-        key, _, value = item.partition("=")
-        key = key.strip()
-        if value.strip() == "":
-            raise ValidationError(
-                f"Invalid --cf value '{item}'. Empty value for '{key}'; "
-                "use --cf-json to send an explicit empty value."
-            )
-        out[key] = coerce_value(value)
-    return out
+    """Parse asset --cf options into a {"<id>": value} object."""
+    return parse_cf_options(items, prefix="", allowed=())
 
 
-def parse_cf_json(raw: str | None, prefix: str = "t-cf-") -> dict[str, Any]:
-    """Parse a --cf-json escape-hatch string into a {prefix+id: value} dict.
+def parse_cf_json(
+    raw: str | None,
+    prefix: str = "t-cf-",
+    allowed: tuple[str, ...] | None = None,
+) -> dict[str, Any]:
+    """Parse a JSON object of field id -> value into {prefix+id: value}, values uncoerced.
 
-    `raw` must be a JSON object mapping field id -> value. Values are passed
-    through with NO coercion (their types come straight from the JSON). For
-    assets the caller passes prefix="" so keys are bare ids.
-
-    Returns {} for None/empty. Raises ValidationError on invalid JSON or a
-    non-object payload.
+    Keys follow the parse_cf_options rules. Returns {} for a blank input.
     """
     if raw is None or raw.strip() == "":
         return {}
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ValidationError(f"Invalid --cf-json: {exc}") from exc
+    parsed = parse_json(raw, "custom-field option")
     if not isinstance(parsed, dict):
-        raise ValidationError(
-            "Invalid --cf-json: expected a JSON object mapping field id -> value."
-        )
-    return {f"{prefix}{key}": value for key, value in parsed.items()}
+        raise ValidationError("Custom-field JSON must be an object mapping field id -> value.")
+    return {_field_key(key, prefix, allowed): value for key, value in parsed.items()}
