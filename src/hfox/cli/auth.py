@@ -1,9 +1,6 @@
-"""`hfox auth` — login, status, logout.
+"""`hfox auth`: login, status and logout.
 
-Login collects the account subdomain, region (US/EU), API key, and auth code,
-validates them against the /staff/ endpoint, optionally resolves a default staff
-id from the agent's email, and writes secrets to ~/.hfox/token.json (0600) plus
-non-secret settings to ~/.hfox/config.toml.
+Login checks credentials against /staff/ before saving them.
 """
 
 from __future__ import annotations
@@ -16,12 +13,13 @@ from ..core.config import (
     Config,
     clear_credentials,
     load_config,
+    normalize_base_url,
     save_credentials,
     save_settings,
 )
 from ..core.errors import AuthError, HfoxError
 from . import output
-from .context import get_ctx
+from .context import emit_dry_run, get_ctx
 
 app = typer.Typer(no_args_is_help=True, help="Manage HappyFox credentials.")
 
@@ -46,14 +44,12 @@ def login(
     api_key: str = typer.Option(
         None,
         "--api-key",
-        help="HappyFox API key. Passing secrets on the command line leaks them "
-        "via shell history and /proc; prefer the interactive prompt or HFOX_API_KEY.",
+        help="API key; omit it to enter it at a hidden prompt, out of shell history.",
     ),
     auth_code: str = typer.Option(
         None,
         "--auth-code",
-        help="HappyFox auth code. Passing secrets on the command line leaks them "
-        "via shell history and /proc; prefer the interactive prompt or HFOX_AUTH_CODE.",
+        help="Auth code; omit it to enter it at a hidden prompt, out of shell history.",
     ),
     email: str = typer.Option(
         None, "--email", "-e", help="Agent email, used to set a default staff id."
@@ -72,9 +68,9 @@ def login(
     api_key = api_key or typer.prompt("API key", hide_input=True)
     auth_code = auth_code or typer.prompt("Auth code", hide_input=True)
 
-    # Honor an explicit base-URL override (HFOX_BASE_URL / custom gateway) for both
-    # validation and storage, so self-hosted / proxied accounts work end to end.
     override = obj.config.base_url_override
+    if override:
+        override = normalize_base_url(override, obj.config.base_url_source)
     probe = Config(
         subdomain=subdomain,
         region=region,
@@ -82,6 +78,9 @@ def login(
         auth_code=auth_code,
         base_url_override=override,
     )
+    if obj.dry_run:
+        emit_dry_run(probe.base_url, "GET", "staff/")
+        raise typer.Exit(0)
     client = HappyFoxClient(probe.base_url, api_key, auth_code)
     try:
         staff = client.get("staff/")
@@ -91,7 +90,7 @@ def login(
         client.close()
 
     if not isinstance(staff, list):
-        raise AuthError("Unexpected response from /staff/ — credentials may be invalid.")
+        raise AuthError("Unexpected response from /staff/; credentials may be invalid.")
 
     staff_id = _resolve_staff_id(staff, email)
 
@@ -133,7 +132,9 @@ def status(ctx: typer.Context) -> None:
         "region": cfg.region,
         "base_url": cfg.base_url if (cfg.subdomain or cfg.base_url_override) else None,
         "authenticated": cfg.is_authenticated,
-        "default_staff_id": cfg.default_staff_id,
+        "default_staff_id": (
+            cfg.default_staff_id if cfg.staff_id_error is None else str(cfg.staff_id_error)
+        ),
         "api_key": _mask(cfg.api_key),
     }
     obj.render(payload)
@@ -143,6 +144,9 @@ def status(ctx: typer.Context) -> None:
 def logout(ctx: typer.Context) -> None:
     """Remove stored credentials (token.json)."""
     obj = get_ctx(ctx)
+    if obj.dry_run:
+        obj.success(f"Dry run: would remove {obj.config.dir / 'token.json'}.")
+        raise typer.Exit(0)
     removed = clear_credentials(obj.config.dir)
     if removed:
         obj.success("Credentials removed.")

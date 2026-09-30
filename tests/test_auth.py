@@ -119,3 +119,29 @@ def test_logout_when_nothing_stored(cfg_dir):
     )
     assert result.exit_code == 0
     assert "No stored credentials found." in result.stderr
+
+
+def test_login_dry_run_previews_probe_and_saves_nothing(monkeypatch, cfg_dir):
+    monkeypatch.setattr(auth_mod, "HappyFoxClient", lambda *a, **k: pytest.fail("client built"))
+    result = runner.invoke(
+        cli,
+        ["--dry-run", "auth", "login", "--subdomain", "acme", "--region", "us",
+         "--api-key", "K", "--auth-code", "C"],
+        env={"HFOX_CONFIG_DIR": str(cfg_dir)},
+    )
+    assert result.exit_code == 0, result.output
+    preview = json.loads(result.stdout)
+    assert preview["method"] == "GET"
+    assert preview["url"] == "https://acme.happyfox.com/api/1.1/json/staff/"
+    assert not (cfg_dir / "token.json").exists()
+    assert not (cfg_dir / "config.toml").exists()
+
+
+def test_logout_dry_run_keeps_token(cfg_dir):
+    save_credentials(cfg_dir, subdomain="acme", region="us", api_key="K", auth_code="C")
+    result = runner.invoke(
+        cli, ["--dry-run", "auth", "logout"], env={"HFOX_CONFIG_DIR": str(cfg_dir)}
+    )
+    assert result.exit_code == 0
+    assert (cfg_dir / "token.json").exists()
+    assert "would remove" in result.stderr

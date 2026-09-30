@@ -1,16 +1,20 @@
-"""Shared test fixtures.
+"""Shared fixtures: config isolation for every test and an offline `mock_api` transport."""
 
-`mock_api` patches the HappyFoxClient that AppContext builds so CLI commands run
-against an in-process httpx.MockTransport (no network) with backoff sleep
-neutralized. A test supplies a request handler and gets back a list capturing
-every request the command issued.
-"""
+import os
 
 import httpx
 import pytest
 
 import hfox.cli.context as context_mod
 from hfox.core.client import HappyFoxClient
+
+
+@pytest.fixture(autouse=True)
+def _isolated_config(monkeypatch, tmp_path):
+    """Keep tests off the developer's ~/.hfox; subprocess helpers must forward HFOX_CONFIG_DIR."""
+    for key in [k for k in os.environ if k.startswith("HFOX_")]:
+        monkeypatch.delenv(key)
+    monkeypatch.setenv("HFOX_CONFIG_DIR", str(tmp_path / "cfg"))
 
 
 @pytest.fixture

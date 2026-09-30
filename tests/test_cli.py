@@ -3,6 +3,7 @@ import json
 from typer.testing import CliRunner
 
 from hfox.cli.main import cli
+from hfox.core.errors import ValidationError
 
 runner = CliRunner()
 
@@ -27,7 +28,7 @@ def test_dry_run_ticket_create_builds_body():
         "--dry-run", "tickets", "create",
         "--subject", "Down", "--category", "3",
         "--name", "Han", "--email", "h@x.org", "--text", "fire",
-        "--cf", "7=Urgent", "--cf", "6=3,4",
+        "--cf", "7=Urgent", "--cf", "6=[3,4]",
     )
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
@@ -50,7 +51,7 @@ def test_dry_run_asset_create_custom_fields_object():
     result = run(
         "--dry-run", "assets", "create",
         "--asset-type", "1", "--name", "MBP", "--display-id", "L-1",
-        "--cf", "5=4", "--cf", "6=3,4",
+        "--cf", "5=4", "--cf", "6=[3,4]",
     )
     payload = json.loads(result.stdout)
     assert payload["params"] == {"asset_type": 1}
@@ -59,9 +60,9 @@ def test_dry_run_asset_create_custom_fields_object():
 
 
 def test_create_without_body_is_validation_error():
-    result = run("tickets", "create", "--subject", "x", "--category", "1",
+    result = run("--dry-run", "tickets", "create", "--subject", "x", "--category", "1",
                  "--name", "n", "--email", "e@x.org")
-    assert result.exit_code != 0
+    assert isinstance(result.exception, ValidationError)
 
 
 def test_format_table_flag_accepted():

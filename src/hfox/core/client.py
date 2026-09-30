@@ -1,23 +1,13 @@
-"""HTTP client for the HappyFox REST API (api/1.1/json).
-
-Authentication is HTTP Basic with the API key as the username and the auth code
-as the password (the only scheme HappyFox supports). The client adds:
-
-  * exponential backoff with jitter on HTTP 429 and transient network errors
-    (HappyFox enforces a global 500 GET / 300 POST per-minute limit and then
-    returns 429 for a 10-minute cooldown); a server-supplied `Retry-After`
-    header is honored up to that full 10-minute cooldown,
-  * structured error raising (APIError / NotFoundError / AuthError),
-  * a `paginate` helper that walks `page_info.page_count` and yields records.
-
-It is deliberately UI-agnostic: no printing, no Typer. The CLI layer owns output.
+"""HTTP client for the HappyFox REST API: Basic auth, 429 and network retries,
+structured errors, and pagination. UI-agnostic: no printing, no Typer.
 """
 
 from __future__ import annotations
 
+import math
 import time
 import urllib.parse
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import httpx
@@ -27,10 +17,13 @@ from .errors import APIError, AuthError, HfoxError, NotFoundError, ValidationErr
 DEFAULT_TIMEOUT = 30.0
 BASE_RETRY_DELAY = 1.0
 MAX_RETRY_DELAY = 60.0
-# HappyFox's documented 429 cooldown is 10 minutes; a server-supplied
-# Retry-After may legitimately be that long, so clamp it separately.
+# Matches HappyFox's documented 10-minute 429 cooldown.
 MAX_RETRY_AFTER_DELAY = 600.0
 MAX_RETRIES = 5
+MAX_PAGE_SIZE = 50
+
+# A write that failed with any other transport error may already have been applied.
+_WRITE_RETRYABLE = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
 
 # Deterministic-ish jitter without importing random (keeps backoff testable).
 _JITTER_CYCLE = (0.13, 0.41, 0.77, 0.29, 0.59)
@@ -73,11 +66,7 @@ class HappyFoxClient:
 
     # -- URL helpers -------------------------------------------------------
     def _url(self, path: str) -> str:
-        # Percent-encode free-form identifiers in the path while preserving the
-        # path separators and trailing slash, so segments containing #, ?, or
-        # spaces are transmitted safely.
-        encoded = urllib.parse.quote(path.lstrip("/"), safe="/")
-        return f"{self.base_url}/{encoded}"
+        return _join(self.base_url, path)
 
     def _backoff(self, attempt: int) -> float:
         delay = min(BASE_RETRY_DELAY * (2**attempt), MAX_RETRY_DELAY)
@@ -94,47 +83,33 @@ class HappyFoxClient:
         data: dict[str, Any] | None = None,
         files: Any = None,
     ) -> Any:
-        """Send a request with retries, returning the parsed JSON body."""
+        """Send a request with retries, returning the parsed JSON body.
+
+        GETs retry any transport error; writes retry only failures to connect.
+        """
+        method = method.upper()
         url = self._url(path)
         params = _clean_params(params)
-        last_exc: Exception | None = None
+        retryable = httpx.RequestError if method == "GET" else _WRITE_RETRYABLE
 
         for attempt in range(self.max_retries + 1):
             try:
                 response = self._client.request(
-                    method.upper(),
-                    url,
-                    params=params,
-                    json=json,
-                    data=data,
-                    files=files,
+                    method, url, params=params, json=json, data=data, files=files
                 )
             except httpx.RequestError as exc:
-                last_exc = exc
-                if attempt < self.max_retries:
+                if isinstance(exc, retryable) and attempt < self.max_retries:
                     self._sleep(self._backoff(attempt))
                     continue
                 raise HfoxError(f"Network error contacting HappyFox: {exc}") from exc
 
             if response.status_code == 429 and attempt < self.max_retries:
-                retry_after = response.headers.get("Retry-After")
-                delay: float | None = None
-                if retry_after:
-                    try:
-                        # Retry-After may be a (possibly fractional) seconds
-                        # value; clamp to the documented 10-minute cooldown so
-                        # a hostile/large header can't stall indefinitely.
-                        delay = min(float(retry_after), MAX_RETRY_AFTER_DELAY)
-                    except ValueError:
-                        # Non-numeric (e.g. an HTTP-date): fall back to backoff.
-                        delay = None
+                delay = _retry_after(response.headers.get("Retry-After"))
                 self._sleep(delay if delay is not None else self._backoff(attempt))
                 continue
 
             return self._handle_response(response)
-
-        # Exhausted retries on network errors.
-        raise HfoxError(f"Network error contacting HappyFox: {last_exc}")
+        raise AssertionError("unreachable")  # pragma: no cover
 
     def _handle_response(self, response: httpx.Response) -> Any:
         if response.is_success:
@@ -149,7 +124,7 @@ class HappyFoxClient:
         detail = _extract_error(response)
         if status in (401, 403):
             raise AuthError(
-                "Authentication failed — check your API key and auth code "
+                "Authentication failed. Check your API key and auth code "
                 "(run `hfox auth login`).",
                 detail=detail,
             )
@@ -179,7 +154,8 @@ class HappyFoxClient:
         root_key: str = "data",
         page_limit: int = 10,
         page_delay_ms: int = 100,
-        size: int = 50,
+        size: int = MAX_PAGE_SIZE,
+        on_truncated: Callable[[int, int], None] | None = None,
     ) -> Iterator[Any]:
         """Yield records across pages until exhausted or page_limit is reached."""
         for body in self.paginate_pages(
@@ -189,6 +165,7 @@ class HappyFoxClient:
             page_limit=page_limit,
             page_delay_ms=page_delay_ms,
             size=size,
+            on_truncated=on_truncated,
         ):
             records, _ = _unwrap_page(body, root_key)
             yield from records
@@ -201,33 +178,79 @@ class HappyFoxClient:
         root_key: str = "data",
         page_limit: int = 10,
         page_delay_ms: int = 100,
-        size: int = 50,
+        size: int = MAX_PAGE_SIZE,
+        on_truncated: Callable[[int, int], None] | None = None,
     ) -> Iterator[Any]:
         """Yield raw page bodies until exhausted or page_limit is reached.
 
-        Works with HappyFox's `page_info.page_count` envelope as well as the
-        reports module's top-level `page_count`/`rows` envelope.
+        Handles both the `page_info.page_count` and the top-level `page_count`
+        envelopes. `on_truncated(last_page, page_count)` fires when page_limit
+        stops the walk with pages remaining.
         """
-        params = dict(params or {})
-        # HappyFox caps the page size at 50; clamp so we never request more.
-        params.setdefault("size", min(size, 50))
-        try:
-            page = int(params.get("page", 1))
-        except (TypeError, ValueError) as exc:
-            raise ValidationError(f"Invalid page number: {params.get('page')!r}") from exc
+        if page_limit < 1:
+            raise ValidationError("page_limit must be at least 1.")
+        params = first_page_params(params, size)
+        page = params["page"]
         pages_fetched = 0
 
-        while pages_fetched < page_limit:
+        while True:
             params["page"] = page
             body = self.get(path, params=params)
             yield body
             _, page_count = _unwrap_page(body, root_key)
             pages_fetched += 1
             if page_count is None or page >= page_count:
-                break
+                return
+            if pages_fetched >= page_limit:
+                if on_truncated is not None:
+                    on_truncated(page, page_count)
+                return
             page += 1
-            if page_delay_ms:
+            if page_delay_ms > 0:
                 self._sleep(page_delay_ms / 1000.0)
+
+
+def first_page_params(params: dict[str, Any] | None, size: int = MAX_PAGE_SIZE) -> dict[str, Any]:
+    """Return the params of a page walk's first request: page defaults to 1, size is clamped."""
+    out = dict(params or {})
+    out["size"] = min(_int_param(out, "size", size), MAX_PAGE_SIZE)
+    out["page"] = _int_param(out, "page", 1)
+    return out
+
+
+def request_url(base_url: str, path: str, params: dict[str, Any] | None = None) -> str:
+    """Return the exact URL the client sends for this path and params."""
+    return str(httpx.Request("GET", _join(base_url, path), params=_clean_params(params)).url)
+
+
+def _join(base_url: str, path: str) -> str:
+    """Join base_url and a relative path, percent-encoding each segment."""
+    path = path.lstrip("/")
+    if any(seg in (".", "..") for seg in path.split("/")):
+        raise ValidationError(f"Invalid path {path!r}: '.' and '..' segments are not allowed.")
+    # '@' stays literal: the docs show contact emails unescaped in paths.
+    return f"{base_url.rstrip('/')}/{urllib.parse.quote(path, safe='/@')}"
+
+
+def _retry_after(value: str | None) -> float | None:
+    """Parse Retry-After seconds; None when absent, non-numeric, negative or non-finite."""
+    try:
+        delay = float(value or "")
+    except ValueError:
+        return None
+    if not math.isfinite(delay) or delay < 0:
+        return None
+    return min(delay, MAX_RETRY_AFTER_DELAY)
+
+
+def _int_param(params: dict[str, Any], key: str, default: int) -> int:
+    value = params.get(key)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError(f"Invalid {key}: {value!r}") from exc
 
 
 def _clean_params(params: dict[str, Any] | None) -> dict[str, Any] | None:

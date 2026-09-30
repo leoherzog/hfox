@@ -1,9 +1,5 @@
-"""AppContext — shared state and request execution for every command.
-
-Stashed on the Typer Context (`ctx.obj`) by the root callback. Command modules
-should go through `call`, `paginate`, and `render` rather than touching the
-HTTP client directly, so global flags (--dry-run, --page-all, --format) are
-honored uniformly.
+"""AppContext, stashed on `ctx.obj`: commands go through `call`, `paginate` and `render`
+so --dry-run, --page-all and --format apply uniformly.
 """
 
 from __future__ import annotations
@@ -13,9 +9,9 @@ from typing import Any
 
 import typer
 
-from ..core.client import HappyFoxClient
+from ..core.client import HappyFoxClient, first_page_params, request_url
 from ..core.config import Config
-from ..core.errors import ValidationError
+from ..core.errors import HfoxError, ValidationError
 from . import output
 from .output import OutputFormat
 
@@ -60,6 +56,8 @@ class AppContext:
             return explicit
         if self.staff_id_override is not None:
             return self.staff_id_override
+        if self.config.staff_id_error is not None:
+            raise self.config.staff_id_error
         return self.config.default_staff_id
 
     def require_staff_id(self, explicit: int | None) -> int:
@@ -84,7 +82,10 @@ class AppContext:
     ) -> Any:
         """Execute a request, honoring --dry-run."""
         if self.dry_run:
-            self._emit_dry_run(method, path, params=params, json=json, data=data, files=files)
+            emit_dry_run(
+                self.config.base_url, method, path,
+                params=params, json=json, data=data, files=files,
+            )
             raise typer.Exit(0)
         return self.client.request(
             method, path, params=params, json=json, data=data, files=files
@@ -99,47 +100,41 @@ class AppContext:
     ) -> Any:
         """Fetch a listing.
 
-        With --page-all in JSON format, stream NDJSON — one compact page envelope
-        per line as each page arrives (gws behavior) — then exit, like --dry-run.
-        With --page-all in table/csv/yaml, walk every page (bounded by
-        --page-limit) and return the full record list. Otherwise return the
-        single-page response untouched so the caller can surface page_info.
+        --page-all in JSON streams one NDJSON page per line, then exits; in other
+        formats it returns the flat record list. Otherwise returns the single page.
         """
         if self.dry_run:
-            self._emit_dry_run("GET", path, params=params)
+            if self.page_all:
+                params = first_page_params(params)
+            emit_dry_run(self.config.base_url, "GET", path, params=params)
             raise typer.Exit(0)
-        if self.page_all:
-            if self.fmt is OutputFormat.JSON:
-                for page in self.client.paginate_pages(
-                    path,
-                    params=params,
-                    root_key=root_key,
-                    page_limit=self.page_limit,
-                    page_delay_ms=self.page_delay_ms,
-                ):
-                    output.render_ndjson_line(page)
-                raise typer.Exit(0)
-            return list(
-                self.client.paginate(
-                    path,
-                    params=params,
-                    root_key=root_key,
-                    page_limit=self.page_limit,
-                    page_delay_ms=self.page_delay_ms,
-                )
-            )
-        return self.client.get(path, params=params)
+        if not self.page_all:
+            return self.client.get(path, params=params)
+        walk = {
+            "params": params,
+            "root_key": root_key,
+            "page_limit": self.page_limit,
+            "page_delay_ms": self.page_delay_ms,
+            "on_truncated": _warn_truncated,
+        }
+        if self.fmt is not OutputFormat.JSON:
+            return list(self.client.paginate(path, **walk))
+        try:
+            for page in self.client.paginate_pages(path, **walk):
+                output.render_ndjson_line(page)
+        except Exception as exc:
+            # A multi-line error object would break line-oriented NDJSON readers.
+            err = as_hfox_error(exc)
+            output.render_ndjson_line(err.to_dict())
+            raise typer.Exit(int(err.exit_code)) from None
+        raise typer.Exit(0)
 
     # -- output ------------------------------------------------------------
     def render(self, data: Any) -> None:
         output.render(data, self.fmt)
 
     def render_list(self, body: Any, *, root_key: str = "data") -> None:
-        """Render a listing: unwrap the {data: [...]} envelope for non-JSON formats.
-
-        JSON keeps the full envelope (page_info + data) so nothing is lost; table
-        and csv render just the rows, which is what a human wants to see.
-        """
+        """Render a listing: JSON keeps the {page_info, data} envelope; others render the rows."""
         if isinstance(body, list):
             self.render(body)
             return
@@ -155,34 +150,44 @@ class AppContext:
         if not self.quiet:
             output.info(message)
 
-    def _emit_dry_run(
-        self,
-        method: str,
-        path: str,
-        *,
-        params: dict[str, Any] | None = None,
-        json: Any = None,
-        data: dict[str, Any] | None = None,
-        files: Any = None,
-    ) -> None:
-        preview = {
-            "dry_run": True,
-            "method": method.upper(),
-            "url": f"{self.config.base_url}/{path.lstrip('/')}",
-            "params": params or None,
-            "body": json if json is not None else (data or None),
-            "attachments": _summarize_files(files),
-        }
-        output.render(preview, OutputFormat.JSON)
+
+def emit_dry_run(
+    base_url: str,
+    method: str,
+    path: str,
+    *,
+    params: dict[str, Any] | None = None,
+    json: Any = None,
+    data: dict[str, Any] | None = None,
+    files: Any = None,
+) -> None:
+    """Print the request that would be sent, as JSON on stdout."""
+    preview = {
+        "dry_run": True,
+        "method": method.upper(),
+        "url": request_url(base_url, path, params),
+        "params": params or None,
+        "body": json if json is not None else (data or None),
+        "attachments": _summarize_files(files),
+    }
+    output.render(preview, OutputFormat.JSON)
+
+
+def as_hfox_error(exc: Exception) -> HfoxError:
+    """Return exc if it is an HfoxError, else wrap it as one naming the exception type."""
+    if isinstance(exc, HfoxError):
+        return exc
+    return HfoxError(f"Unexpected error ({type(exc).__name__}): {exc}")
+
+
+def _warn_truncated(last_page: int, page_count: int) -> None:
+    output.warn(
+        f"Stopped at page {last_page} of {page_count} (--page-limit); output is incomplete."
+    )
 
 
 def _summarize_files(files: Any) -> dict[str, Any] | None:
-    """Describe a multipart `files` payload without dumping file bytes.
-
-    httpx `files` is a list of (field_name, (filename, content[, mime])) tuples.
-    Surface the count and the field names/filenames so a dry-run reflects that an
-    upload would happen, but never serialize the raw bytes.
-    """
+    """Describe a multipart `files` payload by field and filename, never the bytes."""
     if not files:
         return None
     items = files.items() if isinstance(files, dict) else files

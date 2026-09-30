@@ -76,7 +76,7 @@ def make_client(handler) -> HappyFoxClient:
 
 
 # =========================================================================
-# auth.py — _mask (lines 155, 158)
+# auth.py: _mask
 # =========================================================================
 def test_mask_none_returns_none():
     assert _mask(None) is None
@@ -96,14 +96,14 @@ def test_mask_long_secret_shows_two_edges():
 
 
 # =========================================================================
-# auth.py — _resolve_staff_id (lines 31, 36)
+# auth.py: _resolve_staff_id
 # =========================================================================
 def test_resolve_staff_id_no_email_returns_none():
     assert _resolve_staff_id([{"id": 1, "email": "a@x.org"}], None) is None
 
 
 def test_resolve_staff_id_no_match_returns_none():
-    # No member matches -> None (line 36). Non-dict members are skipped safely.
+    # No member matches -> None. Non-dict members are skipped safely.
     staff = ["junk", {"id": 5, "email": "other@x.org"}]
     assert _resolve_staff_id(staff, "nobody@x.org") is None
 
@@ -114,10 +114,10 @@ def test_resolve_staff_id_match_is_case_insensitive():
 
 
 # =========================================================================
-# auth.py — login branches
+# auth.py: login branches
 # =========================================================================
 def test_login_invalid_region_rejected(monkeypatch, tmp_path):
-    # region not in REGION_HOSTS -> BadParameter -> exit code 2 (line 71).
+    # region not in REGION_HOSTS -> BadParameter (a usage error; app() exits 3).
     _patch_staff_client(
         monkeypatch, response_factory=lambda r: httpx.Response(200, json=[])
     )
@@ -127,11 +127,12 @@ def test_login_invalid_region_rejected(monkeypatch, tmp_path):
          "--api-key", "K", "--auth-code", "C"],
         env={"HFOX_CONFIG_DIR": str(tmp_path / ".hfox")},
     )
-    assert result.exit_code == 2
+    assert result.exit_code != 0
+    assert "region must be one of" in result.output
 
 
 def test_login_region_prompt_default_us(monkeypatch, tmp_path):
-    # No --region: prompt defaults to "us" (line 68). Feed empty line to accept default.
+    # No --region: prompt defaults to "us". Feed empty line to accept default.
     _patch_staff_client(
         monkeypatch,
         response_factory=lambda r: httpx.Response(200, json=[{"id": 1, "email": "a@x.org"}]),
@@ -149,7 +150,7 @@ def test_login_region_prompt_default_us(monkeypatch, tmp_path):
 
 
 def test_login_validation_failure_maps_to_auth_error(monkeypatch, tmp_path):
-    # /staff/ returns 401 -> client raises AuthError(HfoxError) -> wrapped (lines 88-89).
+    # /staff/ returns 401 -> client raises AuthError(HfoxError) -> wrapped.
     _patch_staff_client(
         monkeypatch,
         response_factory=lambda r: httpx.Response(401, text="nope"),
@@ -167,7 +168,6 @@ def test_login_validation_failure_maps_to_auth_error(monkeypatch, tmp_path):
 
 
 def test_login_non_list_staff_response_rejected(monkeypatch, tmp_path):
-    # /staff/ returns a dict, not a list -> AuthError (line 94).
     _patch_staff_client(
         monkeypatch,
         response_factory=lambda r: httpx.Response(200, json={"unexpected": True}),
@@ -186,7 +186,6 @@ def test_login_non_list_staff_response_rejected(monkeypatch, tmp_path):
 
 
 def test_login_non_numeric_staff_id_warns_and_skips_default(monkeypatch, tmp_path):
-    # Matched agent has a non-numeric id -> warn + default not set (lines 110-112).
     _patch_staff_client(
         monkeypatch,
         response_factory=lambda r: httpx.Response(
@@ -207,7 +206,6 @@ def test_login_non_numeric_staff_id_warns_and_skips_default(monkeypatch, tmp_pat
 
 
 def test_login_email_no_match_warns(monkeypatch, tmp_path):
-    # --email given but no agent matches -> warn (lines 120-121).
     _patch_staff_client(
         monkeypatch,
         response_factory=lambda r: httpx.Response(
@@ -262,7 +260,7 @@ def test_login_persists_base_url_override(monkeypatch, tmp_path):
 
 
 # =========================================================================
-# auth.py — status with no creds (status masks None api_key)
+# auth.py: status with no creds (status masks None api_key)
 # =========================================================================
 def test_status_unauthenticated_masks_none(monkeypatch, tmp_path):
     cfg_dir = tmp_path / ".hfox"
@@ -279,7 +277,7 @@ def test_status_unauthenticated_masks_none(monkeypatch, tmp_path):
 
 
 # =========================================================================
-# config.py — config_dir resolution (override > env > default)
+# config.py: config_dir resolution (override > env > default)
 # =========================================================================
 def test_config_dir_override_wins(monkeypatch, tmp_path):
     monkeypatch.setenv("HFOX_CONFIG_DIR", str(tmp_path / "env"))
@@ -299,7 +297,7 @@ def test_config_dir_empty_env_falls_to_home(monkeypatch):
 
 
 # =========================================================================
-# config.py — base_url override (line 100) and require_auth (line 121)
+# config.py: base_url override and require_auth
 # =========================================================================
 def test_base_url_override_strips_trailing_slash_and_appends_suffix():
     # The override is the root; base_url strips trailing slash and appends suffix.
@@ -308,7 +306,6 @@ def test_base_url_override_strips_trailing_slash_and_appends_suffix():
 
 
 def test_invalid_host_rejected():
-    # _validate_host_part rejects embedded scheme/port/path (line 50).
     with pytest.raises(ValidationError):
         _ = Config(subdomain="http://acme:8080/x").base_url
 
@@ -325,7 +322,7 @@ def test_require_auth_passes_when_authenticated():
 
 
 # =========================================================================
-# config.py — env > file > default precedence and base_url resolution
+# config.py: env > file > default precedence and base_url resolution
 # =========================================================================
 def test_load_config_env_base_url_overrides_disk(tmp_path, monkeypatch):
     cfg_dir = tmp_path / ".hfox"
@@ -371,7 +368,7 @@ def test_load_config_settings_fallback_when_token_missing(tmp_path, monkeypatch)
 
 
 # =========================================================================
-# config.py — corrupt files raise HfoxError (lines 132-133, 141-142)
+# config.py: corrupt files raise HfoxError
 # =========================================================================
 def test_corrupt_toml_raises_hfox_error(tmp_path):
     cfg_dir = tmp_path / ".hfox"
@@ -392,7 +389,7 @@ def test_corrupt_json_raises_hfox_error(tmp_path):
 
 
 # =========================================================================
-# config.py — atomic write modes and dir permissions (0600/0700)
+# config.py: atomic write modes and dir permissions (0600/0700)
 # =========================================================================
 def test_save_credentials_modes_0600_and_dir_0700(tmp_path):
     cfg_dir = tmp_path / ".hfox"
@@ -402,13 +399,12 @@ def test_save_credentials_modes_0600_and_dir_0700(tmp_path):
 
 
 def test_save_credentials_includes_base_url(tmp_path):
-    # base_url present -> persisted (line 214).
     cfg_dir = tmp_path / ".hfox"
     path = save_credentials(
         cfg_dir, subdomain="a", region="us", api_key="k", auth_code="c",
-        base_url="https://gw.internal/api/1.1/json",
+        base_url="https://gw.internal",
     )
-    assert json.loads(path.read_text())["base_url"] == "https://gw.internal/api/1.1/json"
+    assert json.loads(path.read_text())["base_url"] == "https://gw.internal"
 
 
 def test_save_settings_mode_0644(tmp_path):
@@ -418,7 +414,6 @@ def test_save_settings_mode_0644(tmp_path):
 
 
 def test_save_settings_chmod_failure_warns(tmp_path, monkeypatch, capsys):
-    # If chmod on the dir fails, a loud warning is printed (lines 184-186).
     cfg_dir = tmp_path / ".hfox"
     import hfox.core.config as config_mod
 
@@ -437,17 +432,16 @@ def test_save_settings_chmod_failure_warns(tmp_path, monkeypatch, capsys):
 
 
 # =========================================================================
-# config.py — save_settings coercions (lines 228-229, 238) and toml str
+# config.py: save_settings coercions and toml str
 # =========================================================================
 def test_save_settings_non_int_staff_id_raises(tmp_path):
     cfg_dir = tmp_path / ".hfox"
     with pytest.raises(ValidationError) as exc:
         save_settings(cfg_dir, {"default_staff_id": "abc"})
-    assert "must be an integer" in str(exc.value)
+    assert "must be a non-negative integer" in str(exc.value)
 
 
 def test_save_settings_bool_value_serialized_lowercase(tmp_path):
-    # A bool setting renders as lowercase TOML (line 238).
     cfg_dir = tmp_path / ".hfox"
     path = save_settings(cfg_dir, {"some_flag": True, "other_flag": False})
     text = path.read_text()
@@ -465,7 +459,6 @@ def test_save_settings_string_with_quotes_escaped(tmp_path):
 
 
 def test_save_settings_control_char_rejected(tmp_path):
-    # _toml_str rejects control chars (line 66).
     cfg_dir = tmp_path / ".hfox"
     with pytest.raises(ValidationError) as exc:
         save_settings(cfg_dir, {"subdomain": "a\nb"})
@@ -473,7 +466,7 @@ def test_save_settings_control_char_rejected(tmp_path):
 
 
 # =========================================================================
-# client.py — context manager (lines 61-65)
+# client.py: context manager
 # =========================================================================
 def test_client_context_manager_closes():
     client = make_client(lambda r: httpx.Response(200, json={"ok": True}))
@@ -487,7 +480,7 @@ def test_client_context_manager_closes():
 
 
 # =========================================================================
-# client.py — non-numeric Retry-After falls back to backoff (lines 123-125)
+# client.py: non-numeric Retry-After falls back to backoff
 # =========================================================================
 def test_non_numeric_retry_after_falls_back_to_backoff():
     calls = {"n": 0}
@@ -515,7 +508,7 @@ def test_non_numeric_retry_after_falls_back_to_backoff():
 
 
 # =========================================================================
-# client.py — success body shapes (lines 137, 140-141)
+# client.py: success body shapes
 # =========================================================================
 def test_empty_success_body_returns_none():
     client = make_client(lambda r: httpx.Response(204))
@@ -530,7 +523,7 @@ def test_non_json_success_body_returns_text():
 
 
 # =========================================================================
-# client.py — error mapping for other status codes (line 160)
+# client.py: error mapping for other status codes
 # =========================================================================
 def test_500_maps_to_api_error():
     client = make_client(lambda r: httpx.Response(500, json={"error": "boom"}))
@@ -553,10 +546,9 @@ def test_404_maps_to_not_found():
 
 
 # =========================================================================
-# client.py — _unwrap_page edge cases (lines 230, 236) and _extract_error (247)
+# client.py: _unwrap_page edge cases and _extract_error
 # =========================================================================
 def test_paginate_non_list_records_wrapped_as_single():
-    # data is a single dict (not a list) -> wrapped into one record (line 230).
     client = make_client(
         lambda r: httpx.Response(200, json={"data": {"id": 1}, "page_info": {}})
     )
@@ -565,14 +557,12 @@ def test_paginate_non_list_records_wrapped_as_single():
 
 
 def test_paginate_scalar_body_yields_nothing():
-    # A non-dict, non-list body -> ([], None) (line 236).
     client = make_client(lambda r: httpx.Response(200, json=42))
     records = list(client.paginate("weird/", page_limit=1))
     assert records == []
 
 
 def test_extract_error_dict_without_error_key_returns_whole_body():
-    # Error body is a dict lacking an "error" key -> whole body is the detail (line 247).
     client = make_client(lambda r: httpx.Response(500, json={"message": "oops", "code": 9}))
     with pytest.raises(APIError) as exc:
         client.get("tickets/")

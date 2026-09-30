@@ -1,14 +1,8 @@
-"""Exit-code contract + output rendering + staff-id flow (finding #10).
-
-The structured error handling (HfoxError -> JSON on stdout + stable exit code)
-lives in `hfox.cli.main.app`, NOT in the bare Typer `cli` object that CliRunner
-invokes. So the exit-code-EXACTLY-N contract is exercised end to end via a
-subprocess that runs `app()`; everything stays offline because these cases fail
-during validation, before any HTTP request is built.
-"""
+"""Exit codes through app() in a subprocess, output rendering, color and staff-id flow."""
 
 import io
 import json
+import os
 import subprocess
 import sys
 
@@ -37,6 +31,7 @@ _INVOKER = (
 def run_app(argv, env_extra=None, base_env=None):
     """Run the real `app()` entry point in a subprocess; return CompletedProcess."""
     env = dict(base_env if base_env is not None else ENV)
+    env["HFOX_CONFIG_DIR"] = os.environ["HFOX_CONFIG_DIR"]
     if env_extra:
         env.update(env_extra)
     return subprocess.run(
@@ -50,7 +45,7 @@ def run_app(argv, env_extra=None, base_env=None):
 # -- exit code 3 + JSON error object on stdout ------------------------------
 def test_validation_failure_exit_code_exactly_3_and_json_on_stdout():
     proc = run_app(
-        ["tickets", "create", "--subject", "x", "--category", "1",
+        ["--dry-run", "tickets", "create", "--subject", "x", "--category", "1",
          "--name", "n", "--email", "e@x.org"],  # no body -> ValidationError
     )
     assert proc.returncode == 3
@@ -64,7 +59,7 @@ def test_validation_failure_exit_code_exactly_3_and_json_on_stdout():
 def test_missing_required_staff_id_exits_3():
     env = {k: v for k, v in ENV.items() if k != "HFOX_STAFF_ID"}
     proc = run_app(
-        ["tickets", "subscribe", "42", "--agents", "3"],
+        ["--dry-run", "tickets", "subscribe", "42", "--agents", "3"],
         base_env=env,
     )
     assert proc.returncode == 3
