@@ -38,10 +38,11 @@ the private `typer._click`. Raise the cap only after checking that import.
 
 ### Releases
 
-Pushing a tag runs `.github/workflows/release.yml`. The tag is `v` plus a canonical PEP 440
-public version (`v1.0.0`, `v1.0.0rc1`); any other tag fails the stamping step. Source keeps
-the placeholders `version = "0.0.0"` in `pyproject.toml` and `__version__ = "dev"`, so
-`hfox --version` reports `dev` for any build that is not a tagged release.
+Publishing a GitHub release runs `.github/workflows/release.yml`. Draft the release in the
+web UI with a tag that is `v` plus a canonical PEP 440 public version (`v1.0.0`,
+`v1.0.0rc1`); any other tag fails the stamping step. Source keeps the placeholders
+`version = "0.0.0"` in `pyproject.toml` and `__version__ = "dev"`, so `hfox --version`
+reports `dev` for any build that is not a release.
 
 The jobs run in this order:
 
@@ -50,20 +51,22 @@ The jobs run in this order:
    `uv run --locked` rejects a changed project version.
 2. `dist` stamps both `pyproject.toml` and `__version__`, runs `uv build` and checks that the
    wheel reports the tag version.
-3. `release` attests every binary, the wheel and the sdist, then creates a draft GitHub
-   release holding all of them.
+3. `assets` attests every binary, the wheel and the sdist, then attaches all of them to the
+   release.
 4. `pypi` publishes the wheel and sdist through trusted publishing in the `pypi` environment,
    with no token secret.
-5. `publish` takes the release out of draft.
 
-The draft is marked as a prerelease when the version has an `a`, `b`, `rc` or `.dev` segment,
-so it does not become Latest. A `.post` version is a normal release.
+PyPI accepts each version once, so `pypi` runs last and a failed run can be re-run from the
+Actions tab. The release is public while the jobs run, so GitHub's immutable releases setting
+must stay off for the repo. `assets` marks the release as a prerelease when the version has
+an `a`, `b`, `rc` or `.dev` segment, so it does not stay Latest. A `.post` version is a
+normal release.
 
 A manual `workflow_dispatch` run stops after `binaries` and `dist` and only uploads workflow
 artifacts. Actions are pinned by commit SHA with a version comment; look up the current SHA
 with `git ls-remote --tags` before changing one. Whether attestation needs
 `artifact-metadata: write`, and the macOS and Windows completion smoke tests, are unverified
-until the first tag.
+until the first release.
 
 Build the same binary locally into `dist/` with:
 
