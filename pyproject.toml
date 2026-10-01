@@ -1,31 +1,45 @@
 [project]
 name = "hfox"
-version = "0.1.0"
+# Placeholder; the release workflow stamps the tag version before building.
+version = "0.0.0"
 description = "Command-line interface for the HappyFox REST API"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Leo Herzog" }]
 keywords = ["happyfox", "helpdesk", "cli", "support", "tickets"]
+classifiers = [
+    "Environment :: Console",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
 dependencies = [
-    "typer>=0.27.2",
+    # main.py imports the private typer._click, so the next minor is excluded.
+    "typer>=0.27.2,<0.28",
     "httpx>=0.28.1",
     "rich>=15.0.0",
 ]
 
 [project.urls]
-Homepage = "https://github.com/leoherzog/happyfox-mcp"
-Source = "https://github.com/leoherzog/happyfox-mcp"
+Homepage = "https://github.com/leoherzog/hfox"
+Source = "https://github.com/leoherzog/hfox"
+Issues = "https://github.com/leoherzog/hfox/issues"
 
 [project.scripts]
 hfox = "hfox.cli.main:app"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/hfox"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "tests", "README.md", "LICENSE", "pyproject.toml"]
 
 [dependency-groups]
 dev = [
