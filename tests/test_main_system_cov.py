@@ -38,12 +38,11 @@ def run(*args, env_extra=None):
 # ---------------------------------------------------------------------------
 # main.py :: --version (_version_callback)
 # ---------------------------------------------------------------------------
-def test_version_flag_prints_version_and_exits_zero():
-    from hfox import __version__
-
-    result = run("--version")
+@pytest.mark.parametrize("flag", ["--version", "-v"])
+def test_version_flag_prints_dev_from_source_and_exits_zero(flag):
+    result = run(flag)
     assert result.exit_code == 0
-    assert result.stdout.strip() == f"hfox {__version__}"
+    assert result.stdout.strip() == "hfox dev"
 
 
 # ---------------------------------------------------------------------------

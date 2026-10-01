@@ -65,8 +65,8 @@ def main(
     ),
     no_color: bool = typer.Option(False, "--no-color", help="Disable colored output."),
     version: bool = typer.Option(
-        None, "--version", callback=_version_callback, is_eager=True,
-        help="Show version and exit.",
+        None, "--version", "-v", callback=_version_callback, is_eager=True,
+        help="Show the release version (dev for a source build) and exit.",
     ),
 ) -> None:
     """Configure shared context for all subcommands."""

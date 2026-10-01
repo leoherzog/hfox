@@ -31,8 +31,9 @@ Use `python -m pytest`; the bare `pytest` shebang can break in a venv that was n
 created.
 
 Publishing a GitHub release runs `.github/workflows/release.yml`, which builds a PyInstaller
-binary on each platform and attaches it to the release. The tag must equal `__version__`,
-optionally prefixed with `v`. Build the same binary locally into `dist/` with:
+binary on each platform and attaches it to the release. It writes the tag, minus a leading
+`v`, into `__version__`, which stays `dev` in source, so `hfox --version` reports `dev` for
+any other build. Build the same binary locally into `dist/` with:
 
 ```bash
 uv run --isolated --no-dev --group build pyinstaller --onefile --name hfox --specpath build src/hfox/__main__.py

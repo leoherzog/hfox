@@ -42,6 +42,20 @@ jobs:
         with:
           python-version: "3.14"
 
+      - name: Stamp version
+        if: github.event_name == 'release'
+        run: |
+          version=${TAG#v}
+          if [[ ! "$version" =~ ^[0-9][0-9A-Za-z.+-]*$ ]]; then
+            echo "::error::Release tag '$TAG' is not a version."
+            exit 1
+          fi
+          sed -i.bak "s/^__version__ = .*/__version__ = \"$version\"/" src/hfox/__init__.py
+          rm src/hfox/__init__.py.bak
+          grep -qx "__version__ = \"$version\"" src/hfox/__init__.py
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+
       - name: Build
         run: >-
           uv run --locked --isolated --no-dev --group build
@@ -53,8 +67,10 @@ jobs:
         run: |
           version=$("$BIN" --version | tr -d '\r')
           echo "$version"
-          if [[ -n "$TAG" && "$version" != "hfox ${TAG#v}" ]]; then
-            echo "::error::Binary reports '$version' but the release tag is '$TAG'."
+          expected="hfox dev"
+          if [[ -n "$TAG" ]]; then expected="hfox ${TAG#v}"; fi
+          if [[ "$version" != "$expected" || "$("$BIN" -v | tr -d '\r')" != "$expected" ]]; then
+            echo "::error::Binary reports '$version', expected '$expected'."
             exit 1
           fi
           "$BIN" --dry-run tickets get 1

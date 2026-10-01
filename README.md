@@ -67,7 +67,7 @@ Global flags go before the resource: `hfox -f table tickets list`, not `hfox tic
 | `-q, --quiet` | suppress status messages |
 | `--config-dir DIR` | override the config directory |
 | `--no-color` | disable color (also honors `NO_COLOR`) |
-| `--version` | show version and exit |
+| `-v, --version` | show the release version, or `dev` when run from source |
 
 For full exports, pass `--size 50`. On `tickets list`, add a stable `--sort` such as
 `ticketa`; `-q` searches always sort by relevance.
