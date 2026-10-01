@@ -1,0 +1,89 @@
+# Builds a single-file hfox binary per platform with PyInstaller and attaches them to the
+# published release. A manual run builds and uploads them as workflow artifacts only.
+name: Release binaries
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: linux-x86_64 }
+          - { os: ubuntu-24.04-arm, target: linux-aarch64 }
+          - { os: macos-latest, target: macos-arm64 }
+          - { os: macos-26-intel, target: macos-x86_64 }
+          - { os: windows-latest, target: windows-x86_64, ext: .exe }
+          - { os: windows-11-arm, target: windows-arm64, ext: .exe }
+    defaults:
+      run:
+        shell: bash
+    env:
+      # uv's managed CPython needs only glibc 2.17; a runner or setup-python interpreter
+      # would raise the binary's minimum glibc to the runner's.
+      UV_PYTHON_PREFERENCE: only-managed
+      BIN: dist/hfox-${{ matrix.target }}${{ matrix.ext }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.14"
+
+      - name: Build
+        run: >-
+          uv run --locked --isolated --no-dev --group build
+          pyinstaller --onefile --name "hfox-$TARGET" --specpath build src/hfox/__main__.py
+        env:
+          TARGET: ${{ matrix.target }}
+
+      - name: Smoke test
+        run: |
+          version=$("$BIN" --version | tr -d '\r')
+          echo "$version"
+          if [[ -n "$TAG" && "$version" != "hfox ${TAG#v}" ]]; then
+            echo "::error::Binary reports '$version' but the release tag is '$TAG'."
+            exit 1
+          fi
+          "$BIN" --dry-run tickets get 1
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          HFOX_SUBDOMAIN: example
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          path: ${{ env.BIN }}
+          archive: false
+          if-no-files-found: error
+
+  publish:
+    name: Attach to release
+    needs: build
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: hfox-*
+          path: dist
+          merge-multiple: true
+
+      - name: Upload binaries
+        run: gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}

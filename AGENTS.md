@@ -30,12 +30,21 @@ uv run Docs/sync.py      # refresh Docs/ from HappyFox's REST API help articles
 Use `python -m pytest`; the bare `pytest` shebang can break in a venv that was not freshly
 created.
 
+Publishing a GitHub release runs `.github/workflows/release.yml`, which builds a PyInstaller
+binary on each platform and attaches it to the release. The tag must equal `__version__`,
+optionally prefixed with `v`. Build the same binary locally into `dist/` with:
+
+```bash
+uv run --isolated --no-dev --group build pyinstaller --onefile --name hfox --specpath build src/hfox/__main__.py
+```
+
 ## Architecture
 
 Two layers with a hard boundary:
 
 ```
 src/hfox/
+├── __main__.py           # `python -m hfox`; the script PyInstaller freezes
 ├── core/                 # UI-agnostic: no Typer, no printing, no sys.exit
 │   ├── client.py         # HappyFoxClient: httpx, Basic auth, retries, paginate()
 │   ├── config.py         # ~/.hfox/ resolution, Config, token.json + config.toml I/O

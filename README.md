@@ -17,6 +17,10 @@ uv tool install .            # or install it as a persistent tool
 uvx hfox --help              # once published to PyPI
 ```
 
+Each [GitHub release](https://github.com/leoherzog/hfox/releases) also attaches single-file
+binaries for Linux, macOS and Windows that need no Python. Mark a download executable with
+`chmod +x`; on macOS, a browser download also needs `xattr -d com.apple.quarantine <file>`.
+
 ## Authenticate
 
 `hfox` needs an **API key** and its **auth code**. In HappyFox, open *Apps → Goodies → API*,
