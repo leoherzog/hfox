@@ -1,16 +1,24 @@
-# Builds a single-file hfox binary per platform with PyInstaller and attaches them to the
-# published release. A manual run builds and uploads them as workflow artifacts only.
-name: Release binaries
+# A v* tag push builds the binaries, the wheel and the sdist, attests them, drafts the GitHub
+# release, publishes to PyPI through trusted publishing, then publishes the release.
+# A manual run builds and uploads workflow artifacts only.
+name: Release
 
 on:
-  release:
-    types: [published]
+  push:
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions: {}
 
+env:
+  # Empty on a manual run. Scripts read the tag from here, never from an inline expression.
+  TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
+  # A tag is v plus a canonical PEP 440 public version, so the wheel name, the metadata and
+  # `hfox --version` agree.
+  VERSION_RE: '^(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))*((a|b|rc)(0|[1-9][0-9]*))?(\.post(0|[1-9][0-9]*))?(\.dev(0|[1-9][0-9]*))?$'
+
 jobs:
-  build:
+  binaries:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     permissions:
@@ -41,25 +49,29 @@ jobs:
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           python-version: "3.14"
+          enable-cache: false
 
+      # pyproject.toml keeps its placeholder here: `uv run --locked` rejects a changed
+      # project version.
       - name: Stamp version
-        if: github.event_name == 'release'
+        if: github.event_name == 'push'
         run: |
           version=${TAG#v}
-          if [[ ! "$version" =~ ^[0-9][0-9A-Za-z.+-]*$ ]]; then
-            echo "::error::Release tag '$TAG' is not a version."
+          if [[ "$TAG" != v* || ! "$version" =~ $VERSION_RE ]]; then
+            echo "::error::Tag '$TAG' is not v plus a canonical PEP 440 version."
             exit 1
           fi
           sed -i.bak "s/^__version__ = .*/__version__ = \"$version\"/" src/hfox/__init__.py
           rm src/hfox/__init__.py.bak
           grep -qx "__version__ = \"$version\"" src/hfox/__init__.py
-        env:
-          TAG: ${{ github.event.release.tag_name }}
 
+      # shellingham imports its platform module dynamically, which PyInstaller cannot see.
       - name: Build
         run: >-
           uv run --locked --isolated --no-dev --group build
-          pyinstaller --onefile --name "hfox-$TARGET" --specpath build src/hfox/__main__.py
+          pyinstaller --onefile --name "hfox-$TARGET"
+          --hidden-import shellingham.posix --hidden-import shellingham.nt
+          --specpath build src/hfox/__main__.py
         env:
           TARGET: ${{ matrix.target }}
 
@@ -75,8 +87,28 @@ jobs:
           fi
           "$BIN" --dry-run tickets get 1
         env:
-          TAG: ${{ github.event.release.tag_name }}
           HFOX_SUBDOMAIN: example
+
+      - name: Smoke test completion
+        if: runner.os != 'Windows'
+        run: |
+          script=$("$BIN" --show-completion)
+          if [[ -z "$script" ]]; then
+            echo "::error::--show-completion printed nothing."
+            exit 1
+          fi
+
+      # Shell detection walks the parent processes; pwsh keeps that chain native on Windows.
+      - name: Smoke test completion (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $script = & $env:BIN --show-completion
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not "$script".Trim()) {
+            Write-Output "::error::--show-completion printed nothing."
+            exit 1
+          }
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -84,22 +116,123 @@ jobs:
           archive: false
           if-no-files-found: error
 
+  dist:
+    name: Build wheel and sdist
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.14"
+          enable-cache: false
+
+      - name: Stamp version
+        if: github.event_name == 'push'
+        run: |
+          version=${TAG#v}
+          if [[ "$TAG" != v* || ! "$version" =~ $VERSION_RE ]]; then
+            echo "::error::Tag '$TAG' is not v plus a canonical PEP 440 version."
+            exit 1
+          fi
+          uv version "$version" --frozen
+          sed -i.bak "s/^__version__ = .*/__version__ = \"$version\"/" src/hfox/__init__.py
+          rm src/hfox/__init__.py.bak
+          grep -qx "__version__ = \"$version\"" src/hfox/__init__.py
+          [ "$(uv version --short)" = "$version" ]
+
+      - name: Build
+        run: uv build
+
+      - name: Verify wheel
+        run: |
+          expected="hfox dev"
+          if [[ -n "$TAG" ]]; then expected="hfox ${TAG#v}"; fi
+          wheel="dist/hfox-$(uv version --short)-py3-none-any.whl"
+          version=$(uv run --isolated --no-project --with "$wheel" hfox --version)
+          echo "$version"
+          if [[ "$version" != "$expected" ]]; then
+            echo "::error::Wheel reports '$version', expected '$expected'."
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Draft release
+    needs: [binaries, dist]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      # Unverified until the first tag: attestation may succeed without this one.
+      artifact-metadata: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: dist
+          merge-multiple: true
+
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/*
+
+      # A draft takes its assets before publication, which an immutable release requires.
+      # The same rule fixes the prerelease mark here: an a, b, rc or .dev version must not
+      # become the Latest release. A plain .post version is a normal release.
+      - name: Create draft release
+        run: |
+          version=${TAG#v}
+          flags=(--draft --verify-tag --generate-notes)
+          if [[ "$version" =~ (a|b|rc)[0-9]+ || "$version" =~ \.dev[0-9]+ ]]; then
+            flags+=(--prerelease)
+          fi
+          gh release create "$TAG" dist/* "${flags[@]}" --repo "$GITHUB_REPOSITORY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  pypi:
+    name: Publish to PyPI
+    needs: release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: false
+
+      - name: Publish
+        run: uv publish --trusted-publishing always
+
   publish:
-    name: Attach to release
-    needs: build
-    if: github.event_name == 'release'
+    name: Publish release
+    needs: pypi
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: hfox-*
-          path: dist
-          merge-multiple: true
-
-      - name: Upload binaries
-        run: gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+      - name: Publish release
+        run: gh release edit "$TAG" --draft=false --repo "$GITHUB_REPOSITORY"
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.release.tag_name }}
