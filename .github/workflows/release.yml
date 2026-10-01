@@ -89,12 +89,20 @@ jobs:
         env:
           HFOX_SUBDOMAIN: example
 
+      # A missing shellingham module fails with its own error. BSD ps lists only processes
+      # with a controlling terminal, which a runner lacks, so on macOS the module loads and
+      # then finds no shell; that answer passes.
       - name: Smoke test completion
         if: runner.os != 'Windows'
         run: |
-          script=$("$BIN" --show-completion)
-          if [[ -z "$script" ]]; then
-            echo "::error::--show-completion printed nothing."
+          status=0
+          out=$("$BIN" --show-completion 2>&1) || status=$?
+          if [[ "$RUNNER_OS" == macOS && "$out" == "Shell  not supported." ]]; then
+            exit 0
+          fi
+          if [[ $status -ne 0 || -z "$out" ]]; then
+            echo "$out"
+            echo "::error::--show-completion failed with exit $status."
             exit 1
           fi
 
