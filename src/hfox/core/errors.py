@@ -1,8 +1,7 @@
 """Structured errors and stable, documented exit codes.
 
-Mirrors the gws convention: every failure maps to a documented exit code so
-scripts and AI agents can branch on it, and errors serialize to JSON so even
-failures stay machine-parseable.
+Every failure maps to a documented exit code and a stable `type` slug, and
+serializes to JSON so scripts and AI agents can branch on it.
 """
 
 from __future__ import annotations
@@ -12,7 +11,7 @@ from typing import Any
 
 
 class ExitCode(IntEnum):
-    """Stable exit codes. Keep these values frozen — they are a public contract."""
+    """Stable exit codes. These values are a public contract; do not renumber."""
 
     SUCCESS = 0
     API = 1          # HappyFox returned an error response
@@ -23,46 +22,123 @@ class ExitCode(IntEnum):
 
 
 class HfoxError(Exception):
-    """Base class for all hfox errors. Carries an exit code and optional detail."""
+    """Base class for all hfox errors. Carries an exit code, a type slug and optional detail."""
 
     exit_code: ExitCode = ExitCode.OTHER
+    type: str = "other"
 
-    def __init__(self, message: str, *, detail: Any = None, exit_code: ExitCode | None = None):
+    def __init__(
+        self,
+        message: str,
+        *,
+        detail: Any = None,
+        exit_code: ExitCode | None = None,
+        hint: str | None = None,
+        outcome_unknown: bool = False,
+    ):
         super().__init__(message)
         self.message = message
         self.detail = detail
+        self.hint = hint
+        self.outcome_unknown = outcome_unknown
         if exit_code is not None:
             self.exit_code = exit_code
 
     def to_dict(self) -> dict[str, Any]:
-        payload: dict[str, Any] = {"error": self.message, "exit_code": int(self.exit_code)}
+        """Return the error JSON. Optional keys appear only when set, in a fixed order."""
+        payload: dict[str, Any] = {
+            "error": self.message,
+            "type": self.type,
+            "exit_code": int(self.exit_code),
+        }
+        status_code = getattr(self, "status_code", None)
+        if status_code is not None:
+            payload["status_code"] = status_code
         if self.detail is not None:
             payload["detail"] = self.detail
+        if self.hint is not None:
+            payload["hint"] = self.hint
+        retry_after = getattr(self, "retry_after", None)
+        if retry_after is not None:
+            whole = float(retry_after).is_integer()
+            payload["retry_after"] = int(retry_after) if whole else float(retry_after)
+        if self.outcome_unknown:
+            payload["outcome_unknown"] = True
         return payload
 
 
 class AuthError(HfoxError):
     exit_code = ExitCode.AUTH
+    type = "auth"
 
 
 class ValidationError(HfoxError):
+    """A value failed a range, type or content check."""
+
     exit_code = ExitCode.VALIDATION
+    type = "validation"
+
+
+class UsageError(ValidationError):
+    """A structural command-line error: unknown or misplaced flag, missing argument."""
+
+    type = "usage"
 
 
 class NotFoundError(HfoxError):
     exit_code = ExitCode.NOT_FOUND
+    type = "not_found"
+
+
+class CancelledError(HfoxError):
+    """The user declined or interrupted a prompt."""
+
+    exit_code = ExitCode.OTHER
+    type = "cancelled"
+
+
+class InternalError(HfoxError):
+    """An unexpected exception from hfox itself."""
+
+    exit_code = ExitCode.OTHER
+    type = "internal"
+
+
+class NetworkError(HfoxError):
+    """A transport failure other than a timeout."""
+
+    exit_code = ExitCode.OTHER
+    type = "network"
+
+
+class RequestTimeoutError(NetworkError):
+    type = "timeout"
 
 
 class APIError(HfoxError):
     """An error response from the HappyFox API."""
 
     exit_code = ExitCode.API
+    type = "api"
 
-    def __init__(self, message: str, *, status_code: int, detail: Any = None):
-        super().__init__(message, detail=detail)
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int,
+        detail: Any = None,
+        hint: str | None = None,
+        outcome_unknown: bool = False,
+    ):
+        super().__init__(message, detail=detail, hint=hint, outcome_unknown=outcome_unknown)
         self.status_code = status_code
 
-    def to_dict(self) -> dict[str, Any]:
-        payload = super().to_dict()
-        payload["status_code"] = self.status_code
-        return payload
+
+class RateLimitError(APIError):
+    """HTTP 429 after retries ran out. `retry_after` is the server's value in seconds, if any."""
+
+    type = "rate_limited"
+
+    def __init__(self, message: str, *, retry_after: float | None = None, detail: Any = None):
+        super().__init__(message, status_code=429, detail=detail)
+        self.retry_after = retry_after

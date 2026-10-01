@@ -12,7 +12,20 @@ from typing import Any
 
 import httpx
 
-from .errors import APIError, AuthError, HfoxError, NotFoundError, ValidationError
+from .. import __version__
+from .errors import (
+    APIError,
+    AuthError,
+    NetworkError,
+    NotFoundError,
+    RateLimitError,
+    RequestTimeoutError,
+    ValidationError,
+)
+
+RetryCallback = Callable[[str, float, int, int], None]
+
+USER_AGENT = f"hfox/{__version__}"
 
 DEFAULT_TIMEOUT = 30.0
 BASE_RETRY_DELAY = 1.0
@@ -24,6 +37,9 @@ MAX_PAGE_SIZE = 50
 
 # A write that failed with any other transport error may already have been applied.
 _WRITE_RETRYABLE = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
+# Transport errors raised before any byte of the request left.
+_NOT_SENT = (*_WRITE_RETRYABLE, httpx.ProxyError, httpx.UnsupportedProtocol)
+OUTCOME_UNKNOWN_HINT = "The write may have been applied. Check the resource before retrying."
 
 # Deterministic-ish jitter without importing random (keeps backoff testable).
 _JITTER_CYCLE = (0.13, 0.41, 0.77, 0.29, 0.59)
@@ -41,14 +57,19 @@ class HappyFoxClient:
         timeout: float = DEFAULT_TIMEOUT,
         max_retries: int = MAX_RETRIES,
         sleep=time.sleep,
+        on_retry: RetryCallback | None = None,
     ):
+        """`timeout` bounds each attempt, not the whole call. `on_retry(reason, delay_s,
+        attempt, max_retries)` runs before each retry sleep, never for the page delay.
+        """
         self.base_url = base_url.rstrip("/")
         self.max_retries = max_retries
         self._sleep = sleep
+        self._on_retry = on_retry
         self._client = httpx.Client(
             auth=httpx.BasicAuth(api_key, auth_code),
             timeout=timeout,
-            headers={"Accept": "application/json", "User-Agent": "hfox-cli"},
+            headers={"Accept": "application/json", "User-Agent": USER_AGENT},
             # Do not follow redirects: httpx strips Basic auth on cross-host
             # redirects, which would silently send unauthenticated requests.
             follow_redirects=False,
@@ -71,6 +92,12 @@ class HappyFoxClient:
     def _backoff(self, attempt: int) -> float:
         delay = min(BASE_RETRY_DELAY * (2**attempt), MAX_RETRY_DELAY)
         return delay + _JITTER_CYCLE[attempt % len(_JITTER_CYCLE)]
+
+    def _retry_sleep(self, reason: str, delay: float, attempt: int) -> None:
+        """Report the retry through `on_retry`, then sleep. `attempt` is 0-based."""
+        if self._on_retry is not None:
+            self._on_retry(reason, delay, attempt + 1, self.max_retries)
+        self._sleep(delay)
 
     # -- core request ------------------------------------------------------
     def request(
@@ -99,19 +126,22 @@ class HappyFoxClient:
                 )
             except httpx.RequestError as exc:
                 if isinstance(exc, retryable) and attempt < self.max_retries:
-                    self._sleep(self._backoff(attempt))
+                    reason = f"network error: {type(exc).__name__}"
+                    self._retry_sleep(reason, self._backoff(attempt), attempt)
                     continue
-                raise HfoxError(f"Network error contacting HappyFox: {exc}") from exc
+                raise _transport_error(exc, method) from exc
 
             if response.status_code == 429 and attempt < self.max_retries:
                 delay = _retry_after(response.headers.get("Retry-After"))
-                self._sleep(delay if delay is not None else self._backoff(attempt))
+                if delay is None:
+                    delay = self._backoff(attempt)
+                self._retry_sleep("HTTP 429", delay, attempt)
                 continue
 
-            return self._handle_response(response)
+            return self._handle_response(response, method)
         raise AssertionError("unreachable")  # pragma: no cover
 
-    def _handle_response(self, response: httpx.Response) -> Any:
+    def _handle_response(self, response: httpx.Response, method: str = "GET") -> Any:
         if response.is_success:
             if not response.content:
                 return None
@@ -131,14 +161,20 @@ class HappyFoxClient:
         if status == 404:
             raise NotFoundError("Resource not found.", detail=detail)
         if status == 429:
-            raise APIError(
+            raise RateLimitError(
                 "Rate limit exceeded (HTTP 429). HappyFox enforces a 10-minute "
                 "cooldown after the limit is hit.",
-                status_code=status,
+                retry_after=_retry_after_raw(response.headers.get("Retry-After")),
                 detail=detail,
             )
+        # A server error on a write does not say whether the write was applied.
+        unknown = method != "GET" and status >= 500
         raise APIError(
-            f"HappyFox API returned HTTP {status}.", status_code=status, detail=detail
+            f"HappyFox API returned HTTP {status}.",
+            status_code=status,
+            detail=detail,
+            hint=OUTCOME_UNKNOWN_HINT if unknown else None,
+            outcome_unknown=unknown,
         )
 
     # -- verbs -------------------------------------------------------------
@@ -232,7 +268,21 @@ def _join(base_url: str, path: str) -> str:
     return f"{base_url.rstrip('/')}/{urllib.parse.quote(path, safe='/@')}"
 
 
-def _retry_after(value: str | None) -> float | None:
+def _transport_error(exc: httpx.RequestError, method: str) -> NetworkError:
+    """Map a transport failure to its error; a write that may have left is outcome-unknown."""
+    name = type(exc).__name__
+    unknown = method != "GET" and not isinstance(exc, _NOT_SENT)
+    extra = {
+        "detail": name,
+        "hint": OUTCOME_UNKNOWN_HINT if unknown else None,
+        "outcome_unknown": unknown,
+    }
+    if isinstance(exc, httpx.TimeoutException):
+        return RequestTimeoutError(f"Request to HappyFox timed out ({name}).", **extra)
+    return NetworkError(f"Network error contacting HappyFox: {exc}", **extra)
+
+
+def _retry_after_raw(value: str | None) -> float | None:
     """Parse Retry-After seconds; None when absent, non-numeric, negative or non-finite."""
     try:
         delay = float(value or "")
@@ -240,7 +290,13 @@ def _retry_after(value: str | None) -> float | None:
         return None
     if not math.isfinite(delay) or delay < 0:
         return None
-    return min(delay, MAX_RETRY_AFTER_DELAY)
+    return delay
+
+
+def _retry_after(value: str | None) -> float | None:
+    """Like `_retry_after_raw`, clamped to MAX_RETRY_AFTER_DELAY for the sleep path."""
+    delay = _retry_after_raw(value)
+    return None if delay is None else min(delay, MAX_RETRY_AFTER_DELAY)
 
 
 def _int_param(params: dict[str, Any], key: str, default: int) -> int:

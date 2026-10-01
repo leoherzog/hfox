@@ -7,9 +7,11 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import httpx
 import pytest
+from conftest import subprocess_env
 from typer.testing import CliRunner
 
 from hfox.cli.main import cli
@@ -26,11 +28,11 @@ ENV = {
 }
 
 
-def run(*args, env_extra=None):
+def run(*args, env_extra=None, **kwargs):
     env = dict(ENV)
     if env_extra:
         env.update(env_extra)
-    return runner.invoke(cli, list(args), env=env)
+    return runner.invoke(cli, list(args), env=env, **kwargs)
 
 
 def preview(*args, env_extra=None):
@@ -45,13 +47,17 @@ _INVOKER = (
 )
 
 
-def run_app(argv):
-    """Run the real `app()` entry point; --dry-run keeps a regression off the network."""
+def run_app(argv, stdin=None):
+    """Run the real `app()` entry point; --dry-run keeps a regression off the network.
+
+    `stdin` is the text piped in; without it stdin is empty.
+    """
     return subprocess.run(
         [sys.executable, "-c", _INVOKER, "--dry-run", *argv],
-        env={**ENV, "HFOX_CONFIG_DIR": os.environ["HFOX_CONFIG_DIR"]},
+        env=subprocess_env(**ENV),
         capture_output=True,
         text=True,
+        **({"stdin": subprocess.DEVNULL} if stdin is None else {"input": stdin}),
     )
 
 
@@ -310,6 +316,102 @@ def test_contacts_create_bulk_missing_file():
     result = run("contacts", "create-bulk", "--file", "/no/such/file.json")
     assert result.exit_code != 0
     assert isinstance(result.exception, ValidationError)
+
+
+def test_contacts_create_bulk_reads_stdin():
+    rows = [{"name": "A", "email": "a@x.org"}, {"name": "B", "email": "b@x.org"}]
+    result = run(
+        "--dry-run", "contacts", "create-bulk", "--file", "-", input=json.dumps(rows) + "\n"
+    )
+    assert result.exit_code == 0, result.output
+    p = json.loads(result.stdout)
+    assert p["method"] == "POST"
+    assert p["url"].endswith("/users/")
+    assert p["body"] == rows
+
+
+def test_contacts_create_bulk_stdin_through_app():
+    proc = run_app(["contacts", "create-bulk", "--file", "-"], stdin='[{"name": "A"}]')
+    assert proc.returncode == 0, proc.stdout
+    assert json.loads(proc.stdout)["body"] == [{"name": "A"}]
+
+
+def test_contacts_create_bulk_stdin_posts_array(mock_api):
+    created = [{"email": "a@x.org", "success": True, "id": 1}]
+    captured = mock_api(lambda req: httpx.Response(200, json=created))
+    result = run("contacts", "create-bulk", "--file", "-", input='[{"email": "a@x.org"}]')
+    assert result.exit_code == 0, result.output
+    assert captured[0].method == "POST"
+    assert captured[0].url.path.endswith("/users/")
+    assert json.loads(captured[0].content) == [{"email": "a@x.org"}]
+    assert json.loads(result.stdout) == created
+
+
+def test_contacts_create_bulk_empty_stdin_exits_3():
+    proc = run_app(["contacts", "create-bulk", "--file", "-"])
+    assert proc.returncode == 3, proc.stdout
+    payload = json.loads(proc.stdout)
+    assert payload["type"] == "validation"
+    assert "stdin" in payload["error"]
+
+
+def test_contacts_create_bulk_invalid_stdin_names_stdin(mock_api):
+    captured = mock_api(lambda req: httpx.Response(200, json=[]))
+    result = run("contacts", "create-bulk", "--file", "-", input="{not json")
+    assert isinstance(result.exception, ValidationError), result.output
+    assert "Invalid JSON in stdin" in str(result.exception)
+    assert captured == []
+
+
+def test_contacts_create_bulk_stdin_must_be_utf8(mock_api):
+    captured = mock_api(lambda req: httpx.Response(200, json=[]))
+    result = run("contacts", "create-bulk", "--file", "-", input=b'["caf\xe9"]')
+    assert isinstance(result.exception, ValidationError), result.output
+    assert "--file: stdin is not UTF-8" in str(result.exception)
+    assert captured == []
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_contacts_create_bulk_file_inside_config_dir_is_refused(mock_api, dry_run):
+    captured = mock_api(lambda req: httpx.Response(200, json=[]))
+    cfg = Path(os.environ["HFOX_CONFIG_DIR"])
+    cfg.mkdir(parents=True)
+    for name, content in (("token.json", "{}"), ("contacts.json", '[{"name": "A"}]')):
+        (cfg / name).write_text(content, encoding="utf-8")
+        flags = ["--dry-run"] if dry_run else []
+        result = run(*flags, "contacts", "create-bulk", "--file", str(cfg / name))
+        assert isinstance(result.exception, ValidationError), result.output
+        assert "inside the hfox config directory" in str(result.exception)
+        assert result.stdout == ""
+    assert captured == []
+
+
+def test_contacts_create_bulk_file_inside_config_dir_exits_3():
+    cfg = Path(os.environ["HFOX_CONFIG_DIR"])
+    cfg.mkdir(parents=True)
+    (cfg / "token.json").write_text("{}", encoding="utf-8")
+    proc = run_app(["contacts", "create-bulk", "--file", str(cfg / "token.json")])
+    assert proc.returncode == 3, proc.stdout
+    payload = json.loads(proc.stdout)
+    assert payload["type"] == "validation"
+    assert "Refusing to read" in payload["error"]
+
+
+def test_contacts_create_bulk_refuses_a_file_holding_credentials(mock_api, tmp_path):
+    captured = mock_api(lambda req: httpx.Response(200, json=[]))
+    secret = "s3cret-api-key-value"
+    f = tmp_path / "contacts.json"
+    f.write_text(json.dumps([{"name": secret}]), encoding="utf-8")
+    result = run("contacts", "create-bulk", "--file", str(f), env_extra={"HFOX_API_KEY": secret})
+    assert isinstance(result.exception, ValidationError), result.output
+    assert "contains HappyFox credentials" in str(result.exception)
+    assert secret not in str(result.exception)
+    assert captured == []
+
+
+def test_contacts_create_bulk_help_mentions_stdin():
+    result = run("contacts", "create-bulk", "--help", env_extra={"COLUMNS": "200"})
+    assert "'-' reads stdin." in result.stdout
 
 
 # -- groups list -----------------------------------------------------------

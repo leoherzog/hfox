@@ -11,7 +11,6 @@ from ._util import (
     exit_on_failures,
     filter_help,
     filter_rows,
-    load_json_file,
     nonblank_or_none,
     require_nonblank,
     split_csv,
@@ -184,12 +183,15 @@ def create_bulk(
     file: str = typer.Option(
         ...,
         "--file",
-        help="JSON array of users/ payloads; a phones entry with an id edits that phone.",
+        help=(
+            "JSON array of users/ payloads; a phones entry with an id edits that phone. "
+            "'-' reads stdin."
+        ),
     ),
 ) -> None:
     """Add or edit up to 100 contacts from a JSON file. Unsent custom fields are reset."""
     obj = get_ctx(ctx)
-    payload = load_json_file(file)
+    payload = obj.read_json(file, "--file")
     if not isinstance(payload, list):
         raise ValidationError("Bulk file must contain a JSON array of contacts.")
     if not (1 <= len(payload) <= 100):

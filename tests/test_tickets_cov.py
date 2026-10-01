@@ -7,14 +7,15 @@ execute, and we exercise the ValidationError / require_staff_id error paths.
 """
 
 import json
-import os
 import subprocess
 import sys
 
 import httpx
+from conftest import subprocess_env
 from typer.testing import CliRunner
 
 from hfox.cli.main import cli
+from hfox.core.errors import CancelledError, ValidationError
 
 runner = CliRunner()
 
@@ -43,10 +44,10 @@ _INVOKER = (
 def run_app(argv, base_env=None):
     """Run the real `app()` entry point; --dry-run keeps a regression off the network."""
     env = dict(base_env if base_env is not None else ENV)
-    env["HFOX_CONFIG_DIR"] = os.environ["HFOX_CONFIG_DIR"]
     return subprocess.run(
         [sys.executable, "-c", _INVOKER, "--dry-run", *argv],
-        env=env,
+        env=subprocess_env(**env),
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
     )
@@ -426,7 +427,7 @@ def test_unsubscribe_missing_staff_id_is_validation_error():
     env = {k: v for k, v in ENV.items() if k != "HFOX_STAFF_ID"}
     proc = run_app(["tickets", "unsubscribe", "42"], base_env=env)
     assert proc.returncode == 3
-    assert "staff id" in json.loads(proc.stdout)["error"].lower()
+    assert "staff identity" in json.loads(proc.stdout)["error"].lower()
 
 
 # -- forward: full body + render ----------------------------
@@ -499,9 +500,8 @@ def test_delete_with_yes_posts_and_renders(mock_api):
     assert json.loads(result.stdout)["deleted"] is True
 
 
-def test_delete_confirm_yes_via_prompt(mock_api):
+def test_delete_confirm_yes_via_prompt(mock_api, tty):
     captured = mock_api(ok_json({"deleted": True}))
-    # Answer the typer.confirm prompt with 'y'.
     env = dict(ENV)
     result = runner.invoke(cli, ["tickets", "delete", "42"], input="y\n", env=env)
     assert result.exit_code == 0
@@ -510,10 +510,20 @@ def test_delete_confirm_yes_via_prompt(mock_api):
     assert json.loads(result.stdout)["deleted"] is True
 
 
-def test_delete_abort_when_declined(mock_api):
+def test_delete_abort_when_declined(mock_api, tty):
     captured = mock_api(lambda r: httpx.Response(200, json={}))
     result = runner.invoke(cli, ["tickets", "delete", "42"], input="n\n", env=dict(ENV))
-    assert result.exit_code == 1
+    assert isinstance(result.exception, CancelledError), result.exception
+    assert result.stdout == ""
+    assert captured == []
+
+
+def test_delete_without_terminal_requires_yes(mock_api):
+    captured = mock_api(lambda r: httpx.Response(200, json={}))
+    result = runner.invoke(cli, ["tickets", "delete", "42"], input="y\n", env=dict(ENV))
+    assert isinstance(result.exception, ValidationError), result.exception
+    assert "--yes" in str(result.exception)
+    assert result.stdout == ""
     assert captured == []
 
 

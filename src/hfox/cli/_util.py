@@ -1,5 +1,5 @@
-"""Shared command helpers: prompts, validation, CSV splitting, JSON, attachments, bulk results
-and local row filters.
+"""Shared command helpers: validation, CSV splitting, JSON, guarded file reads, attachments,
+bulk results and local row filters.
 """
 
 from __future__ import annotations
@@ -7,16 +7,26 @@ from __future__ import annotations
 import contextlib
 import json
 import math
+import os
 import re
 import sys
 import unicodedata
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 import typer
 
+from ..core.config import TOKEN_FILENAME
 from ..core.errors import HfoxError, ValidationError
 from . import output
+
+#: A file argument with this value reads stdin.
+STDIN = "-"
+
+STAFF_HELP = "Acting staff email or name, looked up through staff/; excludes --staff-id."
+STAFF_ID_HELP = "Acting staff id; excludes --staff."
+YES_HELP = "Skip the confirmation prompt; required when stdin is not a terminal."
 
 #: Documented cap on the combined size of one request's attachments.
 MAX_ATTACHMENT_BYTES = 25_000_000
@@ -29,11 +39,34 @@ _CONTACT_ID = re.compile(r"[1-9][0-9]*")
 _EMAIL = re.compile(r"[^@/\s]+@[^@/\s]+")
 
 
-def confirm(message: str) -> None:
-    """Ask for confirmation on stderr; abort unless the user agrees."""
-    # Click writes the prompt's trailing space to stdout, which would corrupt the data stream.
-    with contextlib.redirect_stdout(sys.stderr):
-        typer.confirm(message, abort=True, err=True)
+def _has_console(stream: Any) -> bool:
+    """True when `stream` is backed by a Windows console; false on any failure."""
+    try:
+        import ctypes
+        import msvcrt
+        from ctypes import wintypes
+
+        handle = wintypes.HANDLE(msvcrt.get_osfhandle(stream.fileno()))
+        mode = wintypes.DWORD()
+        return bool(ctypes.windll.kernel32.GetConsoleMode(handle, ctypes.byref(mode)))
+    except Exception:
+        return False
+
+
+def stdin_is_tty() -> bool:
+    """True when stdin is an interactive terminal. Call as `_util.stdin_is_tty()`."""
+    try:
+        if not (sys.stdin and sys.stdin.isatty()):
+            return False
+    except Exception:
+        return False
+    # Windows isatty() is true for any character device, NUL included.
+    return _has_console(sys.stdin) if sys.platform == "win32" else True
+
+
+def text_file_help(what: str) -> str:
+    """Help text for a flag that reads `what` from a file or stdin."""
+    return f"File holding the {what}; '-' reads stdin."
 
 
 def compact(data: dict[str, Any]) -> dict[str, Any]:
@@ -93,33 +126,180 @@ def validate_contact_ref(value: str) -> str:
     return value
 
 
+def _refusal(p: Path) -> ValidationError:
+    return ValidationError(f"Refusing to read {p}: it is inside the hfox config directory.")
+
+
+def _expand(path: str | Path) -> Path:
+    """Return `path` with `~` expanded, or unexpanded when it names no known home."""
+    try:
+        return Path(path).expanduser()
+    except RuntimeError:
+        return Path(path)
+
+
+def _resolve(p: Path) -> Path | None:
+    try:
+        return p.resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    try:
+        return os.path.samefile(a, b)
+    except (OSError, ValueError):
+        return False
+
+
+def _is_within(path: Path, directory: Path) -> bool:
+    """Component-wise containment on the normcase form; never a string prefix test."""
+    return Path(os.path.normcase(path)).is_relative_to(Path(os.path.normcase(directory)))
+
+
+def check_readable_path(path: str, forbidden: Iterable[Path] = ()) -> Path:
+    """Return `path` with `~` expanded; raise ValidationError when it resolves to a
+    `forbidden` directory or below one. Runs before any existence check.
+    """
+    p = _expand(path)
+    resolved = _resolve(p)
+    if resolved is None:
+        raise ValidationError(f"Cannot read {p}: the path cannot be resolved.")
+    chain = [resolved, *resolved.parents]
+    for directory in forbidden:
+        guard = _resolve(_expand(directory))
+        if guard is None:
+            continue
+        if _is_within(resolved, guard) or any(_same_file(link, guard) for link in chain):
+            raise _refusal(p)
+    return p
+
+
+def _token_identities(forbidden: Iterable[Path]) -> set[tuple[int, int]]:
+    """Return the (st_dev, st_ino) of each existing token.json in a guarded directory."""
+    found: set[tuple[int, int]] = set()
+    for directory in forbidden:
+        try:
+            info = os.stat(_expand(directory) / TOKEN_FILENAME)
+        except (OSError, ValueError):
+            continue
+        if info.st_ino:
+            found.add((info.st_dev, info.st_ino))
+    return found
+
+
+def open_guarded(
+    path: str, *, forbidden: Iterable[Path] = (), what: str = "File"
+) -> tuple[Path, BinaryIO]:
+    """Open a regular file for binary reading; return (path, handle), which the caller closes.
+
+    Raises ValidationError for a guarded path, a hard link to a guarded token.json, or a
+    missing, non-regular or unreadable file. Read from the handle, so the checked file is read.
+    """
+    forbidden = tuple(forbidden)
+    p = check_readable_path(path, forbidden)
+    if not p.is_file():
+        if not p.exists():
+            raise ValidationError(f"{what} not found: {p}")
+        raise ValidationError(f"{what} is not a regular file: {p}")
+    try:
+        handle = p.open("rb")
+    except OSError as exc:
+        raise ValidationError(f"Cannot read {p}: {exc.strerror}") from exc
+    try:
+        info = os.fstat(handle.fileno())
+        if info.st_ino and (info.st_dev, info.st_ino) in _token_identities(forbidden):
+            raise _refusal(p)
+    except OSError as exc:
+        handle.close()
+        raise ValidationError(f"Cannot read {p}: {exc.strerror}") from exc
+    except BaseException:
+        handle.close()
+        raise
+    return p, handle
+
+
+def check_no_secrets(data: bytes, source: str, secrets: Iterable[str] = ()) -> None:
+    """Raise ValidationError when `data` holds the UTF-8 bytes of any of `secrets`."""
+    for secret in secrets:
+        if secret and secret.encode("utf-8") in data:
+            raise ValidationError(
+                f"Refusing to send {source}: it contains HappyFox credentials."
+            )
+
+
+def _read_all(handle: BinaryIO) -> bytes:
+    return handle.read()
+
+
+def read_text_file(
+    path: str, *, forbidden: Iterable[Path] = (), secrets: Iterable[str] = ()
+) -> str:
+    """Read a guarded file as strict UTF-8, dropping a BOM; content is otherwise unchanged.
+
+    Raises ValidationError for a guarded, missing, unreadable or non-UTF-8 file, or one
+    holding credentials.
+    """
+    p, handle = open_guarded(path, forbidden=forbidden)
+    with handle:
+        try:
+            data = _read_all(handle)
+        except OSError as exc:
+            raise ValidationError(f"Cannot read {p}: {exc.strerror}") from exc
+    check_no_secrets(data, str(p), secrets)
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise ValidationError(f"{p} is not UTF-8 (byte {exc.start}).") from exc
+
+
+def _too_large(total: int) -> ValidationError:
+    return ValidationError(
+        f"Attachments total {total:,} bytes; the limit is {MAX_ATTACHMENT_BYTES:,}."
+    )
+
+
 def attach(
-    body: dict[str, Any], attachments: list[str] | None, *, field: str = "attachments"
+    body: dict[str, Any],
+    attachments: list[str] | None,
+    *,
+    field: str = "attachments",
+    forbidden: Iterable[Path] = (),
+    secrets: Iterable[str] = (),
 ) -> dict[str, Any]:
     """Build AppContext.call kwargs: {"json": body}, or {"data", "files"} when files are given.
 
-    The JSON body is sent as given. Multipart drops None, JSON-encodes lists, dicts and
-    bools, and stringifies the rest. Raises ValidationError for a missing or unreadable file
-    or a total over MAX_ATTACHMENT_BYTES.
+    The JSON body is sent as given; multipart drops None and JSON-encodes lists, dicts and
+    bools. Raises ValidationError for an unreadable file, credentials or a total over the cap.
     """
     if not attachments:
         return {"json": body}
-    paths = [Path(path).expanduser() for path in attachments]
-    for p in paths:
-        if not p.is_file():
-            raise ValidationError(f"Attachment not found: {p}")
-    total = sum(p.stat().st_size for p in paths)
-    if total > MAX_ATTACHMENT_BYTES:
-        raise ValidationError(
-            f"Attachments total {total:,} bytes; the limit is {MAX_ATTACHMENT_BYTES:,}."
-        )
+    forbidden, secrets = tuple(forbidden), tuple(secrets)
     # httpx sets each part's content type from the filename extension.
     files = []
-    for p in paths:
+    with contextlib.ExitStack() as stack:
+        opened = []
+        for path in attachments:
+            p, handle = open_guarded(path, forbidden=forbidden, what="Attachment")
+            opened.append((p, stack.enter_context(handle)))
         try:
-            files.append((field, (p.name, p.read_bytes())))
+            total = sum(os.fstat(handle.fileno()).st_size for _, handle in opened)
         except OSError as exc:
-            raise ValidationError(f"Cannot read {p}: {exc.strerror}") from exc
+            raise ValidationError(f"Cannot read attachments: {exc.strerror}") from exc
+        if total > MAX_ATTACHMENT_BYTES:
+            raise _too_large(total)
+        total = 0
+        for p, handle in opened:
+            try:
+                content = _read_all(handle)
+            except OSError as exc:
+                raise ValidationError(f"Cannot read {p}: {exc.strerror}") from exc
+            # A file can grow between the size check and the read.
+            total += len(content)
+            if total > MAX_ATTACHMENT_BYTES:
+                raise _too_large(total)
+            check_no_secrets(content, str(p), secrets)
+            files.append((field, (p.name, content)))
     data = {
         k: (json.dumps(v) if isinstance(v, (list, dict, bool)) else str(v))
         for k, v in body.items()
@@ -147,18 +327,12 @@ def parse_json(text: str, source: str) -> Any:
         raise ValidationError(f"Invalid JSON in {source}: {exc}") from exc
 
 
-def load_json_file(path: str) -> Any:
-    """Read and parse a UTF-8 JSON file; raise ValidationError if it is missing or invalid."""
-    p = Path(path).expanduser()
-    if not p.is_file():
-        raise ValidationError(f"File not found: {p}")
-    try:
-        text = p.read_text(encoding="utf-8-sig")
-    except UnicodeDecodeError as exc:
-        raise ValidationError(f"{p} is not UTF-8 (byte {exc.start}).") from exc
-    except OSError as exc:
-        raise ValidationError(f"Cannot read {p}: {exc.strerror}") from exc
-    return parse_json(text, str(p))
+def load_json_file(
+    path: str, *, forbidden: Iterable[Path] = (), secrets: Iterable[str] = ()
+) -> Any:
+    """Read and parse a UTF-8 JSON file through read_text_file; '-' is an ordinary name."""
+    p = _expand(path)
+    return parse_json(read_text_file(path, forbidden=forbidden, secrets=secrets), str(p))
 
 
 def count_failures(result: Any, *, benign: str | None = None) -> int:

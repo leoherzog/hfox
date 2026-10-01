@@ -1,22 +1,27 @@
-"""Configuration under ~/.hfox/: secrets in token.json (0600), settings in config.toml.
+"""Configuration in the config directory: secrets in token.json (0600), settings in
+config.toml.
 
 Every field resolves as env var > token.json/config.toml > default.
 """
 
 from __future__ import annotations
 
+import datetime
+import ipaddress
 import json
+import math
 import os
 import re
 import stat
-import sys
+import tempfile
 import tomllib
 import urllib.parse
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .errors import AuthError, HfoxError, ValidationError
+from .errors import AuthError, ExitCode, HfoxError, ValidationError
 
 DEFAULT_REGION = "us"
 DEFAULT_FORMAT = "json"
@@ -26,46 +31,136 @@ API_PREFIX = "/api/1.1/json"
 TOKEN_FILENAME = "token.json"
 CONFIG_FILENAME = "config.toml"
 
+# Shortest credential worth scanning outgoing content for.
+MIN_SECRET_LENGTH = 8
+
+
+class ConfigError(HfoxError):
+    """A config or token file that cannot be read or parsed."""
+
+    exit_code = ExitCode.OTHER
+    type = "config"
+
+
 # A subdomain or custom host: dot-separated DNS labels (alnum + hyphen), no scheme,
 # credentials, port, or path. Dotted values are supported for custom domains.
 _HOST_RE = re.compile(r"^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?:\.(?!-)[A-Za-z0-9-]{1,63})*$")
 
 
-def _validate_host_part(subdomain: str) -> str:
-    """Validate a bare subdomain or dotted custom host before templating it into a URL."""
+def validate_host(subdomain: str) -> str:
+    """Return the stripped subdomain or dotted custom host, or raise ValidationError."""
     host = subdomain.strip()
     if not _HOST_RE.match(host):
+        # A value with "@" may hold a password, so the message leaves it out.
+        shown = "" if "@" in subdomain else f" {subdomain!r}"
         raise ValidationError(
-            f"Invalid subdomain/host {subdomain!r}: expected a bare hostname like "
+            f"Invalid subdomain/host{shown}: expected a bare hostname like "
             "'acme' or 'support.acme.com' (no scheme, credentials, port, or path). "
             "Use HFOX_BASE_URL for self-hosted/proxied accounts.",
         )
     return host
 
 
-def _toml_str(value: str) -> str:
-    r"""Render a TOML basic string, escaping ``\`` and ``"``.
+_BARE_KEY_RE = re.compile(r"[A-Za-z0-9_-]+")
+_TOML_ESCAPES = {
+    "\\": "\\\\",
+    '"': '\\"',
+    "\b": "\\b",
+    "\t": "\\t",
+    "\n": "\\n",
+    "\f": "\\f",
+    "\r": "\\r",
+}
 
-    Control characters raise ValidationError.
-    """
-    if any(ord(ch) < 0x20 for ch in value):
-        raise ValidationError("Config string values may not contain control characters.")
-    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{escaped}"'
+
+def _is_control(ch: str) -> bool:
+    return ord(ch) < 0x20 or ord(ch) == 0x7F
+
+
+def _toml_str(value: str) -> str:
+    """Render a TOML basic string, escaping quotes, backslashes and control characters."""
+    out = []
+    for ch in value:
+        if ch in _TOML_ESCAPES:
+            out.append(_TOML_ESCAPES[ch])
+        elif _is_control(ch):
+            out.append(f"\\u{ord(ch):04X}")
+        else:
+            out.append(ch)
+    return f'"{"".join(out)}"'
+
+
+def _toml_key(key: str) -> str:
+    return key if _BARE_KEY_RE.fullmatch(key) else _toml_str(key)
+
+
+def _toml_value(value: Any) -> str:
+    """Render one TOML value; a dict becomes an inline table."""
+    if isinstance(value, str):
+        return _toml_str(value)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        if math.isnan(value):
+            return "nan"
+        if math.isinf(value):
+            return "inf" if value > 0 else "-inf"
+        return repr(value)
+    if isinstance(value, (datetime.datetime, datetime.date, datetime.time)):
+        return value.isoformat()
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_toml_value(item) for item in value) + "]"
+    if isinstance(value, dict):
+        pairs = (f"{_toml_key(str(k))} = {_toml_value(v)}" for k, v in value.items())
+        return "{" + ", ".join(pairs) + "}"
+    raise ValidationError(f"Cannot write a {type(value).__name__} value to {CONFIG_FILENAME}.")
+
+
+def _toml_dumps(data: dict[str, Any]) -> str:
+    """Serialize a dict as TOML: each table's scalars first, then its sub-tables as sections."""
+    lines: list[str] = []
+
+    def emit(table: dict[str, Any], prefix: str) -> None:
+        for key, value in table.items():
+            if not isinstance(value, dict):
+                lines.append(f"{_toml_key(str(key))} = {_toml_value(value)}")
+        for key, value in table.items():
+            if isinstance(value, dict):
+                name = f"{prefix}.{_toml_key(str(key))}" if prefix else _toml_key(str(key))
+                if lines:
+                    lines.append("")
+                lines.append(f"[{name}]")
+                emit(value, name)
+
+    emit(data, "")
+    return "\n".join(lines) + "\n"
 
 
 def normalize_base_url(url: str, source: str = "HFOX_BASE_URL") -> str:
     """Return a base URL override as an http(s) root without trailing slash or API prefix.
 
-    Raises ValidationError naming `source` for another scheme, a missing host, a bad port,
-    a query or a fragment.
+    Raises ValidationError naming `source` for another scheme, a missing host, a bad port, a
+    query, a fragment or credentials. A value holding `@`, `?` or `#` is never echoed.
     """
+    # A valid root has no "@", so any form of userinfo is caught before parsing.
+    if "@" in url:
+        raise ValidationError(
+            f"Invalid {source}: credentials in the URL are not supported; expected http(s)://host."
+        )
     root = url.strip().rstrip("/")
     if root.endswith(API_PREFIX):
         root = root[: -len(API_PREFIX)].rstrip("/")
-    error = f"Invalid {source} {url!r}: expected http(s)://host."
+    if "?" in url or "#" in url:
+        error = f"Invalid {source}: a query or fragment is not supported; expected http(s)://host."
+    else:
+        error = f"Invalid {source} {url!r}: expected http(s)://host."
     try:
         parts = urllib.parse.urlsplit(root)
+    except ValueError as exc:
+        raise ValidationError(error) from exc
+    try:
         _ = parts.port  # raises ValueError for a bad port
     except ValueError as exc:
         raise ValidationError(error) from exc
@@ -89,16 +184,99 @@ def parse_staff_id(value: Any, source: str) -> int | None:
     raise ValidationError(f"{source} must be a non-negative integer, got {value!r}.")
 
 
+def cleartext_host(base_url: str) -> str | None:
+    """Return the lowercased host when `base_url` is http to a non-loopback host, else None."""
+    try:
+        parts = urllib.parse.urlsplit(base_url.strip())
+        host = parts.hostname
+    except (AttributeError, ValueError):
+        return None
+    if parts.scheme.lower() != "http" or not host:
+        return None
+    host = host.lower()
+    if host == "localhost" or host.endswith(".localhost"):
+        return None
+    try:
+        if ipaddress.ip_address(host).is_loopback:
+            return None
+    except ValueError:
+        pass
+    return host
+
+
+def _default_config_dir() -> Path:
+    """Return $XDG_CONFIG_HOME/hfox when that variable is an absolute path, else ~/.config/hfox."""
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    if xdg and Path(xdg).is_absolute():
+        return Path(xdg) / "hfox"
+    return Path.home() / ".config" / "hfox"
+
+
+def _expand_dir(value: str | Path) -> Path:
+    try:
+        return Path(value).expanduser()
+    except RuntimeError as exc:
+        raise ConfigError(
+            f"Cannot expand the config directory {str(value)!r}: its home directory is "
+            "unknown; use an absolute path."
+        ) from exc
+
+
 def config_dir(override: str | Path | None = None) -> Path:
-    """Resolve the config directory: CLI override > HFOX_CONFIG_DIR > ~/.hfox."""
-    # An explicit override of "" is treated as unset (mirrors the env handling below).
+    """Resolve the config directory: override > HFOX_CONFIG_DIR > XDG default.
+
+    An empty override or env value counts as unset. Raises ConfigError when the result
+    depends on a home directory that cannot be determined.
+    """
     if override is not None and override != "":
-        return Path(override).expanduser()
-    # Empty-string env vars are treated as unset throughout config resolution.
+        return _expand_dir(override)
     env = os.environ.get("HFOX_CONFIG_DIR")
     if env:
-        return Path(env).expanduser()
-    return Path.home() / ".hfox"
+        return _expand_dir(env)
+    try:
+        return _default_config_dir()
+    except RuntimeError as exc:
+        raise ConfigError(
+            "Cannot determine the home directory; set HFOX_CONFIG_DIR to an absolute path."
+        ) from exc
+
+
+def guarded_dirs(active: Path) -> tuple[Path, ...]:
+    """Return the directories user-named files must stay out of, deduplicated.
+
+    Order: `active`, the env-resolved directory, the XDG or home default, so an override
+    cannot move the guard off the real one. An entry that needs an unknown home is left out.
+    """
+    dirs: list[Path] = []
+    for resolve in (lambda: Path(active), lambda: config_dir(None), _default_config_dir):
+        try:
+            candidate = resolve()
+        except (ConfigError, RuntimeError):
+            continue
+        if candidate not in dirs:
+            dirs.append(candidate)
+    return tuple(dirs)
+
+
+def guarded_secrets(config: Config) -> tuple[str, ...]:
+    """Return the credentials outgoing content must not contain, deduplicated.
+
+    Covers the resolved credentials and those in token.json of every guarded directory.
+    Unreadable or malformed files are skipped; values under MIN_SECRET_LENGTH are dropped.
+    """
+    candidates: list[Any] = [config.api_key, config.auth_code]
+    for directory in guarded_dirs(config.dir):
+        try:
+            token = json.loads((directory / TOKEN_FILENAME).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(token, dict):
+            candidates += [token.get("api_key"), token.get("auth_code")]
+    secrets: list[str] = []
+    for value in candidates:
+        if isinstance(value, str) and len(value) >= MIN_SECRET_LENGTH and value not in secrets:
+            secrets.append(value)
+    return tuple(secrets)
 
 
 @dataclass
@@ -124,7 +302,7 @@ class Config:
             return normalize_base_url(self.base_url_override, self.base_url_source) + API_PREFIX
         if not self.subdomain:
             raise AuthError("No HappyFox account configured. Run `hfox auth login` first.")
-        sub = _validate_host_part(self.subdomain)
+        sub = validate_host(self.subdomain)
         # A dotted subdomain is a full custom host and ignores the region.
         if "." in sub:
             return f"https://{sub}{API_PREFIX}"
@@ -146,23 +324,42 @@ class Config:
             )
 
 
+_CONFIG_HINT = "Fix or delete the file."
+_TOKEN_HINT = "Delete the file and run `hfox auth login`."
+
+
 def _read_toml(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     try:
         with path.open("rb") as fh:
             return tomllib.load(fh)
-    except (OSError, tomllib.TOMLDecodeError) as exc:
-        raise HfoxError(f"Failed to read config file {path}: {exc}") from exc
+    except (OSError, ValueError) as exc:
+        raise ConfigError(f"Cannot read config file {path}: {exc}", hint=_CONFIG_HINT) from exc
 
 
 def _read_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise HfoxError(f"Failed to read token file {path}: {exc}") from exc
+        token = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ConfigError(f"Cannot read token file {path}: {exc}", hint=_TOKEN_HINT) from exc
+    if not isinstance(token, dict):
+        raise ConfigError(
+            f"Cannot read token file {path}: expected a JSON object", hint=_TOKEN_HINT
+        )
+    return token
+
+
+def _require_strings(data: dict[str, Any], keys: tuple[str, ...], message: str, hint: str) -> None:
+    """Raise ConfigError naming the first of `keys` whose value is set and not a string.
+
+    The value is never echoed, since it may be a credential.
+    """
+    for key in keys:
+        if data.get(key) is not None and not isinstance(data[key], str):
+            raise ConfigError(f"{message}: {key} must be a string", hint=hint)
 
 
 def load_config(config_dir_override: str | Path | None = None) -> Config:
@@ -170,6 +367,18 @@ def load_config(config_dir_override: str | Path | None = None) -> Config:
     cfg_dir = config_dir(config_dir_override)
     settings = _read_toml(cfg_dir / CONFIG_FILENAME)
     token = _read_json(cfg_dir / TOKEN_FILENAME)
+    _require_strings(
+        settings,
+        ("subdomain", "region", "base_url"),
+        f"Cannot read config file {cfg_dir / CONFIG_FILENAME}",
+        _CONFIG_HINT,
+    )
+    _require_strings(
+        token,
+        ("subdomain", "region", "base_url", "api_key", "auth_code"),
+        f"Cannot read token file {cfg_dir / TOKEN_FILENAME}",
+        _TOKEN_HINT,
+    )
 
     env = os.environ.get
 
@@ -213,24 +422,59 @@ def load_config(config_dir_override: str | Path | None = None) -> Config:
     )
 
 
-def _atomic_write(path: Path, text: str, *, mode: int) -> None:
-    """Write a file atomically (temp sibling + os.replace) with the given mode."""
-    # mode is masked by the umask at creation, so chmod afterwards to be sure the
-    # dir is owner-only (0700) before any secrets land in it.
+def stored_account(cfg_dir: Path) -> dict[str, Any]:
+    """Return subdomain, region, base_url and default_staff_id as the files hold them.
+
+    The environment is ignored. token.json wins over config.toml for the first three, and a
+    value that is not a non-blank string is None. default_staff_id is the raw config.toml value.
+    """
+    settings = _read_toml(cfg_dir / CONFIG_FILENAME)
+    token = _read_json(cfg_dir / TOKEN_FILENAME)
+
+    def pick(key: str) -> str | None:
+        for source in (token, settings):
+            value = source.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+        return None
+
+    return {
+        "subdomain": pick("subdomain"),
+        "region": pick("region"),
+        "base_url": pick("base_url"),
+        "default_staff_id": settings.get("default_staff_id"),
+    }
+
+
+def _atomic_write(
+    path: Path, text: str, *, mode: int, warn: Callable[[str], None] | None = None
+) -> None:
+    """Write `text` to `path` atomically; the temp sibling is 0600 from creation.
+
+    `warn` receives a message when the directory cannot be restricted to 0700.
+    """
+    # mkdir's mode is masked by the umask and skipped for an existing directory.
     path.parent.mkdir(parents=True, exist_ok=True, mode=stat.S_IRWXU)
     try:
-        path.parent.chmod(stat.S_IRWXU)  # 0700
+        path.parent.chmod(stat.S_IRWXU)
     except OSError as exc:
-        # Don't silently leave the secrets dir world/group-readable: warn loudly.
-        print(
-            f"hfox: warning: could not restrict permissions on {path.parent} "
-            f"to 0700 ({exc}); credentials may be readable by other users.",
-            file=sys.stderr,
-        )
-    tmp = path.with_name(f".{path.name}.tmp")
-    tmp.write_text(text, encoding="utf-8")
-    tmp.chmod(mode)
-    os.replace(tmp, path)
+        if warn is not None:
+            warn(
+                f"could not restrict permissions on {path.parent} to 0700 ({exc}); "
+                "credentials may be readable by other users."
+            )
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def save_credentials(
@@ -241,8 +485,9 @@ def save_credentials(
     api_key: str,
     auth_code: str,
     base_url: str | None = None,
+    warn: Callable[[str], None] | None = None,
 ) -> Path:
-    """Persist secrets to ~/.hfox/token.json with 0600 permissions."""
+    """Persist secrets to token.json in the config directory at mode 0600."""
     payload: dict[str, Any] = {
         "subdomain": subdomain,
         "region": region,
@@ -252,28 +497,35 @@ def save_credentials(
     if base_url:
         payload["base_url"] = base_url
     path = cfg_dir / TOKEN_FILENAME
-    _atomic_write(path, json.dumps(payload, indent=2) + "\n", mode=0o600)
+    _atomic_write(path, json.dumps(payload, indent=2) + "\n", mode=0o600, warn=warn)
     return path
 
 
-def save_settings(cfg_dir: Path, settings: dict[str, Any]) -> Path:
-    """Persist non-secret settings to ~/.hfox/config.toml (merging with existing)."""
+def save_settings(
+    cfg_dir: Path,
+    settings: dict[str, Any],
+    *,
+    remove: tuple[str, ...] = (),
+    warn: Callable[[str], None] | None = None,
+) -> Path:
+    """Merge non-secret settings into config.toml, then delete the `remove` keys.
+
+    An incoming string with a control character raises ValidationError; values already in
+    the file are kept and escaped.
+    """
     existing = _read_toml(cfg_dir / CONFIG_FILENAME)
     incoming = {k: v for k, v in settings.items() if v is not None}
     staff_id = parse_staff_id(incoming.pop("default_staff_id", None), "default_staff_id")
     if staff_id is not None:
         incoming["default_staff_id"] = staff_id
+    for value in incoming.values():
+        if isinstance(value, str) and any(_is_control(ch) for ch in value):
+            raise ValidationError("Config string values may not contain control characters.")
     existing.update(incoming)
-    lines = []
-    for key, value in existing.items():
-        if isinstance(value, str):
-            lines.append(f"{key} = {_toml_str(value)}")
-        elif isinstance(value, bool):
-            lines.append(f"{key} = {str(value).lower()}")
-        else:
-            lines.append(f"{key} = {value}")
+    for key in remove:
+        existing.pop(key, None)
     path = cfg_dir / CONFIG_FILENAME
-    _atomic_write(path, "\n".join(lines) + "\n", mode=0o644)
+    _atomic_write(path, _toml_dumps(existing), mode=0o644, warn=warn)
     return path
 
 

@@ -10,13 +10,17 @@ import io
 import json
 import math
 import os
+import re
 import sys
+import unicodedata
 from enum import StrEnum
 from typing import Any
 
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
+
+from ..core.errors import ValidationError
 
 
 class OutputFormat(StrEnum):
@@ -35,8 +39,9 @@ class OutputFormat(StrEnum):
         try:
             return cls(normalized)
         except ValueError:
-            warn(f"Unknown format '{value}', falling back to json.")
-            return cls.JSON
+            raise ValidationError(
+                f"Unknown output format {value!r}; expected json, table, csv or yaml."
+            ) from None
 
 
 def _color_enabled(stream) -> bool:
@@ -112,6 +117,37 @@ def _stringify(value: Any) -> str:
     return str(value)
 
 
+_KEPT_CONTROLS = frozenset("\n\t\u200c\u200d")
+
+
+def sanitize_cell(text: str) -> str:
+    """Drop control and format characters from a table or CSV cell.
+
+    Newline, tab and the zero-width joiner and non-joiner are kept.
+    """
+    return "".join(
+        char
+        for char in text
+        if char in _KEPT_CONTROLS or unicodedata.category(char) not in ("Cc", "Cf")
+    )
+
+
+_FORMULA_TRIGGERS = ("=", "+", "-", "@", "\t", "\r")
+_SIGNED_DECIMAL = re.compile(r"[+-]?[0-9]+(\.[0-9]+)?")
+
+
+def _csv_cell(value: Any) -> str:
+    """Sanitize a CSV cell and quote-prefix a string a spreadsheet would run as a formula."""
+    text = sanitize_cell(_stringify(value))
+    if (
+        isinstance(value, str)
+        and text.startswith(_FORMULA_TRIGGERS)
+        and not _SIGNED_DECIMAL.fullmatch(text)
+    ):
+        return "'" + text
+    return text
+
+
 def render(data: Any, fmt: OutputFormat, *, stream=None) -> None:
     """Render data in the requested format.
 
@@ -135,16 +171,35 @@ def _ascii_only(stream) -> bool:
     return not encoding.startswith("utf")
 
 
+# C1 and DEL, bidi controls, line and paragraph separators, tag characters.
+_JSON_ESCAPED = re.compile(
+    "[\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069\u2028\u2029\U000e0000-\U000e007f]"
+)
+
+
+def _json_escape(match: re.Match[str]) -> str:
+    code = ord(match.group())
+    if code <= 0xFFFF:
+        return f"\\u{code:04x}"
+    code -= 0x10000
+    return f"\\u{0xD800 + (code >> 10):04x}\\u{0xDC00 + (code & 0x3FF):04x}"
+
+
+def _dump_json(data: Any, stream, **kwargs: Any) -> str:
+    """Serialize to JSON text that carries terminal-affecting characters as escapes."""
+    text = json.dumps(data, ensure_ascii=_ascii_only(stream), default=str, **kwargs)
+    return _JSON_ESCAPED.sub(_json_escape, text)
+
+
 def _render_json(data: Any, stream) -> None:
-    stream.write(json.dumps(data, indent=2, ensure_ascii=_ascii_only(stream), default=str) + "\n")
+    stream.write(_dump_json(data, stream, indent=2) + "\n")
 
 
 def render_ndjson_line(data: Any, *, stream=None) -> None:
     """Write one compact JSON document as a single flushed line (NDJSON)."""
     if stream is None:
         stream = sys.stdout
-    line = json.dumps(data, ensure_ascii=_ascii_only(stream), default=str, separators=(",", ":"))
-    stream.write(line + "\n")
+    stream.write(_dump_json(data, stream, separators=(",", ":")) + "\n")
     stream.flush()
 
 
@@ -163,24 +218,38 @@ def _render_table(data: Any, stream) -> None:
         return
     table = Table(show_header=True, header_style="bold")
     for col in columns:
-        table.add_column(Text(col), overflow="fold", no_wrap=False)
+        table.add_column(Text(sanitize_cell(col)), overflow="fold", no_wrap=False)
     for row in cells:
-        table.add_row(*[Text(cell) for cell in row])
+        table.add_row(*[Text(sanitize_cell(cell)) for cell in row])
     Console(file=stream, highlight=False, soft_wrap=False).print(table)
 
 
 def _render_csv(data: Any, stream) -> None:
+    """Write RFC 4180 rows ending in CRLF; newlines inside a cell pass through unchanged."""
     rows = _as_rows(data)
     if not rows:
         # No header either, so an empty result stays a valid empty CSV.
         return
     columns = _column_union(rows)
     buffer = io.StringIO()
-    writer = csv.DictWriter(buffer, fieldnames=columns, extrasaction="ignore")
-    writer.writeheader()
+    # Positional rows, since two headers can sanitize to the same text.
+    writer = csv.writer(buffer, lineterminator="\r\n")
+    writer.writerow([_csv_cell(col) for col in columns])
     for row in rows:
-        writer.writerow({col: _stringify(row.get(col)) for col in columns})
-    stream.write(buffer.getvalue())
+        writer.writerow([_csv_cell(row.get(col)) for col in columns])
+    text = buffer.getvalue()
+    raw = getattr(stream, "buffer", None)
+    if raw is None:
+        stream.write(text)
+        return
+    # A Windows text layer would turn each \n into \r\n, so the bytes go under it.
+    stream.flush()
+    raw.write(
+        text.encode(
+            getattr(stream, "encoding", None) or "utf-8",
+            getattr(stream, "errors", None) or "strict",
+        )
+    )
 
 
 def _render_yaml(data: Any, stream) -> None:

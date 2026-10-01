@@ -118,7 +118,7 @@ def test_create_bulk_rejects_nan(tmp_path):
         (("system", "contact-custom-fields", "--name", "x"), "/user_custom_fields/"),
         (("contacts", "groups", "list", "--name", "x"), "/contact_groups/"),
         (("--page-all", "assets", "list", "--name", "x"), "/assets/?size=10&page=1"),
-        (("--page-all", "assets", "types", "list", "--name", "x"), "/asset_types/?size=50&page=1"),
+        (("--page-all", "assets", "types", "list", "--name", "x"), "/asset_types/?size=10&page=1"),
         (
             ("--page-all", "assets", "custom-fields", "list", "--name", "x"),
             "/asset_custom_fields/?size=10&page=1",

@@ -1,24 +1,23 @@
 """Transport-layer contracts: URL encoding, retries, pagination limits, config validation."""
 
 import json
-import os
 import subprocess
 import sys
 
 import httpx
 import pytest
 import typer
+from conftest import subprocess_env
 from typer.testing import CliRunner
 
-import hfox.cli.auth as auth_mod
 import hfox.cli.context as context_mod
 import hfox.cli.main as main_mod
 from hfox.cli.context import AppContext
 from hfox.cli.main import cli
 from hfox.cli.output import OutputFormat
-from hfox.core.client import HappyFoxClient, request_url
+from hfox.core.client import OUTCOME_UNKNOWN_HINT, HappyFoxClient, request_url
 from hfox.core.config import Config, load_config, save_settings
-from hfox.core.errors import HfoxError, ValidationError
+from hfox.core.errors import NetworkError, RequestTimeoutError, ValidationError
 
 BASE = "https://acme.happyfox.com/api/1.1/json"
 ENV = {
@@ -98,13 +97,57 @@ def raising(exc_type, then=ok, times=1):
     return handler
 
 
-@pytest.mark.parametrize("exc_type", [httpx.ReadTimeout, httpx.RemoteProtocolError])
-def test_write_not_replayed_after_ambiguous_error(exc_type):
+@pytest.mark.parametrize(
+    ("exc_type", "error_type", "message"),
+    [
+        (httpx.ReadTimeout, RequestTimeoutError, r"timed out \(ReadTimeout\)"),
+        (httpx.WriteTimeout, RequestTimeoutError, r"timed out \(WriteTimeout\)"),
+        (httpx.RemoteProtocolError, NetworkError, "Network error"),
+        (httpx.ReadError, NetworkError, "Network error"),
+    ],
+)
+def test_write_not_replayed_after_ambiguous_error(exc_type, error_type, message):
     client, requests, sleeps = make_client(raising(exc_type))
-    with pytest.raises(HfoxError, match="Network error"):
+    with pytest.raises(NetworkError, match=message) as exc:
         client.request("POST", "tickets/", json={"subject": "x"})
+    assert type(exc.value) is error_type
+    assert exc.value.outcome_unknown is True
+    assert exc.value.hint == OUTCOME_UNKNOWN_HINT
+    assert exc.value.to_dict()["outcome_unknown"] is True
     assert len(requests) == 1
     assert sleeps == []
+
+
+@pytest.mark.parametrize(
+    ("exc_type", "attempts"),
+    [
+        (httpx.ConnectError, 6),
+        (httpx.ConnectTimeout, 6),
+        (httpx.PoolTimeout, 6),
+        (httpx.ProxyError, 1),
+        (httpx.UnsupportedProtocol, 1),
+    ],
+)
+def test_write_that_never_left_has_known_outcome(exc_type, attempts):
+    client, requests, _ = make_client(raising(exc_type, times=99))
+    with pytest.raises(NetworkError) as exc:
+        client.request("POST", "tickets/", json={"subject": "x"})
+    assert len(requests) == attempts
+    assert exc.value.outcome_unknown is False
+    assert exc.value.hint is None
+    assert "outcome_unknown" not in exc.value.to_dict()
+
+
+@pytest.mark.parametrize("exc_type", [httpx.ReadTimeout, httpx.RemoteProtocolError])
+def test_get_exhausting_retries_has_known_outcome(exc_type):
+    client, requests, sleeps = make_client(raising(exc_type, times=99))
+    with pytest.raises(NetworkError) as exc:
+        client.get("tickets/")
+    assert len(requests) == client.max_retries + 1
+    assert len(sleeps) == client.max_retries
+    assert exc.value.outcome_unknown is False
+    assert exc.value.hint is None
+    assert exc.value.detail == exc_type.__name__
 
 
 @pytest.mark.parametrize("exc_type", [httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout])
@@ -172,7 +215,7 @@ def test_env_staff_id_must_be_digits(tmp_path, monkeypatch, value):
     monkeypatch.setenv("HFOX_STAFF_ID", value)
     ctx = AppContext(config=load_config())
     with pytest.raises(ValidationError, match="HFOX_STAFF_ID"):
-        ctx.require_staff_id(None)
+        ctx.require_staff_id(None, None)
 
 
 @pytest.mark.parametrize("value", [" 7", "7\r"])
@@ -189,7 +232,7 @@ def test_toml_staff_id_must_be_int(tmp_path, monkeypatch, toml_value):
     (tmp_path / "config.toml").write_text(f"default_staff_id = {toml_value}\n")
     ctx = AppContext(config=load_config())
     with pytest.raises(ValidationError, match="config.toml"):
-        ctx.resolve_staff_id(None)
+        ctx.resolve_staff_id(None, None)
 
 
 @pytest.mark.parametrize("value", [7, "7", " 7", "7\r"])
@@ -274,9 +317,11 @@ def test_saved_base_url_error_names_its_file(tmp_path, monkeypatch, filename, te
 def test_status_reports_malformed_staff_id(tmp_path, monkeypatch):
     monkeypatch.setenv("HFOX_CONFIG_DIR", str(tmp_path))
     (tmp_path / "config.toml").write_text("default_staff_id = 1.5\n")
-    result = runner.invoke(cli, ["auth", "status"], env={"HFOX_SUBDOMAIN": "acme"})
+    result = runner.invoke(cli, ["auth", "status"], env=ENV | {"HFOX_STAFF_ID": ""})
     assert result.exit_code == 0
-    assert "config.toml" in json.loads(result.stdout)["default_staff_id"]
+    payload = json.loads(result.stdout)
+    assert payload["default_staff_id"] is None
+    assert "config.toml" in payload["default_staff_id_error"]
 
 
 def test_login_persists_normalized_base_url(monkeypatch, tmp_path):
@@ -290,7 +335,7 @@ def test_login_persists_normalized_base_url(monkeypatch, tmp_path):
         )
         return client
 
-    monkeypatch.setattr(auth_mod, "HappyFoxClient", factory)
+    monkeypatch.setattr(context_mod, "HappyFoxClient", factory)
     result = runner.invoke(
         cli,
         ["auth", "login", "--subdomain", "acme", "--region", "us",
@@ -322,7 +367,8 @@ def test_ndjson_error_is_one_compact_line(monkeypatch, capsys):
     lines = capsys.readouterr().out.splitlines()
     assert len(lines) == 2
     assert json.loads(lines[0])["data"] == [1]
-    assert json.loads(lines[1])["status_code"] == 500
+    error = json.loads(lines[1])
+    assert (error["status_code"], error["type"], error["exit_code"]) == (500, "api", 1)
 
 
 def test_page_limit_truncation_warns_on_stderr(monkeypatch, capsys):
@@ -366,7 +412,8 @@ def run_app(argv, **env_extra):
     """Run the real `app()` entry point; --dry-run keeps a regression off the network."""
     return subprocess.run(
         [sys.executable, "-c", _INVOKER, "--dry-run", *argv],
-        env={**ENV, "HFOX_CONFIG_DIR": os.environ["HFOX_CONFIG_DIR"], **env_extra},
+        env=subprocess_env(**{**ENV, **env_extra}),
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
     )
@@ -408,7 +455,7 @@ def test_unexpected_exception_is_json_exit_5(monkeypatch, capsys):
     assert exc.value.code == 5
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
-    assert payload["exit_code"] == 5
+    assert (payload["exit_code"], payload["type"]) == (5, "internal")
     assert "KeyError" in payload["error"]
     assert "Traceback" not in captured.err
 
@@ -428,4 +475,5 @@ def test_app_propagates_typer_exit_code_from_streaming_error(monkeypatch, capsys
     assert exc.value.code == 1
     lines = capsys.readouterr().out.splitlines()
     assert len(lines) == 1
-    assert json.loads(lines[0])["status_code"] == 503
+    error = json.loads(lines[0])
+    assert (error["status_code"], error["type"]) == (503, "api")

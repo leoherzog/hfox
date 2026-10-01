@@ -11,6 +11,7 @@ import httpx
 import pytest
 import typer
 
+import hfox.cli._util as util_mod
 import hfox.cli.context as context_mod
 from hfox.cli._util import (
     MAX_ATTACHMENT_BYTES,
@@ -67,36 +68,46 @@ def make_ctx(**kw):
 # ----------------------------------------------------------------------------
 def test_resolve_staff_id_explicit_wins():
     ctx = make_ctx(staff_id_override=99, default_staff_id=7)
-    assert ctx.resolve_staff_id(42) == 42
+    assert ctx.resolve_staff_id(42, None) == 42
 
 
 def test_resolve_staff_id_override_beats_config():
     ctx = make_ctx(staff_id_override=99, default_staff_id=7)
-    assert ctx.resolve_staff_id(None) == 99
+    assert ctx.resolve_staff_id(None, None) == 99
 
 
 def test_resolve_staff_id_falls_back_to_config_default():
     ctx = make_ctx(default_staff_id=7)
-    assert ctx.resolve_staff_id(None) == 7
+    assert ctx.resolve_staff_id(None, None) == 7
 
 
 def test_resolve_staff_id_none_everywhere():
     ctx = make_ctx()
-    assert ctx.resolve_staff_id(None) is None
+    assert ctx.resolve_staff_id(None, None) is None
+    assert ctx.resolve_staff_id() is None
+
+
+def test_resolve_staff_id_zero_is_an_id():
+    ctx = make_ctx(staff_id_override=0, default_staff_id=7)
+    assert ctx.resolve_staff_id(None, None) == 0
+    assert ctx.resolve_staff_id(0, None) == 0
 
 
 def test_require_staff_id_returns_resolved():
     ctx = make_ctx(default_staff_id=5)
-    assert ctx.require_staff_id(None) == 5
-    assert ctx.require_staff_id(11) == 11
+    assert ctx.require_staff_id(None, None) == 5
+    assert ctx.require_staff_id(11, None) == 11
 
 
 def test_require_staff_id_raises_validation_when_missing():
     ctx = make_ctx()
     with pytest.raises(ValidationError) as exc:
-        ctx.require_staff_id(None)
+        ctx.require_staff_id(None, None)
     assert exc.value.exit_code is ExitCode.VALIDATION
-    assert "staff id" in str(exc.value).lower()
+    assert str(exc.value) == (
+        "This action needs a staff identity. Pass --staff or --staff-id, set a default "
+        "during `hfox auth login`, or export HFOX_STAFF_ID."
+    )
 
 
 # ----------------------------------------------------------------------------
@@ -302,8 +313,8 @@ def test_paginate_filtered_walk_api_error_becomes_ndjson_line(capsys, monkeypatc
     lines = capsys.readouterr().out.strip().splitlines()
     assert len(lines) == 1
     line = json.loads(lines[0])
-    assert set(line) >= {"error", "exit_code"}
-    assert line["exit_code"] == 1
+    assert set(line) >= {"error", "type", "exit_code"}
+    assert (line["type"], line["exit_code"]) == ("api", 1)
 
 
 def test_call_executes_request(monkeypatch):
@@ -494,15 +505,37 @@ def test_attach_missing_file_raises(tmp_path):
     assert exc.value.exit_code is ExitCode.VALIDATION
 
 
+def test_attach_unopenable_file_raises(tmp_path, monkeypatch):
+    f = tmp_path / "locked.bin"
+    f.write_bytes(b"x")
+
+    def denied(self, *args, **kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(type(f), "open", denied)
+    with pytest.raises(ValidationError, match="Cannot read .*Permission denied"):
+        attach({}, [str(f)])
+
+
 def test_attach_unreadable_file_raises(tmp_path, monkeypatch):
     f = tmp_path / "locked.bin"
     f.write_bytes(b"x")
 
-    def denied(self):
-        raise PermissionError(13, "Permission denied")
+    def denied(handle):
+        raise OSError(5, "Input/output error")
 
-    monkeypatch.setattr(type(f), "read_bytes", denied)
-    with pytest.raises(ValidationError, match="Cannot read .*Permission denied"):
+    monkeypatch.setattr(util_mod, "_read_all", denied)
+    with pytest.raises(ValidationError, match="Cannot read .*Input/output error"):
+        attach({}, [str(f)])
+
+
+def test_attach_rechecks_total_on_the_bytes_read(tmp_path, monkeypatch):
+    # A file that grows after the size check must not slip past the limit.
+    f = tmp_path / "grows.bin"
+    f.write_bytes(b"x")
+    monkeypatch.setattr(util_mod, "MAX_ATTACHMENT_BYTES", 4)
+    monkeypatch.setattr(util_mod, "_read_all", lambda handle: b"12345")
+    with pytest.raises(ValidationError, match="Attachments total 5 bytes; the limit is 4"):
         attach({}, [str(f)])
 
 
@@ -523,10 +556,10 @@ def test_attach_total_over_limit_raises_before_reading(tmp_path, monkeypatch):
     os.truncate(a, MAX_ATTACHMENT_BYTES)
     os.truncate(b, 1)
 
-    def no_read(self):
+    def no_read(handle):
         raise AssertionError("read before size check")
 
-    monkeypatch.setattr(type(a), "read_bytes", no_read)
+    monkeypatch.setattr(util_mod, "_read_all", no_read)
     with pytest.raises(ValidationError) as exc:
         attach({}, [str(a), str(b)])
     assert "25,000,000" in str(exc.value)
@@ -782,13 +815,14 @@ def test_hfox_error_defaults():
 
 
 def test_hfox_error_to_dict_without_detail():
-    assert HfoxError("oops").to_dict() == {"error": "oops", "exit_code": 5}
+    assert HfoxError("oops").to_dict() == {"error": "oops", "type": "other", "exit_code": 5}
 
 
 def test_hfox_error_to_dict_with_detail():
     err = HfoxError("oops", detail={"field": "x"})
     assert err.to_dict() == {
         "error": "oops",
+        "type": "other",
         "exit_code": 5,
         "detail": {"field": "x"},
     }
@@ -813,6 +847,7 @@ def test_api_error_to_dict_includes_status_code():
     payload = err.to_dict()
     assert payload == {
         "error": "server fail",
+        "type": "api",
         "exit_code": 1,
         "detail": {"raw": "x"},
         "status_code": 503,
@@ -821,5 +856,5 @@ def test_api_error_to_dict_includes_status_code():
 
 def test_api_error_to_dict_without_detail():
     payload = APIError("nope", status_code=404).to_dict()
-    assert payload == {"error": "nope", "exit_code": 1, "status_code": 404}
+    assert payload == {"error": "nope", "type": "api", "exit_code": 1, "status_code": 404}
     assert "detail" not in payload or payload.get("detail") is None

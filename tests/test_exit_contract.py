@@ -2,10 +2,10 @@
 
 import io
 import json
-import os
 import subprocess
 import sys
 
+from conftest import subprocess_env
 from typer.testing import CliRunner
 
 from hfox.cli import output
@@ -31,12 +31,12 @@ _INVOKER = (
 def run_app(argv, env_extra=None, base_env=None):
     """Run the real `app()` entry point in a subprocess; return CompletedProcess."""
     env = dict(base_env if base_env is not None else ENV)
-    env["HFOX_CONFIG_DIR"] = os.environ["HFOX_CONFIG_DIR"]
     if env_extra:
         env.update(env_extra)
     return subprocess.run(
         [sys.executable, "-c", _INVOKER, *argv],
-        env=env,
+        env=subprocess_env(**env),
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
     )
@@ -74,7 +74,8 @@ def test_missing_required_staff_id_exits_3():
     assert proc.returncode == 3
     payload = json.loads(proc.stdout)
     assert payload["exit_code"] == 3
-    assert "staff id" in payload["error"].lower()
+    assert payload["type"] == "validation"
+    assert "staff identity" in payload["error"]
 
 
 # -- --staff-id override flows into a write body ----------------------------
@@ -178,6 +179,7 @@ def test_unknown_flag_exit_code_exactly_3_and_json_on_stdout():
     assert proc.returncode == 3
     payload = json.loads(proc.stdout)
     assert payload["exit_code"] == 3
+    assert payload["type"] == "usage"
     assert "bogus" in payload["error"]
     # The human usage hint stays on stderr.
     assert "Usage" in proc.stderr
@@ -186,7 +188,8 @@ def test_unknown_flag_exit_code_exactly_3_and_json_on_stdout():
 def test_unknown_command_exit_code_exactly_3():
     proc = run_app(["nonexistent-resource", "list"])
     assert proc.returncode == 3
-    assert json.loads(proc.stdout)["exit_code"] == 3
+    payload = json.loads(proc.stdout)
+    assert (payload["exit_code"], payload["type"]) == (3, "usage")
 
 
 # -- bare group invocations show help and exit 0, like --help ---------------

@@ -23,6 +23,7 @@ from hfox.cli.output import (
     render,
     warn,
 )
+from hfox.core.errors import ValidationError
 
 
 def _render(data, fmt) -> str:
@@ -50,12 +51,13 @@ def test_parse_known_values_normalized():
     assert OutputFormat.parse("yaml") is OutputFormat.YAML
 
 
-def test_parse_unknown_falls_back_to_json_with_warning(capsys):
-    result = OutputFormat.parse("toml")
-    assert result is OutputFormat.JSON
-    err = capsys.readouterr().err
-    assert "Unknown format 'toml'" in err
-    assert "falling back to json" in err
+def test_parse_unknown_raises_without_warning(capsys):
+    with pytest.raises(ValidationError) as exc:
+        OutputFormat.parse("toml")
+    assert exc.value.message == "Unknown output format 'toml'; expected json, table, csv or yaml."
+    assert exc.value.exit_code == 3
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == ""
 
 
 # --- warn/info stderr helpers ------------------------------------------------

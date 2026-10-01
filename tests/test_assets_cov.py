@@ -1,13 +1,16 @@
 """Coverage for hfox assets, asset types and asset custom fields."""
 
 import json
+import subprocess
+import sys
 
 import httpx
 import pytest
+from conftest import subprocess_env
 from typer.testing import CliRunner
 
 from hfox.cli.main import cli
-from hfox.core.errors import ValidationError
+from hfox.core.errors import CancelledError, ValidationError
 
 runner = CliRunner()
 
@@ -25,6 +28,23 @@ def run(*args, env_extra=None, **kwargs):
     if env_extra:
         env.update(env_extra)
     return runner.invoke(cli, list(args), env=env, **kwargs)
+
+
+_INVOKER = (
+    "import sys; sys.argv = ['hfox'] + sys.argv[1:]; "
+    "from hfox.cli.main import app; app()"
+)
+
+
+def run_app(argv):
+    """Run the real `app()` entry point; --dry-run keeps a regression off the network."""
+    return subprocess.run(
+        [sys.executable, "-c", _INVOKER, "--dry-run", *argv],
+        env=subprocess_env(**ENV),
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+    )
 
 
 def _collection(rows):
@@ -223,15 +243,47 @@ def test_assets_delete_with_yes_renders_and_succeeds(mock_api):
     assert json.loads(result.stdout) == {"deleted": True}
 
 
-def test_assets_delete_confirm_abort_no_network(mock_api):
-    # Decline the confirmation: typer.confirm(abort=True) -> exit 1, no request.
+@pytest.mark.parametrize("answer", ["n\n", "\n", ""])
+def test_assets_delete_confirm_abort_no_network(mock_api, tty, answer):
+    # A decline, the default answer and EOF all cancel before any request.
     captured = mock_api(lambda r: httpx.Response(200, json={}))
-    result = run("assets", "delete", "10", input="n\n")
-    assert result.exit_code == 1
+    result = run("assets", "delete", "10", input=answer)
+    assert isinstance(result.exception, CancelledError), result.output
+    assert int(result.exception.exit_code) == 5
+    assert captured == []
+    assert result.stdout == ""
+
+
+def test_assets_delete_without_yes_needs_a_terminal(mock_api):
+    captured = mock_api(lambda r: httpx.Response(200, json={}))
+    result = run("assets", "delete", "10", input="y\n")
+    assert isinstance(result.exception, ValidationError), result.output
+    assert "Delete asset 10?" in str(result.exception)
+    assert "--yes" in str(result.exception)
+    assert "Delete asset 10?" not in result.stderr
     assert captured == []
 
 
-def test_assets_delete_confirm_yes_prompt(mock_api):
+def test_assets_delete_dry_run_never_prompts():
+    result = run("--dry-run", "assets", "delete", "10")
+    assert result.exit_code == 0, result.output
+    p = json.loads(result.stdout)
+    assert p["method"] == "DELETE"
+    assert p["url"].endswith("/asset/10/?deleted_by=1")
+    assert "Delete asset 10?" not in result.stderr
+
+
+def test_assets_delete_resolves_staff_before_the_prompt(mock_api, tty):
+    captured = mock_api(lambda r: httpx.Response(200, json={}))
+    env = {k: v for k, v in ENV.items() if k != "HFOX_STAFF_ID"}
+    result = runner.invoke(cli, ["assets", "delete", "10"], env=env, input="y\n")
+    assert isinstance(result.exception, ValidationError), result.output
+    assert "staff identity" in str(result.exception)
+    assert "Delete asset 10?" not in result.stderr
+    assert captured == []
+
+
+def test_assets_delete_confirm_yes_prompt(mock_api, tty):
     captured = mock_api(lambda r: httpx.Response(200, json={"ok": 1}))
     result = run("assets", "delete", "10", input="y\n")
     assert result.exit_code == 0, result.stdout
@@ -259,11 +311,33 @@ def test_asset_types_list(mock_api):
     assert body["data"][0]["name"] == "Laptops"
 
 
+def test_asset_types_list_sends_default_size_and_page(mock_api):
+    captured = mock_api(lambda request: httpx.Response(200, json=_collection([])))
+    result = run("assets", "types", "list")
+    assert result.exit_code == 0, result.stdout
+    assert dict(captured[0].url.params) == {"size": "10", "page": "1"}
+
+
+def test_dry_run_types_list_sends_size_and_page():
+    p = dry("assets", "types", "list", "--page", "2", "--size", "50")
+    assert p["method"] == "GET"
+    assert p["url"].endswith("/asset_types/?size=50&page=2")
+    assert p["body"] is None
+
+
+def test_types_list_size_over_50_exits_3():
+    proc = run_app(["assets", "types", "list", "--size", "51"])
+    assert proc.returncode == 3, proc.stdout
+    payload = json.loads(proc.stdout)
+    assert payload["type"] == "validation"
+    assert "--size" in payload["error"]
+
+
 def test_dry_run_page_all_previews_the_first_wire_request(mock_api):
     result = run("--dry-run", "--page-all", "assets", "types", "list")
     assert result.exit_code == 0, result.stdout
     preview = json.loads(result.stdout)
-    assert preview["url"].endswith("/asset_types/?size=50&page=1")
+    assert preview["url"].endswith("/asset_types/?size=10&page=1")
 
     captured = mock_api(lambda request: httpx.Response(200, json=_collection([])))
     result = run("--page-all", "assets", "types", "list")
@@ -335,8 +409,123 @@ def test_assets_create_requires_staff_id(mock_api):
     )
     assert result.exit_code != 0
     assert isinstance(result.exception, ValidationError)
-    assert "staff id" in str(result.exception).lower()
+    assert "staff identity" in str(result.exception)
     assert captured == []
+
+
+# --------------------------------------------------------------------------- #
+# --staff and --staff-id
+# --------------------------------------------------------------------------- #
+STAFF = [
+    {"id": 7, "name": "Ada Lovelace", "email": "ada@x.org", "active": True},
+    {"id": 8, "name": "Bob Jones", "email": "bob@x.org", "active": True},
+]
+
+STAFF_VERBS = [
+    ("create", ("create", "--name", "X", "--display-id", "D")),
+    ("update", ("update", "10", "--name", "X")),
+    ("delete", ("delete", "10", "--yes")),
+]
+_STAFF_IDS = [verb for verb, _ in STAFF_VERBS]
+
+
+def _staff_api(mock_api):
+    def handler(request):
+        if request.url.path.endswith("/staff/"):
+            return httpx.Response(200, json=STAFF)
+        return httpx.Response(200, json={"ok": True})
+
+    return mock_api(handler)
+
+
+def _sent_staff(request):
+    """Return the acting staff id a write carried, from its body or its query."""
+    if request.method == "DELETE":
+        return int(request.url.params["deleted_by"])
+    body = json.loads(request.content)
+    return body["created_by" if request.method == "POST" else "updated_by"]
+
+
+@pytest.mark.parametrize("verb, argv", STAFF_VERBS, ids=_STAFF_IDS)
+@pytest.mark.parametrize("text, staff_id", [("ADA@x.org", 7), ("bob jones", 8)])
+def test_assets_staff_by_email_or_name(mock_api, verb, argv, text, staff_id):
+    captured = _staff_api(mock_api)
+    result = run("assets", *argv, "--staff", text)
+    assert result.exit_code == 0, result.output
+    assert [req.method for req in captured][0] == "GET"
+    assert captured[0].url.path.endswith("/staff/")
+    assert len(captured) == 2
+    assert _sent_staff(captured[1]) == staff_id
+
+
+@pytest.mark.parametrize("verb, argv", STAFF_VERBS, ids=_STAFF_IDS)
+def test_assets_staff_id_flag_beats_the_default(mock_api, verb, argv):
+    captured = _staff_api(mock_api)
+    result = run("assets", *argv, "--staff-id", "42")
+    assert result.exit_code == 0, result.output
+    assert len(captured) == 1
+    assert _sent_staff(captured[0]) == 42
+
+
+def test_assets_staff_lookup_runs_under_dry_run(mock_api):
+    captured = _staff_api(mock_api)
+    result = run("--dry-run", "assets", "delete", "10", "--staff", "ada@x.org")
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["url"].endswith("/asset/10/?deleted_by=7")
+    assert [req.url.path.rsplit("/", 2)[-2] for req in captured] == ["staff"]
+
+
+@pytest.mark.parametrize("verb, argv", STAFF_VERBS, ids=_STAFF_IDS)
+def test_assets_staff_and_staff_id_are_exclusive(mock_api, verb, argv):
+    captured = _staff_api(mock_api)
+    result = run("assets", *argv, "--staff", "ada@x.org", "--staff-id", "7")
+    assert isinstance(result.exception, ValidationError), result.output
+    assert str(result.exception) == "--staff and --staff-id are mutually exclusive."
+    assert captured == []
+
+
+@pytest.mark.parametrize("verb, argv", STAFF_VERBS, ids=_STAFF_IDS)
+def test_assets_unknown_staff_sends_no_write(mock_api, verb, argv):
+    captured = _staff_api(mock_api)
+    result = run("assets", *argv, "--staff", "nobody@x.org")
+    assert isinstance(result.exception, ValidationError), result.output
+    assert "No staff member matches" in str(result.exception)
+    assert [req.method for req in captured] == ["GET"]
+
+
+@pytest.mark.parametrize("verb, argv", STAFF_VERBS, ids=_STAFF_IDS)
+def test_assets_numeric_staff_is_rejected(mock_api, verb, argv):
+    captured = _staff_api(mock_api)
+    result = run("assets", *argv, "--staff", "7")
+    assert isinstance(result.exception, ValidationError), result.output
+    assert "--staff-id 7" in str(result.exception)
+    assert captured == []
+
+
+@pytest.mark.parametrize("verb, argv", STAFF_VERBS, ids=_STAFF_IDS)
+def test_assets_negative_staff_id_exits_3(verb, argv):
+    proc = run_app(["assets", *argv, "--staff-id", "-1"])
+    assert proc.returncode == 3, proc.stdout
+    payload = json.loads(proc.stdout)
+    assert payload["type"] == "validation"
+    assert "--staff-id" in payload["error"]
+
+
+@pytest.mark.parametrize(
+    "argv, flag",
+    [
+        (STAFF_VERBS[0][1], "--created-by"),
+        (STAFF_VERBS[1][1], "--updated-by"),
+        (STAFF_VERBS[2][1], "--deleted-by"),
+    ],
+    ids=_STAFF_IDS,
+)
+def test_assets_removed_staff_flags_are_usage_errors(argv, flag):
+    proc = run_app(["assets", *argv, flag, "1"])
+    assert proc.returncode == 3, proc.stdout
+    payload = json.loads(proc.stdout)
+    assert payload["type"] == "usage"
+    assert flag in payload["error"]
 
 
 # --------------------------------------------------------------------------- #
@@ -410,6 +599,9 @@ def test_dry_run_list_sends_size_and_page():
         ("assets", "list", "--page", "0"),
         ("assets", "custom-fields", "list", "--size", "100"),
         ("assets", "custom-fields", "list", "--page", "-1"),
+        ("assets", "types", "list", "--size", "51"),
+        ("assets", "types", "list", "--size", "0"),
+        ("assets", "types", "list", "--page", "0"),
     ],
 )
 def test_out_of_range_ids_and_paging_are_usage_errors(mock_api, args):

@@ -10,6 +10,7 @@ import sys
 import httpx
 import pytest
 import typer
+from conftest import subprocess_env
 from typer._click import exceptions as click_exceptions
 from typer.testing import CliRunner
 
@@ -95,12 +96,14 @@ def test_app_returns_exit_code(monkeypatch):
 
 
 def test_app_abort_branch(monkeypatch, capsys):
-    # click Abort -> warn("Aborted.") + SystemExit(1)
+    # An Abort outside a prompt is a cancelled run: JSON on stdout, exit 5, quiet stderr.
     _install_stub_command(monkeypatch, typer.Abort())
     with pytest.raises(SystemExit) as ei:
         app()
-    assert ei.value.code == 1
-    assert "Aborted." in capsys.readouterr().err
+    assert ei.value.code == 5
+    out, err = capsys.readouterr()
+    assert json.loads(out) == {"error": "Cancelled.", "type": "cancelled", "exit_code": 5}
+    assert err == ""
 
 
 def test_app_no_args_help_branch(monkeypatch):
@@ -117,25 +120,88 @@ def test_app_no_args_help_branch(monkeypatch):
 
 
 def test_app_usage_error_branch(monkeypatch, capsys):
-    # UsageError -> hint on stderr + JSON validation error on stdout + exit 3.
+    # UsageError -> hint on stderr + JSON usage error on stdout + exit 3.
     exc = click_exceptions.UsageError("bad usage")
     _install_stub_command(monkeypatch, exc)
     with pytest.raises(SystemExit) as ei:
         app()
     assert ei.value.code == 3
     out, err = capsys.readouterr()
-    assert json.loads(out) == {"error": "bad usage", "exit_code": 3}
+    assert json.loads(out) == {"error": "bad usage", "type": "usage", "exit_code": 3}
     assert "bad usage" in err
 
 
+def test_app_missing_parameter_is_usage(monkeypatch, capsys):
+    _install_stub_command(monkeypatch, click_exceptions.MissingParameter("need it"))
+    with pytest.raises(SystemExit) as ei:
+        app()
+    assert ei.value.code == 3
+    out, err = capsys.readouterr()
+    payload = json.loads(out)
+    assert (payload["type"], payload["exit_code"]) == ("usage", 3)
+    assert "need it" in payload["error"]
+    assert "need it" in err
+
+
+def test_app_bad_parameter_is_validation(monkeypatch, capsys):
+    _install_stub_command(monkeypatch, click_exceptions.BadParameter("out of range"))
+    with pytest.raises(SystemExit) as ei:
+        app()
+    assert ei.value.code == 3
+    out, err = capsys.readouterr()
+    payload = json.loads(out)
+    assert (payload["type"], payload["exit_code"]) == ("validation", 3)
+    assert "out of range" in payload["error"]
+    assert "out of range" in err
+
+
+def test_app_unknown_option_keeps_plain_message(monkeypatch, capsys):
+    # A NoSuchOption that is not a root flag stays an ordinary usage error.
+    _install_stub_command(monkeypatch, click_exceptions.NoSuchOption("--bogus"))
+    with pytest.raises(SystemExit) as ei:
+        app()
+    assert ei.value.code == 3
+    out, err = capsys.readouterr()
+    assert json.loads(out) == {"error": "No such option: --bogus", "type": "usage", "exit_code": 3}
+    assert "--bogus" in err
+
+
 def test_app_click_exception_branch(monkeypatch, capsys):
-    # Other ClickException -> exc.show() + SystemExit(exc.exit_code)
+    # Click's exit 1 would read as an API error, so another ClickException exits 5 with JSON.
     exc = click_exceptions.ClickException("boom")
     _install_stub_command(monkeypatch, exc)
     with pytest.raises(SystemExit) as ei:
         app()
-    assert ei.value.code == exc.exit_code
-    assert "boom" in capsys.readouterr().err
+    assert ei.value.code == 5
+    out, err = capsys.readouterr()
+    assert json.loads(out) == {"error": "boom", "type": "other", "exit_code": 5}
+    assert "boom" in err
+
+
+def test_app_unexpected_exception_is_internal(monkeypatch, capsys):
+    _install_stub_command(monkeypatch, RuntimeError("kaput"))
+    with pytest.raises(SystemExit) as ei:
+        app()
+    assert ei.value.code == 5
+    out, err = capsys.readouterr()
+    payload = json.loads(out)
+    assert (payload["type"], payload["exit_code"]) == ("internal", 5)
+    assert "RuntimeError" in payload["error"]
+    assert err == ""
+
+
+@pytest.mark.parametrize("argv", [("-q", "system", "statuses"), ("-q",)])
+def test_short_q_is_rejected_at_the_root(argv):
+    result = run("--dry-run", *argv)
+    assert result.exit_code == 2
+    assert "No such option: -q" in result.output
+
+
+def test_quiet_is_long_only():
+    command = main_mod.typer.main.get_command(cli)
+    quiet = next(p for p in command.params if p.name == "quiet")
+    assert quiet.opts == ["--quiet"]
+    assert quiet.secondary_opts == []
 
 
 def test_app_hfox_error_branch_emits_json(monkeypatch, capsys):
@@ -199,7 +265,8 @@ def test_app_success_path(monkeypatch):
 def test_module_run_as_script_version():
     proc = subprocess.run(
         [sys.executable, "-m", "hfox.cli.main", "--version"],
-        env={**ENV, "HFOX_CONFIG_DIR": os.environ["HFOX_CONFIG_DIR"]},
+        env=subprocess_env(**ENV),
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
     )
@@ -211,12 +278,8 @@ def test_module_run_as_script_version():
 def test_help_shows_fox_only_when_stdout_can_encode_it(encoding, fox):
     proc = subprocess.run(
         [sys.executable, "-m", "hfox.cli.main", "--help"],
-        env={
-            **ENV,
-            "HFOX_CONFIG_DIR": os.environ["HFOX_CONFIG_DIR"],
-            "PYTHONIOENCODING": encoding,
-            "PYTHONUTF8": "0",
-        },
+        env=subprocess_env(**ENV, PYTHONIOENCODING=encoding, PYTHONUTF8="0"),
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         encoding=encoding,
     )

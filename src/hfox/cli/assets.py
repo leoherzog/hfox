@@ -5,7 +5,16 @@ from __future__ import annotations
 import typer
 
 from ..core.errors import ValidationError
-from ._util import compact, confirm, filter_help, parse_json, require_nonblank, split_csv_ints
+from ._util import (
+    STAFF_HELP,
+    STAFF_ID_HELP,
+    YES_HELP,
+    compact,
+    filter_help,
+    parse_json,
+    require_nonblank,
+    split_csv_ints,
+)
 from .cf import CF_HELP, CF_JSON_HELP, parse_asset_cf, parse_cf_json
 from .context import get_ctx
 
@@ -99,9 +108,8 @@ def create_asset(
         min=1,
         help="Asset type id; defaults to the first type, and --cf ids must belong to it.",
     ),
-    created_by: int = typer.Option(
-        None, "--created-by", help="Acting agent id (defaults to resolved staff id)."
-    ),
+    staff: str = typer.Option(None, "--staff", help=STAFF_HELP),
+    staff_id: int = typer.Option(None, "--staff-id", min=0, help=STAFF_ID_HELP),
     contact_ids: str = typer.Option(
         None, "--contact-ids", help="Comma-separated ids of existing contacts to link."
     ),
@@ -117,7 +125,7 @@ def create_asset(
     _check_name(name)
     require_nonblank(display_id, "--display-id")
     _check_id_lists(contact_ids, contact_group_ids)
-    created_by = obj.require_staff_id(created_by)
+    created_by = obj.require_staff_id(staff_id, staff)
     body = compact(
         {
             "name": name,
@@ -140,9 +148,8 @@ def update_asset(
     asset_id: int = typer.Argument(..., min=1, help="Asset id."),
     name: str = typer.Option(None, "--name", help="New asset name, up to 200 characters."),
     display_id: str = typer.Option(None, "--display-id", help="New display id."),
-    updated_by: int = typer.Option(
-        None, "--updated-by", help="Acting agent id (defaults to resolved staff id)."
-    ),
+    staff: str = typer.Option(None, "--staff", help=STAFF_HELP),
+    staff_id: int = typer.Option(None, "--staff-id", min=0, help=STAFF_ID_HELP),
     contact_ids: str = typer.Option(
         None, "--contact-ids", help="Comma-separated ids of existing contacts to link."
     ),
@@ -170,7 +177,7 @@ def update_asset(
     )
     if not fields:
         raise ValidationError("Nothing to update; pass at least one field.")
-    body = {"updated_by": obj.require_staff_id(updated_by), **fields}
+    body = {"updated_by": obj.require_staff_id(staff_id, staff), **fields}
     data = obj.call("PUT", f"asset/{asset_id}/", json=body)
     obj.render(data)
 
@@ -179,16 +186,14 @@ def update_asset(
 def delete_asset(
     ctx: typer.Context,
     asset_id: int = typer.Argument(..., min=1, help="Asset id."),
-    deleted_by: int = typer.Option(
-        None, "--deleted-by", help="Acting agent id (defaults to resolved staff id)."
-    ),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
+    staff: str = typer.Option(None, "--staff", help=STAFF_HELP),
+    staff_id: int = typer.Option(None, "--staff-id", min=0, help=STAFF_ID_HELP),
+    yes: bool = typer.Option(False, "--yes", "-y", help=YES_HELP),
 ) -> None:
     """Delete an asset. The acting agent must be active with Manage Assets permission."""
     obj = get_ctx(ctx)
-    deleted_by = obj.require_staff_id(deleted_by)
-    if not yes:
-        confirm(f"Delete asset {asset_id}?")
+    deleted_by = obj.require_staff_id(staff_id, staff)
+    obj.confirm(f"Delete asset {asset_id}?", yes=yes)
     data = obj.call("DELETE", f"asset/{asset_id}/", params={"deleted_by": deleted_by})
     obj.success(f"Deleted asset {asset_id}.")
     obj.render(data)
@@ -203,11 +208,14 @@ types = typer.Typer(no_args_is_help=True, help="Read asset types.")
 @types.command("list")
 def list_asset_types(
     ctx: typer.Context,
+    page: int = typer.Option(1, "--page", min=1, help="Page number to fetch."),
+    size: int = typer.Option(10, "--size", min=1, max=50, help="Records per page."),
     name: str = typer.Option(None, "--name", help=_FILTER_NAME_HELP),
 ) -> None:
     """List asset types."""
     obj = get_ctx(ctx)
-    body = obj.paginate("asset_types/", filters={"name": name})
+    params = compact({"size": size, "page": page})
+    body = obj.paginate("asset_types/", params=params, filters={"name": name})
     obj.render_list(body)
 
 

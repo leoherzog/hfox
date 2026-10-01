@@ -1,11 +1,11 @@
 """`hfox tickets` list parameters and ticket-id validation, checked offline."""
 
 import json
-import os
 import subprocess
 import sys
 
 import pytest
+from conftest import subprocess_env
 from typer.testing import CliRunner
 
 from hfox.cli.main import cli
@@ -34,7 +34,8 @@ def run_app(*args):
     """Run the real entry point so the exit-code mapping in main.app() applies."""
     return subprocess.run(
         [sys.executable, "-c", _INVOKER, "--dry-run", *args],
-        env={**ENV, "HFOX_CONFIG_DIR": os.environ["HFOX_CONFIG_DIR"]},
+        env=subprocess_env(**ENV),
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
     )
@@ -99,6 +100,7 @@ VERBS = [
     ["reply", "--text", "x"],
     ["note", "--text", "x"],
     ["user-reply", "--user", "9", "--text", "x"],
+    ["update", "--status", "3"],
     ["update-cf", "--cf", "1=x"],
     ["tags", "--add", "a"],
     ["subscribe"],

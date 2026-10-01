@@ -1,18 +1,18 @@
 """Coverage fill for auth.py, config.py, client.py.
 
-Offline + fast. CLI paths use CliRunner with a patched HappyFoxClient backed by
-httpx.MockTransport; core units (config.py, client.py) are exercised directly.
-All state lives under an isolated HFOX_CONFIG_DIR / tmp_path.
+Offline. CLI paths use CliRunner with `hfox.cli.context.HappyFoxClient` patched to an
+httpx.MockTransport; core units are exercised directly. All state lives under tmp_path.
 """
 
 import json
 import stat
+import sys
 
 import httpx
 import pytest
 from typer.testing import CliRunner
 
-import hfox.cli.auth as auth_mod
+import hfox.cli.context as context_mod
 import hfox.cli.output as output_mod
 from hfox.cli.auth import _mask, _resolve_staff_id
 from hfox.cli.main import cli
@@ -28,7 +28,9 @@ from hfox.core.errors import (
     APIError,
     AuthError,
     HfoxError,
+    NetworkError,
     NotFoundError,
+    RateLimitError,
     ValidationError,
 )
 
@@ -39,7 +41,7 @@ runner = CliRunner()
 # helpers
 # =========================================================================
 def _patch_staff_client(monkeypatch, *, response_factory):
-    """Patch auth.login's HappyFoxClient to a mock transport using a handler."""
+    """Back every client the CLI builds with a mock transport using a handler."""
 
     def factory(base_url, api_key, auth_code, **kwargs):
         client = HappyFoxClient(base_url, api_key, auth_code, sleep=lambda _s: None)
@@ -49,7 +51,7 @@ def _patch_staff_client(monkeypatch, *, response_factory):
         )
         return client
 
-    monkeypatch.setattr(auth_mod, "HappyFoxClient", factory)
+    monkeypatch.setattr(context_mod, "HappyFoxClient", factory)
 
 
 def _capture_render(monkeypatch):
@@ -99,43 +101,64 @@ def test_mask_long_secret_shows_two_edges():
 # auth.py: _resolve_staff_id
 # =========================================================================
 def test_resolve_staff_id_no_email_returns_none():
-    assert _resolve_staff_id([{"id": 1, "email": "a@x.org"}], None) is None
+    assert _resolve_staff_id([{"id": 1, "email": "a@x.org"}], None) == (None, None)
 
 
-def test_resolve_staff_id_no_match_returns_none():
-    # No member matches -> None. Non-dict members are skipped safely.
+def test_resolve_staff_id_no_match_gives_a_reason():
+    # Non-dict members are skipped.
     staff = ["junk", {"id": 5, "email": "other@x.org"}]
-    assert _resolve_staff_id(staff, "nobody@x.org") is None
+    assert _resolve_staff_id(staff, "nobody@x.org") == (
+        None, "No agent matched nobody@x.org; default staff id not set."
+    )
 
 
 def test_resolve_staff_id_match_is_case_insensitive():
     staff = [{"id": 9, "email": "Agent@X.ORG"}]
-    assert _resolve_staff_id(staff, " agent@x.org ") == 9
+    assert _resolve_staff_id(staff, " agent@x.org ") == (9, None)
 
 
 def test_resolve_staff_id_null_email_never_matches():
-    assert _resolve_staff_id([{"id": 5, "email": None}], "None") is None
-    assert _resolve_staff_id([{"id": 6}], "None") is None
+    assert _resolve_staff_id([{"id": 5, "email": None}], "None")[0] is None
+    assert _resolve_staff_id([{"id": 6}], "None")[0] is None
 
 
 def test_resolve_staff_id_is_exact_not_substring():
     staff = [{"id": 1, "email": "jimbob@x.org"}, {"id": 2, "email": "bob@x.org"}]
-    assert _resolve_staff_id(staff, "bob@x.org") == 2
+    assert _resolve_staff_id(staff, "bob@x.org") == (2, None)
 
 
 def test_resolve_staff_id_blank_email_returns_none():
-    assert _resolve_staff_id([{"id": 1, "email": ""}], "  ") is None
+    assert _resolve_staff_id([{"id": 1, "email": ""}], "  ") == (None, None)
 
 
 def test_resolve_staff_id_casefold():
-    assert _resolve_staff_id([{"id": 3, "email": "straße@x.org"}], "STRASSE@x.org") == 3
+    assert _resolve_staff_id([{"id": 3, "email": "straße@x.org"}], "STRASSE@x.org") == (3, None)
+
+
+def test_resolve_staff_id_several_matches_give_a_reason():
+    staff = [{"id": 1, "email": "a@x.org"}, {"id": 2, "email": "A@x.org"}]
+    assert _resolve_staff_id(staff, "a@x.org") == (
+        None, "2 agents matched a@x.org; default staff id not set."
+    )
+
+
+@pytest.mark.parametrize("bad_id", [True, False, 1.9, 2.0, -1, "abc", "", None, {"id": 1}])
+def test_resolve_staff_id_rejects_an_unusable_id(bad_id):
+    staff_id, reason = _resolve_staff_id([{"id": bad_id, "email": "a@x.org"}], "a@x.org")
+    assert staff_id is None
+    assert reason == f"Ignoring unexpected staff id {bad_id!r}; default staff id not set."
+
+
+@pytest.mark.parametrize(("raw", "expected"), [(0, 0), (7, 7), ("7", 7), (" 12 ", 12)])
+def test_resolve_staff_id_accepts_whole_numbers(raw, expected):
+    assert _resolve_staff_id([{"id": raw, "email": "a@x.org"}], "a@x.org") == (expected, None)
 
 
 # =========================================================================
 # auth.py: login branches
 # =========================================================================
 def test_login_invalid_region_rejected(monkeypatch, tmp_path):
-    # region not in REGION_HOSTS -> BadParameter (a usage error; app() exits 3).
+    # CliRunner bypasses app(), so the ValidationError arrives as the exception.
     _patch_staff_client(
         monkeypatch, response_factory=lambda r: httpx.Response(200, json=[])
     )
@@ -143,19 +166,19 @@ def test_login_invalid_region_rejected(monkeypatch, tmp_path):
         cli,
         ["auth", "login", "--subdomain", "acme", "--region", "mars",
          "--api-key", "K", "--auth-code", "C"],
-        env={"HFOX_CONFIG_DIR": str(tmp_path / ".hfox")},
+        env={"HFOX_CONFIG_DIR": str(tmp_path / "hfox")},
     )
-    assert result.exit_code != 0
-    assert "region must be one of" in result.output
+    assert isinstance(result.exception, ValidationError)
+    assert "region must be one of" in str(result.exception)
 
 
-def test_login_region_prompt_default_us(monkeypatch, tmp_path):
-    # No --region: prompt defaults to "us". Feed empty line to accept default.
+def test_login_region_prompt_default_us(monkeypatch, tmp_path, tty):
+    # No --region on a terminal: the prompt defaults to "us" and its label is on stderr.
     _patch_staff_client(
         monkeypatch,
         response_factory=lambda r: httpx.Response(200, json=[{"id": 1, "email": "a@x.org"}]),
     )
-    cfg_dir = tmp_path / ".hfox"
+    cfg_dir = tmp_path / "hfox"
     result = runner.invoke(
         cli,
         ["auth", "login", "--subdomain", "acme", "--api-key", "K", "--auth-code", "C"],
@@ -165,6 +188,36 @@ def test_login_region_prompt_default_us(monkeypatch, tmp_path):
     assert result.exit_code == 0, result.stderr
     saved = json.loads((cfg_dir / "token.json").read_text())
     assert saved["region"] == "us"
+    assert "Data center [us/eu]" in result.stderr
+    assert json.loads(result.stdout)["region"] == "us"
+
+
+def test_login_no_region_without_tty_defaults_to_us(monkeypatch, tmp_path):
+    _patch_staff_client(
+        monkeypatch, response_factory=lambda r: httpx.Response(200, json=[])
+    )
+    cfg_dir = tmp_path / "hfox"
+    result = runner.invoke(
+        cli,
+        ["auth", "login", "--subdomain", "acme", "--api-key", "K", "--auth-code", "C"],
+        env={"HFOX_CONFIG_DIR": str(cfg_dir)},
+    )
+    assert result.exit_code == 0, result.stderr
+    assert json.loads((cfg_dir / "token.json").read_text())["region"] == "us"
+    assert "Data center" not in result.stderr
+
+
+def test_login_missing_secret_without_tty_builds_no_client(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        context_mod, "HappyFoxClient", lambda *a, **k: pytest.fail("client built")
+    )
+    result = runner.invoke(
+        cli,
+        ["auth", "login", "--subdomain", "acme", "--api-key", "K"],
+        env={"HFOX_CONFIG_DIR": str(tmp_path / "hfox")},
+    )
+    assert isinstance(result.exception, ValidationError)
+    assert str(result.exception).startswith("Missing --auth-code; stdin is not a terminal")
 
 
 def test_login_validation_failure_maps_to_auth_error(monkeypatch, tmp_path):
@@ -177,12 +230,55 @@ def test_login_validation_failure_maps_to_auth_error(monkeypatch, tmp_path):
         cli,
         ["auth", "login", "--subdomain", "acme", "--region", "us",
          "--api-key", "K", "--auth-code", "C"],
-        env={"HFOX_CONFIG_DIR": str(tmp_path / ".hfox")},
+        env={"HFOX_CONFIG_DIR": str(tmp_path / "hfox")},
     )
-    # CliRunner invokes `cli` directly (no app()-level mapping), so the HfoxError
-    # propagates uncaught: exit_code 1 with the exception preserved.
-    assert isinstance(result.exception, AuthError)
+    # CliRunner bypasses app(), so the wrapped AuthError arrives as the exception.
+    assert type(result.exception) is AuthError
     assert "Could not validate credentials" in str(result.exception)
+    assert result.exception.detail == "nope"
+    assert result.exception.to_dict()["type"] == "auth"
+
+
+@pytest.mark.parametrize(
+    ("response", "error_type", "slug", "exit_code"),
+    [
+        (httpx.Response(404, text="missing"), NotFoundError, "not_found", 4),
+        (httpx.Response(500, json={"error": "boom"}), APIError, "api", 1),
+        (httpx.Response(429, json={}), RateLimitError, "rate_limited", 1),
+    ],
+)
+def test_login_other_probe_errors_are_not_wrapped(
+    monkeypatch, tmp_path, response, error_type, slug, exit_code
+):
+    _patch_staff_client(monkeypatch, response_factory=lambda r: response)
+    cfg_dir = tmp_path / "hfox"
+    result = runner.invoke(
+        cli,
+        ["auth", "login", "--subdomain", "acme", "--region", "us",
+         "--api-key", "K", "--auth-code", "C"],
+        env={"HFOX_CONFIG_DIR": str(cfg_dir)},
+    )
+    assert type(result.exception) is error_type
+    assert "Could not validate credentials" not in str(result.exception)
+    payload = result.exception.to_dict()
+    assert (payload["type"], payload["exit_code"]) == (slug, exit_code)
+    assert not (cfg_dir / "token.json").exists()
+
+
+def test_login_transport_error_is_network_error(monkeypatch, tmp_path):
+    def handler(request):
+        raise httpx.ConnectError("boom", request=request)
+
+    _patch_staff_client(monkeypatch, response_factory=handler)
+    result = runner.invoke(
+        cli,
+        ["auth", "login", "--subdomain", "acme", "--region", "us",
+         "--api-key", "K", "--auth-code", "C"],
+        env={"HFOX_CONFIG_DIR": str(tmp_path / "hfox")},
+    )
+    assert type(result.exception) is NetworkError
+    payload = result.exception.to_dict()
+    assert (payload["type"], payload["exit_code"]) == ("network", 5)
 
 
 def test_login_non_list_staff_response_rejected(monkeypatch, tmp_path):
@@ -190,15 +286,18 @@ def test_login_non_list_staff_response_rejected(monkeypatch, tmp_path):
         monkeypatch,
         response_factory=lambda r: httpx.Response(200, json={"unexpected": True}),
     )
-    cfg_dir = tmp_path / ".hfox"
+    cfg_dir = tmp_path / "hfox"
     result = runner.invoke(
         cli,
         ["auth", "login", "--subdomain", "acme", "--region", "us",
          "--api-key", "K", "--auth-code", "C"],
         env={"HFOX_CONFIG_DIR": str(cfg_dir)},
     )
-    assert isinstance(result.exception, AuthError)
-    assert "Unexpected response" in str(result.exception)
+    assert type(result.exception) is HfoxError
+    assert str(result.exception) == (
+        "Unexpected response from staff/; credentials were not saved."
+    )
+    assert result.exception.to_dict()["exit_code"] == 5
     # Nothing persisted on failure.
     assert not (cfg_dir / "token.json").exists()
 
@@ -210,7 +309,7 @@ def test_login_non_numeric_staff_id_warns_and_skips_default(monkeypatch, tmp_pat
             200, json=[{"id": "not-a-number", "email": "a@x.org"}]
         ),
     )
-    cfg_dir = tmp_path / ".hfox"
+    cfg_dir = tmp_path / "hfox"
     result = runner.invoke(
         cli,
         ["auth", "login", "--subdomain", "acme", "--region", "us",
@@ -218,7 +317,7 @@ def test_login_non_numeric_staff_id_warns_and_skips_default(monkeypatch, tmp_pat
         env={"HFOX_CONFIG_DIR": str(cfg_dir)},
     )
     assert result.exit_code == 0, result.stderr
-    assert "Ignoring non-numeric staff id" in result.stderr
+    assert "Ignoring unexpected staff id 'not-a-number'" in result.stderr
     settings = (cfg_dir / "config.toml").read_text()
     assert "default_staff_id" not in settings
 
@@ -230,7 +329,7 @@ def test_login_email_no_match_warns(monkeypatch, tmp_path):
             200, json=[{"id": 1, "email": "someone@x.org"}]
         ),
     )
-    cfg_dir = tmp_path / ".hfox"
+    cfg_dir = tmp_path / "hfox"
     result = runner.invoke(
         cli,
         ["auth", "login", "--subdomain", "acme", "--region", "us",
@@ -257,8 +356,8 @@ def test_login_persists_base_url_override(monkeypatch, tmp_path):
         )
         return client
 
-    monkeypatch.setattr(auth_mod, "HappyFoxClient", factory)
-    cfg_dir = tmp_path / ".hfox"
+    monkeypatch.setattr(context_mod, "HappyFoxClient", factory)
+    cfg_dir = tmp_path / "hfox"
     # HFOX_BASE_URL is the root; Config.base_url appends the /api/1.1/json suffix.
     result = runner.invoke(
         cli,
@@ -275,19 +374,21 @@ def test_login_persists_base_url_override(monkeypatch, tmp_path):
     saved = json.loads((cfg_dir / "token.json").read_text())
     assert saved["base_url"] == "https://gw.internal"
     assert "Default staff id set to 3" in result.stderr
+    assert json.loads(result.stdout)["base_url"] == "https://gw.internal/api/1.1/json"
 
 
 # =========================================================================
-# auth.py: status with no creds (status masks None api_key)
+# auth.py: status with no creds (masks a None api_key, exits 2)
 # =========================================================================
 def test_status_unauthenticated_masks_none(monkeypatch, tmp_path):
-    cfg_dir = tmp_path / ".hfox"
+    cfg_dir = tmp_path / "hfox"
     cfg_dir.mkdir(parents=True)
     captured = _capture_render(monkeypatch)
     result = runner.invoke(
         cli, ["auth", "status"], env={"HFOX_CONFIG_DIR": str(cfg_dir)}
     )
-    assert result.exit_code == 0
+    assert result.exit_code == 2
+    assert len(captured) == 1
     payload = captured[-1]
     assert payload["authenticated"] is False
     assert payload["api_key"] is None
@@ -307,11 +408,14 @@ def test_config_dir_empty_override_falls_to_env(monkeypatch, tmp_path):
     assert config_dir("") == (tmp_path / "env")
 
 
-def test_config_dir_empty_env_falls_to_home(monkeypatch):
+def test_config_dir_empty_env_falls_to_home(monkeypatch, tmp_path):
     monkeypatch.setenv("HFOX_CONFIG_DIR", "")
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     from pathlib import Path
 
-    assert config_dir() == Path.home() / ".hfox"
+    assert config_dir() == Path.home() / ".config" / "hfox"
 
 
 # =========================================================================
@@ -343,7 +447,7 @@ def test_require_auth_passes_when_authenticated():
 # config.py: env > file > default precedence and base_url resolution
 # =========================================================================
 def test_load_config_env_base_url_overrides_disk(tmp_path, monkeypatch):
-    cfg_dir = tmp_path / ".hfox"
+    cfg_dir = tmp_path / "hfox"
     save_credentials(
         cfg_dir, subdomain="disk", region="eu", api_key="dk", auth_code="dc",
         base_url="https://disk.example",
@@ -358,7 +462,7 @@ def test_load_config_env_base_url_overrides_disk(tmp_path, monkeypatch):
 
 
 def test_load_config_defaults_when_nothing_set(tmp_path, monkeypatch):
-    cfg_dir = tmp_path / ".hfox"  # does not exist
+    cfg_dir = tmp_path / "hfox"  # does not exist
     monkeypatch.setenv("HFOX_CONFIG_DIR", str(cfg_dir))
     for k in ("HFOX_SUBDOMAIN", "HFOX_REGION", "HFOX_API_KEY",
               "HFOX_AUTH_CODE", "HFOX_FORMAT", "HFOX_STAFF_ID", "HFOX_BASE_URL"):
@@ -374,7 +478,7 @@ def test_load_config_defaults_when_nothing_set(tmp_path, monkeypatch):
 
 def test_load_config_settings_fallback_when_token_missing(tmp_path, monkeypatch):
     # Only config.toml present (partial config): subdomain/region come from settings.
-    cfg_dir = tmp_path / ".hfox"
+    cfg_dir = tmp_path / "hfox"
     save_settings(cfg_dir, {"subdomain": "fromsettings", "region": "eu"})
     monkeypatch.setenv("HFOX_CONFIG_DIR", str(cfg_dir))
     for k in ("HFOX_SUBDOMAIN", "HFOX_REGION", "HFOX_API_KEY", "HFOX_AUTH_CODE"):
@@ -389,35 +493,36 @@ def test_load_config_settings_fallback_when_token_missing(tmp_path, monkeypatch)
 # config.py: corrupt files raise HfoxError
 # =========================================================================
 def test_corrupt_toml_raises_hfox_error(tmp_path):
-    cfg_dir = tmp_path / ".hfox"
+    cfg_dir = tmp_path / "hfox"
     cfg_dir.mkdir(parents=True)
     (cfg_dir / "config.toml").write_text("not = = valid toml")
     with pytest.raises(HfoxError) as exc:
         load_config(cfg_dir)
-    assert "Failed to read config file" in str(exc.value)
+    assert "Cannot read config file" in str(exc.value)
 
 
 def test_corrupt_json_raises_hfox_error(tmp_path):
-    cfg_dir = tmp_path / ".hfox"
+    cfg_dir = tmp_path / "hfox"
     cfg_dir.mkdir(parents=True)
     (cfg_dir / "token.json").write_text("{not valid json")
     with pytest.raises(HfoxError) as exc:
         load_config(cfg_dir)
-    assert "Failed to read token file" in str(exc.value)
+    assert "Cannot read token file" in str(exc.value)
 
 
 # =========================================================================
 # config.py: atomic write modes and dir permissions (0600/0700)
 # =========================================================================
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
 def test_save_credentials_modes_0600_and_dir_0700(tmp_path):
-    cfg_dir = tmp_path / ".hfox"
+    cfg_dir = tmp_path / "hfox"
     path = save_credentials(cfg_dir, subdomain="a", region="us", api_key="k", auth_code="c")
     assert (path.stat().st_mode & 0o777) == 0o600
     assert (cfg_dir.stat().st_mode & 0o777) == stat.S_IRWXU  # 0700
 
 
 def test_save_credentials_includes_base_url(tmp_path):
-    cfg_dir = tmp_path / ".hfox"
+    cfg_dir = tmp_path / "hfox"
     path = save_credentials(
         cfg_dir, subdomain="a", region="us", api_key="k", auth_code="c",
         base_url="https://gw.internal",
@@ -425,14 +530,17 @@ def test_save_credentials_includes_base_url(tmp_path):
     assert json.loads(path.read_text())["base_url"] == "https://gw.internal"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
 def test_save_settings_mode_0644(tmp_path):
-    cfg_dir = tmp_path / ".hfox"
+    cfg_dir = tmp_path / "hfox"
     path = save_settings(cfg_dir, {"subdomain": "a"})
     assert (path.stat().st_mode & 0o777) == 0o644
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
 def test_save_settings_chmod_failure_warns(tmp_path, monkeypatch, capsys):
-    cfg_dir = tmp_path / ".hfox"
+    warnings: list[str] = []
+    cfg_dir = tmp_path / "hfox"
     import hfox.core.config as config_mod
 
     orig_chmod = config_mod.Path.chmod
@@ -444,23 +552,24 @@ def test_save_settings_chmod_failure_warns(tmp_path, monkeypatch, capsys):
         return orig_chmod(self, mode)
 
     monkeypatch.setattr(config_mod.Path, "chmod", fake_chmod)
-    save_settings(cfg_dir, {"subdomain": "a"})
-    err = capsys.readouterr().err
-    assert "could not restrict permissions" in err
+    save_settings(cfg_dir, {"subdomain": "a"}, warn=warnings.append)
+    assert len(warnings) == 1
+    assert "could not restrict permissions" in warnings[0]
+    assert capsys.readouterr().err == ""
 
 
 # =========================================================================
 # config.py: save_settings coercions and toml str
 # =========================================================================
 def test_save_settings_non_int_staff_id_raises(tmp_path):
-    cfg_dir = tmp_path / ".hfox"
+    cfg_dir = tmp_path / "hfox"
     with pytest.raises(ValidationError) as exc:
         save_settings(cfg_dir, {"default_staff_id": "abc"})
     assert "must be a non-negative integer" in str(exc.value)
 
 
 def test_save_settings_bool_value_serialized_lowercase(tmp_path):
-    cfg_dir = tmp_path / ".hfox"
+    cfg_dir = tmp_path / "hfox"
     path = save_settings(cfg_dir, {"some_flag": True, "other_flag": False})
     text = path.read_text()
     assert "some_flag = true" in text
@@ -468,7 +577,7 @@ def test_save_settings_bool_value_serialized_lowercase(tmp_path):
 
 
 def test_save_settings_string_with_quotes_escaped(tmp_path):
-    cfg_dir = tmp_path / ".hfox"
+    cfg_dir = tmp_path / "hfox"
     path = save_settings(cfg_dir, {"subdomain": 'a"b\\c'})
     # Round-trips through tomllib via load_config.
     cfg = load_config(cfg_dir)
@@ -477,7 +586,7 @@ def test_save_settings_string_with_quotes_escaped(tmp_path):
 
 
 def test_save_settings_control_char_rejected(tmp_path):
-    cfg_dir = tmp_path / ".hfox"
+    cfg_dir = tmp_path / "hfox"
     with pytest.raises(ValidationError) as exc:
         save_settings(cfg_dir, {"subdomain": "a\nb"})
     assert "control characters" in str(exc.value)
