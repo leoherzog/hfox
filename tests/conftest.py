@@ -4,12 +4,16 @@ terminal stand-in and the environment for subprocess tests.
 
 import os
 
-import httpx
-import pytest
+# Typer reads these at import and then styles help with ANSI codes, even when piped.
+for _key in ("GITHUB_ACTIONS", "FORCE_COLOR", "PY_COLORS"):
+    os.environ.pop(_key, None)
 
-import hfox.cli._util as util_mod
-import hfox.cli.context as context_mod
-from hfox.core.client import HappyFoxClient
+import httpx  # noqa: E402
+import pytest  # noqa: E402
+
+import hfox.cli._util as util_mod  # noqa: E402
+import hfox.cli.context as context_mod  # noqa: E402
+from hfox.core.client import HappyFoxClient  # noqa: E402
 
 
 def subprocess_env(**extra: str) -> dict[str, str]:
