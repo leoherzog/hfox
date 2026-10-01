@@ -1,4 +1,4 @@
-# hfox
+# 🦊 hfox
 
 A command-line interface for the [HappyFox](https://www.happyfox.com/) REST API.
 

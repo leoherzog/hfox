@@ -59,6 +59,17 @@ def info(message: str) -> None:
     print(message, file=sys.stderr)
 
 
+def fox(*streams) -> str:
+    """Return "🦊 " when every stream (default stderr) can encode it, else ""."""
+    for stream in streams or (sys.stderr,):
+        encoding = getattr(stream, "encoding", None) or "utf-8"
+        try:
+            "🦊".encode(encoding)
+        except (LookupError, UnicodeEncodeError):
+            return ""
+    return "🦊 "
+
+
 def _flatten(obj: Any, prefix: str = "") -> dict[str, Any]:
     """Flatten nested dicts into dot-notation keys; empty dicts stay as leaves."""
     out: dict[str, Any] = {}

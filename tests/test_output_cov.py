@@ -92,6 +92,31 @@ def test_info_goes_to_stderr(capsys):
     assert captured.err == "hello\n"
 
 
+@pytest.mark.parametrize(
+    ("encoding", "expected"),
+    [("utf-8", "🦊 "), ("utf-16", "🦊 "), ("cp1252", ""), ("ascii", "")],
+)
+def test_fox_only_when_stream_can_encode_it(encoding, expected):
+    stream = io.TextIOWrapper(io.BytesIO(), encoding=encoding)
+    assert output.fox(stream) == expected
+
+
+def test_fox_assumes_utf8_without_encoding():
+    assert output.fox(io.StringIO()) == "🦊 "
+
+
+def test_fox_defaults_to_stderr(monkeypatch):
+    monkeypatch.setattr("sys.stderr", io.TextIOWrapper(io.BytesIO(), encoding="cp1252"))
+    assert output.fox() == ""
+
+
+def test_fox_needs_every_stream():
+    utf8 = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+    cp1252 = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+    assert output.fox(utf8, utf8) == "🦊 "
+    assert output.fox(utf8, cp1252) == ""
+
+
 def test_color_enabled_no_color_env(monkeypatch):
     monkeypatch.setenv("NO_COLOR", "1")
     buf = io.StringIO()

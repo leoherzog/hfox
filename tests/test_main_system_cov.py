@@ -78,14 +78,14 @@ def test_format_flag_resolves(mock_api):
 # each exception type, to cover every branch.
 # ---------------------------------------------------------------------------
 def _install_stub_command(monkeypatch, exc):
-    def fake_command(args=None, standalone_mode=True):
+    def fake_command(args=None, prog_name=None, standalone_mode=True):
         raise exc
 
     monkeypatch.setattr(main_mod.typer.main, "get_command", lambda _cli: fake_command)
 
 
 def test_app_returns_exit_code(monkeypatch):
-    def fake_command(args=None, standalone_mode=True):
+    def fake_command(args=None, prog_name=None, standalone_mode=True):
         return 7
 
     monkeypatch.setattr(main_mod.typer.main, "get_command", lambda _cli: fake_command)
@@ -186,7 +186,7 @@ def test_app_keyboard_interrupt_branch(monkeypatch):
 
 def test_app_success_path(monkeypatch):
     # A command that returns cleanly: no exception, app() returns None.
-    def fake_command(args=None, standalone_mode=True):
+    def fake_command(args=None, prog_name=None, standalone_mode=True):
         return None
 
     monkeypatch.setattr(main_mod.typer.main, "get_command", lambda _cli: fake_command)
@@ -205,6 +205,34 @@ def test_module_run_as_script_version():
     )
     assert proc.returncode == 0
     assert proc.stdout.strip().startswith("hfox ")
+
+
+@pytest.mark.parametrize(("encoding", "fox"), [("utf-8", True), ("cp1252", False)])
+def test_help_shows_fox_only_when_stdout_can_encode_it(encoding, fox):
+    proc = subprocess.run(
+        [sys.executable, "-m", "hfox.cli.main", "--help"],
+        env={
+            **ENV,
+            "HFOX_CONFIG_DIR": os.environ["HFOX_CONFIG_DIR"],
+            "PYTHONIOENCODING": encoding,
+            "PYTHONUTF8": "0",
+        },
+        capture_output=True,
+        encoding=encoding,
+    )
+    assert proc.returncode == 0
+    assert ("Usage: 🦊 hfox [OPTIONS]" if fox else "Usage: hfox [OPTIONS]") in proc.stdout
+    assert ("🦊" in proc.stdout) is fox
+    assert "\\U0001f98a" not in proc.stdout
+
+
+def test_fox_only_on_root_usage_line():
+    root = run("--help")
+    assert "Usage: 🦊 hfox [OPTIONS]" in root.stdout
+    assert root.stdout.count("🦊") == 1
+    sub = run("tickets", "--help")
+    assert "Usage: hfox tickets [OPTIONS]" in sub.stdout
+    assert "🦊" not in sub.stdout
 
 
 # ---------------------------------------------------------------------------

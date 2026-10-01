@@ -8,6 +8,7 @@ from typing import Any
 import typer
 
 from ..core.errors import ValidationError
+from . import output
 from ._util import (
     attach,
     comma_join,
@@ -194,7 +195,7 @@ def create_ticket(
     result = obj.call("POST", "tickets/", **attach(body, attachment))
     obj.render(result)
     if isinstance(result, dict) and result.get("display_id"):
-        obj.success(f"Created ticket {result['display_id']}.")
+        obj.success(f"{output.fox()}Created ticket {result['display_id']}.")
 
 
 @app.command("create-bulk")

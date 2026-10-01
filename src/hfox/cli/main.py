@@ -7,6 +7,7 @@ import sys
 
 import typer
 from typer._click import exceptions as click_exceptions
+from typer.core import TyperGroup
 
 from .. import __version__
 from ..core.config import load_config
@@ -15,8 +16,19 @@ from . import assets, auth, contacts, output, system, tickets
 from .context import AppContext, as_hfox_error
 from .output import OutputFormat
 
+
+class _RootGroup(TyperGroup):
+    """Root group whose usage line reads "Usage: 🦊 hfox ..." where the terminal can encode it."""
+
+    def format_usage(self, ctx, formatter) -> None:
+        # Help writes this line to stdout and usage errors to stderr.
+        prog = f"{output.fox(sys.stdout, sys.stderr)}{ctx.command_path}"
+        formatter.write_usage(prog, " ".join(self.collect_usage_pieces(ctx)))
+
+
 cli = typer.Typer(
     name="hfox",
+    cls=_RootGroup,
     no_args_is_help=True,
     add_completion=True,
     help="Command-line interface for the HappyFox REST API.",
@@ -95,8 +107,9 @@ def app() -> None:
             stream.reconfigure(errors="backslashreplace")
     command = typer.main.get_command(cli)
     try:
-        # Non-standalone mode returns typer.Exit's code instead of raising it.
-        exit_code = command(args=None, standalone_mode=False)
+        # Non-standalone mode returns typer.Exit's code instead of raising it. A fixed prog_name
+        # keeps usage, hints and completion on "hfox" for renamed binaries and `python -m hfox`.
+        exit_code = command(args=None, prog_name="hfox", standalone_mode=False)
     except typer.Abort:
         output.warn("Aborted.")
         raise SystemExit(1) from None

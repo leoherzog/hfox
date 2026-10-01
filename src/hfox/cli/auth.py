@@ -115,7 +115,7 @@ def login(
         settings["default_staff_id"] = staff_id
     save_settings(cfg_dir, settings)
 
-    obj.success(f"Authenticated to {probe.base_url} ({len(staff)} agents visible).")
+    obj.success(f"{output.fox()}Authenticated to {probe.base_url} ({len(staff)} agents visible).")
     if staff_id is not None:
         obj.success(f"Default staff id set to {staff_id} (from {email}).")
     elif email:
