@@ -3,6 +3,7 @@
 import csv
 import io
 import json
+import re
 import sys
 import types
 
@@ -14,6 +15,7 @@ from hfox.cli.output import OutputFormat, render, render_ndjson_line, sanitize_c
 
 RLO = "\u202e"
 NON_ASCII = {"q": "café 😀"}
+_SGR = re.compile(r"\x1b\[[0-9;]*m")
 
 
 class _Terminal(io.StringIO):
@@ -64,6 +66,45 @@ def test_warn_on_a_color_terminal_writes_to_stderr_only(monkeypatch):
     assert stdout.getvalue() == ""
     assert "warning:" in stderr.getvalue()
     assert "check the page limit" in stderr.getvalue()
+
+
+# (message, text printed): ESC, CR, BEL, backspace and a bidi override are dropped.
+STDERR_TEXT = pytest.mark.parametrize(
+    ("message", "printed"),
+    [
+        ("remove base_url from /tmp/[work]/config.toml to clear it.", None),
+        ("closing [/b] tag", None),
+        ("rate limited :warning: retry later", None),
+        (" ".join(["word"] * 400), None),
+        ("a\tb\nc‌d‍e", None),
+        (f"a\x1b[2Kb\rc\x07d\x08e{RLO}f", "a[2Kbcdef"),
+    ],
+    ids=["bracketed-path", "closing-tag", "emoji-code", "long-line", "kept", "dropped"],
+)
+
+
+@STDERR_TEXT
+@pytest.mark.parametrize("terminal", [_Terminal, io.StringIO], ids=["color", "plain"])
+def test_warn_prints_text_verbatim_apart_from_control_characters(
+    monkeypatch, terminal, message, printed
+):
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    stdout, stderr = io.StringIO(), terminal()
+    monkeypatch.setattr(sys, "stdout", stdout)
+    monkeypatch.setattr(sys, "stderr", stderr)
+    output.warn(message)
+    assert stdout.getvalue() == ""
+    assert _SGR.sub("", stderr.getvalue()) == f"warning: {printed or message}\n"
+
+
+@STDERR_TEXT
+def test_info_prints_text_verbatim_apart_from_control_characters(monkeypatch, message, printed):
+    stdout, stderr = io.StringIO(), _Terminal()
+    monkeypatch.setattr(sys, "stdout", stdout)
+    monkeypatch.setattr(sys, "stderr", stderr)
+    output.info(message)
+    assert stdout.getvalue() == ""
+    assert stderr.getvalue() == f"{printed or message}\n"
 
 
 def test_empty_no_color_counts_as_unset(monkeypatch):

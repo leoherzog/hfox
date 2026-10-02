@@ -222,12 +222,16 @@ Helpers:
   `--contact-cf` call site passes `json_flag="--contact-cf-json"` and a `--contact-cf-json`
   one `flag="--contact-cf-json"`. `parse_asset_cf` takes bare ids only.
 - `cli/output.py`: `OutputFormat.parse` raises `ValidationError` for an unknown name.
-  `sanitize_cell` drops every `Cc` and `Cf` character except newline, tab, U+200C and U+200D;
-  table and CSV cells and headers pass through it. CSV also prefixes `'` to a string cell
+  `sanitize_text`, also named `sanitize_cell`, drops every `Cc` and `Cf` character except
+  newline, tab, U+200C and U+200D. Table and CSV cells and headers pass through it, and so do
+  `warn` and `info` messages and the text of `obj.confirm` and `obj.prompt`, on a terminal or
+  not. A prompt's `default` is shown as given. CSV also prefixes `'` to a string cell
   that starts with `=`, `+`, `-`, `@` or tab unless it is a plain signed decimal. CSV rows end
   in one CRLF; `_render_csv` writes encoded bytes to the stream's `buffer`, since a Windows
   text layer would turn each `\n` into `\r\n`. JSON and NDJSON keep the data and write C1,
-  DEL, bidi, line-separator and tag characters as `\uXXXX`. YAML is untouched.
+  DEL, bidi, line-separator and tag characters as `\uXXXX`. YAML is untouched. `warn` prints
+  the filtered message as it is; on a color terminal only the `warning:` prefix goes through
+  Rich.
 
 ## Adding a command or resource
 

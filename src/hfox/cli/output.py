@@ -54,14 +54,17 @@ _err_console = Console(stderr=True, highlight=False)
 
 
 def warn(message: str) -> None:
+    message = sanitize_text(message)
     if _color_enabled(sys.stderr):
-        _err_console.print(f"[yellow]warning:[/yellow] {message}")
+        # Only the prefix goes through Rich, which would parse, wrap and tab-expand the message.
+        _err_console.print(Text("warning:", style="yellow"), end=" ")
+        print(message, file=sys.stderr)
     else:
         print(f"warning: {message}", file=sys.stderr)
 
 
 def info(message: str) -> None:
-    print(message, file=sys.stderr)
+    print(sanitize_text(message), file=sys.stderr)
 
 
 def fox(*streams) -> str:
@@ -120,8 +123,8 @@ def _stringify(value: Any) -> str:
 _KEPT_CONTROLS = frozenset("\n\t\u200c\u200d")
 
 
-def sanitize_cell(text: str) -> str:
-    """Drop control and format characters from a table or CSV cell.
+def sanitize_text(text: str) -> str:
+    """Drop control and format characters from text bound for a terminal, table or CSV cell.
 
     Newline, tab and the zero-width joiner and non-joiner are kept.
     """
@@ -130,6 +133,9 @@ def sanitize_cell(text: str) -> str:
         for char in text
         if char in _KEPT_CONTROLS or unicodedata.category(char) not in ("Cc", "Cf")
     )
+
+
+sanitize_cell = sanitize_text
 
 
 _FORMULA_TRIGGERS = ("=", "+", "-", "@", "\t", "\r")

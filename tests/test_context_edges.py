@@ -218,6 +218,42 @@ def test_prompt_hides_the_answer_only_when_asked(monkeypatch, capsys):
     assert capsys.readouterr().out == ""
 
 
+# (text, text shown): ESC, CR, BEL, backspace and a bidi override are dropped.
+PROMPT_TEXT = pytest.mark.parametrize(
+    ("text", "shown"),
+    [
+        ("Delete [work] :warning: [/b]?", None),
+        ("a\tb\nc‌d‍e", None),
+        ("a\x1b[2Kb\rc\x07d\x08e‮f", "a[2Kbcdef"),
+    ],
+    ids=["verbatim", "kept", "dropped"],
+)
+
+
+@PROMPT_TEXT
+def test_confirm_shows_its_message_without_control_characters(
+    monkeypatch, capsys, tty, text, shown
+):
+    monkeypatch.setattr(sys, "stdin", io.StringIO("y\n"))
+    make_ctx().confirm(text, yes=False)
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith(f"{shown or text} [")
+
+
+@PROMPT_TEXT
+@pytest.mark.parametrize("hide_input", [False, True], ids=["visible", "hidden"])
+def test_prompt_shows_its_text_without_control_characters(
+    monkeypatch, capsys, hide_input, text, shown
+):
+    monkeypatch.setattr(getpass, "getpass", lambda prompt="", stream=None: "s3cret")
+    monkeypatch.setattr(sys, "stdin", io.StringIO("typed\n"))
+    make_ctx().prompt(text, hide_input=hide_input)
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith(f"{shown or text}:")
+
+
 # -- page walks ---------------------------------------------------------------
 def test_filter_error_names_each_active_filter_as_its_flag(mock_api):
     captured = mock_api(lambda req: httpx.Response(200, json=[]))

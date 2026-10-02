@@ -71,20 +71,20 @@ def test_warn_plain_when_no_color(capsys, monkeypatch):
     assert captured.err == "warning: something off\n"
 
 
+class _Terminal(io.StringIO):
+    def isatty(self) -> bool:
+        return True
+
+
 def test_warn_color_branch(monkeypatch):
     monkeypatch.delenv("NO_COLOR", raising=False)
-    buf = io.StringIO()
-    buf.isatty = lambda: True  # type: ignore[attr-defined]
-    monkeypatch.setattr(output.sys, "stderr", buf)
-    captured_console = []
-
-    class FakeConsole:
-        def print(self, msg):
-            captured_console.append(msg)
-
-    monkeypatch.setattr(output, "_err_console", FakeConsole())
+    stdout, stderr = io.StringIO(), _Terminal()
+    monkeypatch.setattr(output.sys, "stdout", stdout)
+    monkeypatch.setattr(output.sys, "stderr", stderr)
     warn("colored msg")
-    assert captured_console == ["[yellow]warning:[/yellow] colored msg"]
+    assert stdout.getvalue() == ""
+    assert "warning:" in stderr.getvalue()
+    assert stderr.getvalue().endswith(" colored msg\n")
 
 
 def test_info_goes_to_stderr(capsys):

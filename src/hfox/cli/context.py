@@ -180,7 +180,7 @@ class AppContext:
         try:
             # Click writes the prompt's trailing space to stdout, which would corrupt the data.
             with contextlib.redirect_stdout(sys.stderr):
-                agreed = typer.confirm(message, default=False, err=True)
+                agreed = typer.confirm(output.sanitize_text(message), default=False, err=True)
         except typer.Abort:
             raise CancelledError("Cancelled at the confirmation prompt.") from None
         if not agreed:
@@ -188,6 +188,7 @@ class AppContext:
 
     def prompt(self, text: str, *, default: str | None = None, hide_input: bool = False) -> str:
         """Prompt on stderr and return the answer. The caller checks for a terminal first."""
+        text = output.sanitize_text(text)
         try:
             with contextlib.redirect_stdout(sys.stderr):
                 return typer.prompt(text, default=default, hide_input=hide_input, err=True)
