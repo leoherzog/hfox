@@ -15,6 +15,8 @@ from ._util import (
     require_nonblank,
     split_csv,
     split_csv_ints,
+    strip_or_none,
+    strip_or_reject,
     validate_contact_ref,
 )
 from .cf import CF_HELP, CF_JSON_HELP, parse_cf_json, parse_cf_options
@@ -47,7 +49,7 @@ def _login_flag(set_login: bool | None) -> str | None:
 
 
 def _domains(value: str | None) -> str | None:
-    """Normalize --domains to the documented comma string; '' clears."""
+    """Return --domains as the documented comma string; "" for a blank value, which clears."""
     if value is None:
         return None
     return ",".join(split_csv(value) or [])
@@ -70,7 +72,7 @@ def list_contacts(
 ) -> None:
     """List or search contacts."""
     obj = get_ctx(ctx)
-    params = compact({"q": nonblank_or_none(query), "page": page, "size": size})
+    params = compact({"q": strip_or_none(query), "page": page, "size": size})
     body = obj.paginate("users/", params=params)
     obj.render_list(body)
 
@@ -162,8 +164,8 @@ def update_contact(
         phones = [compact(entry)]
     body = compact(
         {
-            "name": name,
-            "email": email,
+            "name": strip_or_reject(name, "--name"),
+            "email": strip_or_reject(email, "--email"),
             "phones": phones,
             "is_login_enabled": _login_flag(set_login),
         }
@@ -236,7 +238,11 @@ def create_group(
     obj = get_ctx(ctx)
     require_nonblank(name, "--name")
     body = compact(
-        {"name": name, "description": description, "tagged_domains": _domains(domains)}
+        {
+            "name": name,
+            "description": strip_or_reject(description, "--description"),
+            "tagged_domains": strip_or_reject(_domains(domains), "--domains"),
+        }
     )
     result = obj.call("POST", "contact_groups/", json=body)
     obj.render(result)
@@ -246,13 +252,17 @@ def create_group(
 def update_group(
     ctx: typer.Context,
     group_id: int = typer.Argument(..., min=1, help="Id of the contact group to update."),
-    description: str = typer.Option(None, "--description", help="New description."),
+    description: str = typer.Option(
+        None, "--description", help="New description; '' clears it."
+    ),
     domains: str = typer.Option(
         None, "--domains", help="Comma-separated tagged domains; '' clears them."
     ),
 ) -> None:
     """Update a contact group."""
     obj = get_ctx(ctx)
+    if description is not None:
+        description = description.strip()
     body = compact({"description": description, "tagged_domains": _domains(domains)})
     if not body:
         raise ValidationError("Nothing to update; pass at least one field.")

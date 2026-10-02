@@ -15,7 +15,6 @@ from hfox.cli._util import (
     STDIN,
     check_no_secrets,
     check_readable_path,
-    load_json_file,
     open_guarded,
     read_text_file,
     stdin_is_tty,
@@ -194,13 +193,13 @@ def test_read_json_parses_file_and_names_it_on_error(ctx, tmp_path):
         ctx.read_json(str(f), "--file")
 
 
-def test_load_json_file_does_not_read_stdin(monkeypatch):
+def test_read_text_file_does_not_read_stdin(monkeypatch):
     feed(monkeypatch, b"[1]")
     with pytest.raises(ValidationError, match="File not found: -"):
-        load_json_file("-")
+        read_text_file("-")
 
 
-def test_util_readers_default_to_no_guard(cfg_dir):
+def test_read_text_file_without_guard_arguments_reads_token_json(cfg_dir):
     assert json.loads(read_text_file(str(cfg_dir / "token.json")))["api_key"] == FILE_KEY
 
 
@@ -461,7 +460,6 @@ def test_unexpandable_tilde_path_is_used_as_written(ctx, tmp_path, monkeypatch):
     assert check_readable_path("~draft.txt") == Path("~draft.txt")
     assert ctx.read_text("~draft.txt", "--text-file") == "body\n"
     assert ctx.read_json("~data.json", "--file") == [1]
-    assert load_json_file("~data.json") == [1]
     assert ctx.attach({}, ["~draft.txt"])["files"] == [("attachments", ("~draft.txt", b"body\n"))]
 
 
@@ -474,12 +472,12 @@ def test_unexpandable_tilde_path_that_is_missing_is_not_found(ctx, tmp_path, mon
     assert exc.value.exit_code is ExitCode.VALIDATION
 
 
-def test_load_json_file_names_an_unexpandable_path_on_bad_json(tmp_path, monkeypatch):
+def test_read_json_names_an_unexpandable_path_on_bad_json(ctx, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "~bad.json").write_text("{nope", encoding="utf-8")
     _no_home(monkeypatch)
     with pytest.raises(ValidationError, match="Invalid JSON in ~bad.json"):
-        load_json_file("~bad.json")
+        ctx.read_json("~bad.json", "--file")
 
 
 def test_guard_holds_for_an_unexpandable_guarded_directory(tmp_path, monkeypatch):

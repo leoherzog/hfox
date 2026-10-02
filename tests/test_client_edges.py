@@ -2,14 +2,21 @@
 
 import base64
 import json
+import sys
 
 import httpx
 import pytest
+import typer
 
+import hfox.cli.main as main_mod
+from hfox.cli.context import AppContext
+from hfox.cli.output import OutputFormat
 from hfox.core.client import OUTCOME_UNKNOWN_HINT, HappyFoxClient, request_url
+from hfox.core.config import Config
 from hfox.core.errors import (
     APIError,
     AuthError,
+    HfoxError,
     NetworkError,
     NotFoundError,
     RateLimitError,
@@ -71,6 +78,39 @@ def pages(count, key="data"):
         return httpx.Response(200, json={"page_info": {"page_count": count}, key: [page]})
 
     return handler
+
+
+def envelope(**extra):
+    """Return a handler serving one-row pages whose envelope also holds `extra`."""
+
+    def handler(request):
+        return httpx.Response(200, json={"data": [int(request.url.params["page"])], **extra})
+
+    return handler
+
+
+def raw_page_count(literal):
+    """Return a handler whose page_count is a JSON literal that httpx will not encode."""
+    content = b'{"page_info": {"page_count": ' + literal + b'}, "data": [1]}'
+    return always(200, content=content, headers={"content-type": "application/json"})
+
+
+def page_error(field, path="tickets/"):
+    return {
+        "error": f"Unexpected {field} in the {path} response; "
+        "cannot tell how many pages there are.",
+        "type": "other",
+        "exit_code": 5,
+    }
+
+
+def rows_error(count, path="tickets/"):
+    return {
+        "error": f"Unexpected page in the {path} response: it reports {count} pages "
+        "but holds no list of rows.",
+        "type": "other",
+        "exit_code": 5,
+    }
 
 
 # -- on the wire ---------------------------------------------------------------
@@ -373,3 +413,346 @@ def test_non_numeric_size_is_named_and_nothing_is_sent():
     with pytest.raises(ValidationError, match="size"):
         list(client.paginate_pages("tickets/", params={"size": "abc"}))
     assert requests == []
+
+
+# -- page envelopes of the wrong shape -------------------------------------------
+WALKS = ["paginate", "paginate_pages"]
+
+
+@pytest.mark.parametrize("walk", WALKS)
+@pytest.mark.parametrize("page_info", [[1], "x", 5, True, [], "", 0, False])
+def test_page_info_that_is_not_an_object_is_a_structured_error(walk, page_info):
+    client, requests, _ = make_client(envelope(page_info=page_info))
+    with pytest.raises(HfoxError) as exc:
+        list(getattr(client, walk)("tickets/"))
+    assert type(exc.value) is HfoxError
+    assert exc.value.to_dict() == page_error("page_info")
+    assert len(requests) == 1
+
+
+@pytest.mark.parametrize("walk", WALKS)
+@pytest.mark.parametrize("nested", [True, False])
+@pytest.mark.parametrize("page_count", [True, False, "3", "", 2.5, -1, -2.0, [2], {}])
+def test_page_count_that_is_not_a_whole_number_is_a_structured_error(walk, nested, page_count):
+    extra = {"page_info": {"page_count": page_count}} if nested else {"page_count": page_count}
+    client, requests, _ = make_client(envelope(**extra))
+    with pytest.raises(HfoxError) as exc:
+        list(getattr(client, walk)("assets/"))
+    assert type(exc.value) is HfoxError
+    assert exc.value.to_dict() == page_error("page_count", "assets/")
+    assert len(requests) == 1
+
+
+@pytest.mark.parametrize("walk", WALKS)
+@pytest.mark.parametrize("literal", [b"NaN", b"Infinity", b"-Infinity", b"1e999"])
+def test_page_count_that_is_not_finite_is_a_structured_error(walk, literal):
+    client, requests, _ = make_client(raw_page_count(literal))
+    with pytest.raises(HfoxError) as exc:
+        list(getattr(client, walk)("tickets/", page_limit=3))
+    assert exc.value.to_dict() == page_error("page_count")
+    assert len(requests) == 1
+
+
+def test_bad_page_count_is_reported_after_its_page_is_yielded():
+    client, _, _ = make_client(envelope(page_count="2"))
+    walk = client.paginate_pages("tickets/")
+    assert next(walk) == {"data": [1], "page_count": "2"}
+    with pytest.raises(HfoxError):
+        next(walk)
+
+
+@pytest.mark.parametrize("page_count", [0, 0.0, 1, 1.0])
+def test_page_count_of_zero_or_one_reads_one_page(page_count):
+    client, requests, sleeps = make_client(envelope(page_info={"page_count": page_count}))
+    assert list(client.paginate("tickets/")) == [1]
+    assert len(requests) == 1
+    assert sleeps == []
+
+
+def test_whole_float_page_count_is_walked_and_reported_as_an_int():
+    truncated: list[tuple] = []
+    client, _, _ = make_client(envelope(page_info={"page_count": 3.0}))
+    walk = client.paginate("tickets/", page_limit=2, on_truncated=lambda *a: truncated.append(a))
+    assert list(walk) == [1, 2]
+    assert truncated == [(2, 3)]
+    assert type(truncated[0][1]) is int
+
+
+@pytest.mark.parametrize("extra", [{}, {"page_info": {}}, {"page_info": {"count": 4}}])
+def test_envelope_without_a_page_count_reads_one_page(extra):
+    client, requests, _ = make_client(envelope(**extra))
+    assert list(client.paginate("tickets/")) == [1]
+    assert len(requests) == 1
+
+
+def test_page_info_without_a_count_falls_back_to_top_level_page_count():
+    client, _, _ = make_client(envelope(page_info={"page_count": None}, page_count=2))
+    assert list(client.paginate("tickets/")) == [1, 2]
+
+
+def test_bad_top_level_page_count_is_not_read_past_a_page_info_count():
+    client, _, _ = make_client(envelope(page_info={"page_count": 2}, page_count="x"))
+    assert list(client.paginate("tickets/")) == [1, 2]
+
+
+ROWLESS = [{}, {"data": None}, {"data": {"id": 1}}, {"data": "x"}, {"rows": None}]
+
+
+@pytest.mark.parametrize("walk", WALKS)
+@pytest.mark.parametrize("rows", ROWLESS)
+@pytest.mark.parametrize("count", [{"page_info": {"page_count": 3}}, {"page_count": 2.0}])
+def test_page_without_a_row_list_that_reports_more_pages_is_a_structured_error(walk, rows, count):
+    client, requests, _ = make_client(always(200, json={**rows, **count}))
+    with pytest.raises(HfoxError) as exc:
+        list(getattr(client, walk)("tickets/", page_limit=1))
+    assert type(exc.value) is HfoxError
+    assert exc.value.to_dict() == rows_error(3 if "page_info" in count else 2)
+    assert len(requests) == 1
+
+
+@pytest.mark.parametrize("walk", WALKS)
+@pytest.mark.parametrize(
+    ("body", "field"),
+    [
+        ({"data": {"id": 1}, "page_info": "x"}, "page_info"),
+        ({"page_count": "x"}, "page_count"),
+        ({"data": None, "page_info": {"page_count": "3"}}, "page_count"),
+    ],
+)
+def test_page_without_a_row_list_still_has_its_envelope_checked(walk, body, field):
+    client, requests, _ = make_client(always(200, json=body))
+    with pytest.raises(HfoxError) as exc:
+        list(getattr(client, walk)("tickets/"))
+    assert exc.value.to_dict() == page_error(field)
+    assert len(requests) == 1
+
+
+def test_page_without_a_row_list_is_reported_after_it_is_yielded():
+    body = {"page_info": {"page_count": 3}, "data": None}
+    client, _, _ = make_client(always(200, json=body))
+    walk = client.paginate_pages("tickets/")
+    assert next(walk) == body
+    with pytest.raises(HfoxError):
+        next(walk)
+
+
+@pytest.mark.parametrize(
+    ("body", "records"),
+    [
+        ({"id": 1}, []),
+        ({"data": {"id": 1}}, [{"id": 1}]),
+        ({"data": None, "page_info": {"page_count": 1, "count": 0}}, []),
+        ({"page_info": {"page_count": 1, "count": 0}}, []),
+        ({"data": {"id": 1}, "page_count": 0}, [{"id": 1}]),
+        ({"rows": None, "page_count": 1.0}, []),
+        ([1, 2], [1, 2]),
+        ("text", []),
+    ],
+)
+def test_body_without_a_row_list_that_reports_no_more_pages_is_one_page(body, records):
+    client, requests, _ = make_client(always(200, json=body))
+    assert list(client.paginate_pages("tickets/")) == [body]
+    assert list(client.paginate("tickets/")) == records
+    assert len(requests) == 2
+
+
+def test_empty_body_is_one_page_without_rows():
+    client, requests, _ = make_client(always(200))
+    assert list(client.paginate_pages("tickets/")) == [None]
+    assert list(client.paginate("tickets/")) == []
+    assert len(requests) == 2
+
+
+# -- one page, checked like a walk -----------------------------------------------
+def test_get_page_returns_the_body_and_sends_the_params_as_given():
+    body = {"page_info": {"page_count": 3}, "data": [1]}
+    client, requests, _ = make_client(always(200, json=body))
+    assert client.get_page("tickets/", params={"size": 5, "page": 2}) == body
+    assert dict(requests[0].url.params) == {"size": "5", "page": "2"}
+    assert len(requests) == 1
+
+
+def test_get_page_reads_rows_under_a_custom_root_key():
+    body = {"page_info": {"page_count": 3}, "items": [1]}
+    client, _, _ = make_client(always(200, json=body))
+    assert client.get_page("things/", root_key="items") == body
+    with pytest.raises(HfoxError) as exc:
+        client.get_page("things/")
+    assert exc.value.to_dict() == rows_error(3, "things/")
+
+
+BAD_PAGES = [
+    ({"data": [1], "page_info": [1]}, "page_info"),
+    ({"data": [1], "page_info": {"page_count": "2"}}, "page_count"),
+    ({"data": [1], "page_count": -1}, "page_count"),
+    ({"page_info": {"page_count": 3}}, "rows"),
+    ({"page_info": {"page_count": 3}, "data": None}, "rows"),
+]
+
+
+def bad_page_error(field, path="tickets/"):
+    return rows_error(3, path) if field == "rows" else page_error(field, path)
+
+
+@pytest.mark.parametrize(("body", "field"), BAD_PAGES)
+def test_get_page_applies_the_walks_envelope_check(body, field):
+    client, requests, _ = make_client(always(200, json=body))
+    with pytest.raises(HfoxError) as exc:
+        client.get_page("tickets/")
+    assert type(exc.value) is HfoxError
+    assert exc.value.to_dict() == bad_page_error(field)
+    assert len(requests) == 1
+
+
+@pytest.mark.parametrize("body", [{"id": 1}, {"data": {"id": 1}}, [1, 2], "text"])
+def test_get_page_returns_a_body_that_is_not_an_envelope(body):
+    client, _, _ = make_client(always(200, json=body))
+    assert client.get_page("tickets/") == body
+
+
+# -- the wrong shape through the CLI ---------------------------------------------
+def page_all_ctx(**kwargs):
+    config = Config(subdomain="acme", api_key="k", auth_code="c")
+    return AppContext(config=config, page_all=True, page_delay_ms=0, **kwargs)
+
+
+def one_page_ctx(**kwargs):
+    return AppContext(config=Config(subdomain="acme", api_key="k", auth_code="c"), **kwargs)
+
+
+@pytest.mark.parametrize(
+    ("extra", "field"),
+    [({"page_info": [1]}, "page_info"), ({"page_info": {"page_count": "2"}}, "page_count")],
+)
+def test_bad_envelope_is_an_ndjson_error_line_after_its_page(mock_api, capsys, extra, field):
+    captured = mock_api(envelope(**extra))
+    with pytest.raises(typer.Exit) as exc:
+        page_all_ctx().paginate("tickets/")
+    assert exc.value.exit_code == 5
+    page, error = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert page == {"data": [1], **extra}
+    assert error == page_error(field)
+    assert len(captured) == 1
+
+
+def test_bad_envelope_raises_before_any_row_in_other_formats(mock_api, capsys):
+    mock_api(envelope(page_info={"page_count": "2"}))
+    with pytest.raises(HfoxError) as exc:
+        page_all_ctx(fmt=OutputFormat.CSV).paginate("tickets/")
+    assert exc.value.to_dict() == page_error("page_count")
+    assert capsys.readouterr().out == ""
+
+
+def test_bad_envelope_through_app_is_one_json_error_and_exit_5(mock_api, monkeypatch, capsys):
+    mock_api(envelope(page_info="x"))
+    for key, value in (("SUBDOMAIN", "acme"), ("API_KEY", "k"), ("AUTH_CODE", "c")):
+        monkeypatch.setenv(f"HFOX_{key}", value)
+    monkeypatch.setattr(sys, "argv", ["hfox", "--page-all", "-f", "csv", "assets", "list"])
+    with pytest.raises(SystemExit) as exc:
+        main_mod.app()
+    assert exc.value.code == 5
+    assert json.loads(capsys.readouterr().out) == page_error("page_info", "assets/")
+
+
+@pytest.mark.parametrize("filters", [None, {"name": "x"}], ids=["unfiltered", "filtered"])
+def test_rowless_page_reporting_more_pages_is_an_ndjson_error_line_after_it(
+    mock_api, capsys, filters
+):
+    body = {"page_info": {"page_count": 3}, "data": None}
+    captured = mock_api(always(200, json=body))
+    with pytest.raises(typer.Exit) as exc:
+        page_all_ctx(page_limit=1).paginate("tickets/", filters=filters)
+    assert exc.value.exit_code == 5
+    out = capsys.readouterr()
+    page, error = [json.loads(line) for line in out.out.splitlines()]
+    assert page == ({**body, "data": []} if filters else body)
+    assert error == rows_error(3)
+    assert "--page-limit" not in out.err
+    assert len(captured) == 1
+
+
+def test_rowless_page_reporting_more_pages_raises_in_other_formats(mock_api, capsys):
+    mock_api(always(200, json={"page_info": {"page_count": 3}}))
+    with pytest.raises(HfoxError) as exc:
+        page_all_ctx(fmt=OutputFormat.CSV).paginate("tickets/", filters={"name": "x"})
+    assert exc.value.to_dict() == rows_error(3)
+    assert capsys.readouterr().out == ""
+
+
+# -- the wrong shape on a single page --------------------------------------------
+@pytest.mark.parametrize("fmt", list(OutputFormat))
+@pytest.mark.parametrize(("body", "field"), BAD_PAGES)
+def test_single_page_gets_the_walks_envelope_check(mock_api, capsys, fmt, body, field):
+    captured = mock_api(always(200, json=body))
+    with pytest.raises(HfoxError) as exc:
+        one_page_ctx(fmt=fmt).paginate("tickets/")
+    assert type(exc.value) is HfoxError
+    assert exc.value.to_dict() == bad_page_error(field)
+    assert capsys.readouterr().out == ""
+    assert len(captured) == 1
+
+
+@pytest.mark.parametrize("literal", [b"NaN", b"Infinity", b"1e999"])
+def test_single_page_with_a_page_count_that_is_not_finite_is_refused(mock_api, capsys, literal):
+    mock_api(raw_page_count(literal))
+    with pytest.raises(HfoxError) as exc:
+        one_page_ctx().paginate("tickets/")
+    assert exc.value.to_dict() == page_error("page_count")
+    assert capsys.readouterr().out == ""
+
+
+def test_single_page_is_checked_under_its_own_root_key(mock_api):
+    body = {"page_info": {"page_count": 3}, "items": [{"id": 1}]}
+    mock_api(always(200, json=body))
+    assert one_page_ctx().paginate("things/", root_key="items") == body
+    with pytest.raises(HfoxError) as exc:
+        one_page_ctx().paginate("things/")
+    assert exc.value.to_dict() == rows_error(3, "things/")
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"page_info": {"page_count": 3, "count": 9}, "data": [{"id": 1}]},
+        {"page_info": None, "page_count": 2.0, "data": []},
+        {"page_info": {"page_count": 1, "count": 0}},
+        {"data": {"id": 1}},
+        [{"id": 1}],
+    ],
+)
+def test_single_page_of_an_accepted_shape_is_returned_as_sent(mock_api, body):
+    mock_api(always(200, json=body))
+    assert one_page_ctx().paginate("tickets/") == body
+
+
+def test_single_page_dry_run_sends_nothing(mock_api, capsys):
+    captured = mock_api(always(200, json={"page_info": "x"}))
+    with pytest.raises(typer.Exit) as exc:
+        one_page_ctx(dry_run=True).paginate("tickets/")
+    assert exc.value.exit_code == 0
+    assert json.loads(capsys.readouterr().out)["dry_run"] is True
+    assert captured == []
+
+
+LISTINGS = [
+    (["tickets", "list"], "tickets/"),
+    (["contacts", "list"], "users/"),
+    (["assets", "list"], "assets/"),
+    (["assets", "types", "list"], "asset_types/"),
+    (["assets", "custom-fields", "list"], "asset_custom_fields/"),
+]
+
+
+@pytest.mark.parametrize(("command", "path"), LISTINGS)
+@pytest.mark.parametrize("fmt", ["json", "table"])
+def test_bad_single_page_through_app_is_one_json_error_and_exit_5(
+    mock_api, monkeypatch, capsys, command, path, fmt
+):
+    mock_api(envelope(page_info={"page_count": "2"}))
+    for key, value in (("SUBDOMAIN", "acme"), ("API_KEY", "k"), ("AUTH_CODE", "c")):
+        monkeypatch.setenv(f"HFOX_{key}", value)
+    monkeypatch.setattr(sys, "argv", ["hfox", "-f", fmt, *command, "--page", "1"])
+    with pytest.raises(SystemExit) as exc:
+        main_mod.app()
+    assert exc.value.code == 5
+    assert json.loads(capsys.readouterr().out) == page_error("page_count", path)

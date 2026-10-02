@@ -51,7 +51,7 @@ HFOX_API_KEY=... HFOX_AUTH_CODE=... hfox auth login --subdomain acme --email age
 ```
 
 Without a terminal, `auth login` does not prompt: it exits 3 when the subdomain, key or
-code is missing, and the error names the variable to set for each.
+code is missing or whitespace-only, and the error names the variable to set for each.
 
 The login JSON's `default_staff_id` is the value now stored. A login to a different
 subdomain, region or base URL removes a stored default unless `--email` sets one. An
@@ -77,8 +77,8 @@ takes a value refuses one starting with `-`, so `hfox --staff --dry-run ...` exi
 
 ## Look up ids first
 
-Commands take numeric ids. Get them from the read-only `system` verbs and `assets`
-sub-groups:
+Commands take numeric ids. An argument or flag that takes an id exits 3 for `0`, except
+`--staff-id`. Get the ids from the read-only `system` verbs and `assets` sub-groups:
 
 ```bash
 hfox system categories
@@ -159,7 +159,14 @@ A path must name a regular file. A directory, FIFO, device or process substituti
 - `--unassign` clears the assignee on `reply`, `note` and `update`, and leaves a created
   ticket unassigned. It cannot be combined with `--assignee` or `--attachment`.
 - Custom fields: `--cf <id>=<value>`, repeatable; `--cf '6=[3,4]'` sends a list of option
-  ids; `--cf-json '{"5": ""}'` sends values as given.
+  ids; `--cf-json '{"5": ""}'` sends values as given. A `null` value cannot be combined
+  with `--attachment`. A field given twice keeps the last value, and `007` names field 7.
+- An empty or whitespace-only value exits 3 on `--due-date`, `--created-at`,
+  `tickets create --phone`, `reply --subject`, `note --alert`, `move --note`, `--agents`,
+  `--ticket-attachments`, `contacts update --name` and `--email`, and `contacts groups create
+  --description` and `--domains`. An empty value clears on `contacts groups update
+  --description` and `--domains`, and `assets update --contact-ids ''` and
+  `--contact-group-ids ''` send an empty list.
 - `contacts create` and `create-bulk` edit the contact that already has that email and
   reset every custom field they do not send.
 
@@ -187,6 +194,11 @@ HappyFox does not document the `priorities` shape.
 With `--page-all`, JSON output is NDJSON: parse each line as one page. The walk stops at
 `--page-limit` pages (default 10), warns on stderr and still exits 0. Check stderr for that
 warning, or raise the limit, before treating the result as complete.
+
+Pass `--size 50` with `--page-all`; the default `--size` stops the walk at 100 rows.
+A page with a malformed `page_info` or `page_count`, or one that reports more than one page
+and holds no list of rows, exits 5 with `"type": "other"`, with or without `--page-all`. A
+walk it ends is incomplete.
 
 ## Exit codes and errors
 

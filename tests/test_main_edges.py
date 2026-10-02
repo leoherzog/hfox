@@ -169,6 +169,16 @@ def test_resolve_format_counts_none_and_empty_as_unset(unset):
     assert main_mod._resolve_format(None, Config(default_format=unset)) is OutputFormat.JSON
 
 
+@pytest.mark.parametrize("blank", ["", " ", "  ", "\t", "\n", " "], ids=repr)
+def test_resolve_format_counts_a_blank_flag_as_not_given(blank):
+    assert main_mod._resolve_format(blank, Config(default_format="table")) is OutputFormat.TABLE
+    assert main_mod._resolve_format(blank, Config(default_format=None)) is OutputFormat.JSON
+
+
+def test_resolve_format_keeps_a_padded_flag():
+    assert main_mod._resolve_format(" CSV ", Config(default_format="table")) is OutputFormat.CSV
+
+
 def test_version_is_reported_before_other_root_options_are_validated(run_app):
     code, out, _ = run_app("--page-limit", "0", "--version")
     assert (code, out) == (0, "hfox dev\n")
@@ -235,13 +245,34 @@ def test_http_client_is_closed_when_the_command_ends(monkeypatch, status):
 @pytest.mark.parametrize(
     "argv", [("system", "statuses"), ("--page-all", "tickets", "list")], ids=" ".join
 )
-def test_ctrl_c_during_a_request_exits_130_with_empty_stdout(run_app, mock_api, argv):
+def test_ctrl_c_during_the_first_request_exits_130_and_prints_nothing(run_app, mock_api, argv):
     def interrupted(request):
         raise KeyboardInterrupt
 
     mock_api(interrupted)
     code, out, _ = run_app(*argv)
     assert (code, out) == (130, "")
+
+
+# NDJSON pages already written stay on stdout; other formats print only after the walk.
+@pytest.mark.parametrize(
+    ("flags", "streamed"),
+    [((), '{"page_info":{"page_count":3},"data":[{"id":1}]}\n'), (("-f", "csv"), "")],
+    ids=["json", "csv"],
+)
+def test_ctrl_c_after_the_first_page_exits_130_and_prints_no_error_object(
+    run_app, mock_api, flags, streamed
+):
+    def handler(request):
+        page = int(request.url.params["page"])
+        if page > 1:
+            raise KeyboardInterrupt
+        return httpx.Response(200, json={"page_info": {"page_count": 3}, "data": [{"id": page}]})
+
+    requests = mock_api(handler)
+    code, out, err = run_app("--page-all", *flags, "tickets", "list")
+    assert [request.url.params["page"] for request in requests] == ["1", "2"]
+    assert (code, out, err) == (130, streamed, "")
 
 
 def _walk(command, path=()):

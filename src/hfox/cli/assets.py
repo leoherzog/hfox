@@ -12,6 +12,7 @@ from ._util import (
     compact,
     filter_help,
     parse_json,
+    require_ids,
     require_nonblank,
     split_csv_ints,
 )
@@ -52,12 +53,6 @@ def _check_name(name: str | None) -> None:
     require_nonblank(name, "--name")
     if len(name) > MAX_NAME_LENGTH:
         raise ValidationError(f"--name allows up to {MAX_NAME_LENGTH} characters.")
-
-
-def _check_id_lists(contact_ids: str | None, contact_group_ids: str | None) -> None:
-    for flag, raw in (("--contact-ids", contact_ids), ("--contact-group-ids", contact_group_ids)):
-        if raw is not None and not split_csv_ints(raw):
-            raise ValidationError(f"{flag} needs at least one id.")
 
 
 def _custom_fields(cf: list[str] | None, cf_json: str | None) -> dict | None:
@@ -121,15 +116,16 @@ def create_asset(
     obj = get_ctx(ctx)
     _check_name(name)
     require_nonblank(display_id, "--display-id")
-    _check_id_lists(contact_ids, contact_group_ids)
+    linked_contacts = require_ids(contact_ids, "--contact-ids")
+    linked_groups = require_ids(contact_group_ids, "--contact-group-ids")
     created_by = obj.require_staff_id(staff_id, staff)
     body = compact(
         {
             "name": name,
             "display_id": display_id,
             "created_by": created_by,
-            "contact_ids": split_csv_ints(contact_ids),
-            "contact_group_ids": split_csv_ints(contact_group_ids),
+            "contact_ids": linked_contacts,
+            "contact_group_ids": linked_groups,
             "contacts": _parse_new_contacts(new_contact_json),
             "custom_fields": _custom_fields(cf, cf_json),
         }

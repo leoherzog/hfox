@@ -3,13 +3,16 @@ errors.
 """
 
 import json
+import re
 import subprocess
 import sys
 
 import httpx
+import pytest
 from conftest import subprocess_env
 from typer.testing import CliRunner
 
+from hfox.cli import main
 from hfox.cli.main import cli
 from hfox.core.errors import CancelledError, ValidationError
 
@@ -92,7 +95,9 @@ def test_list_table_format_unwraps_rows(mock_api):
     mock_api(ok_json(body))
     result = run("-f", "table", "tickets", "list")
     assert result.exit_code == 0
-    assert "subject" in result.stdout or "Hi" in result.stdout
+    # The record's fields are the columns; the envelope would render page_info and data rows.
+    lines = [re.findall(r"\w+", line) for line in result.stdout.splitlines()]
+    assert [words for words in lines if words] == [["id", "subject"], ["9", "Hi"]]
 
 
 def test_list_minify_omitted_when_false(mock_api):
@@ -204,9 +209,9 @@ def test_create_existing_client_no_name_email(mock_api):
     body = json.loads(captured[0].content)
     assert body["client"] == 55
     assert body["html"] == "<p>hi</p>"
-    # No display_id in response -> no success line, just rendered object.
-    out = json.loads(result.stdout)
-    assert out["id"] == 8
+    # A response without a display_id is rendered with no success line.
+    assert json.loads(result.stdout) == {"id": 8}
+    assert result.stderr == ""
 
 
 # -- create: validation branches ----------------------------
@@ -519,10 +524,18 @@ def test_delete_without_terminal_requires_yes(mock_api):
 
 
 # -- an API error fails the command -----------------------------------------
-def test_get_api_error_exit_code(mock_api):
-    def handler(request):
-        return httpx.Response(404, json={"error": "Ticket not found"})
-
-    mock_api(handler)
-    result = run("tickets", "get", "999999")
-    assert result.exit_code in (1, 4)
+@pytest.mark.parametrize(
+    ("status", "slug", "code"), [(404, "not_found", 4), (400, "api", 1)], ids=["404", "400"]
+)
+def test_get_api_error_exit_code(mock_api, monkeypatch, capsys, status, slug, code):
+    captured = mock_api(lambda request: httpx.Response(status, json={"error": "No such ticket"}))
+    for key, value in ENV.items():
+        monkeypatch.setenv(key, value)
+    # CliRunner reports 1 for any exception; main.app() maps the error to its exit code.
+    monkeypatch.setattr(sys, "argv", ["hfox", "tickets", "get", "999999"])
+    with pytest.raises(SystemExit) as exc:
+        main.app()
+    payload = json.loads(capsys.readouterr().out)
+    assert exc.value.code == code
+    assert (payload["type"], payload["exit_code"]) == (slug, code)
+    assert [request.url.path for request in captured] == ["/api/1.1/json/ticket/999999/"]

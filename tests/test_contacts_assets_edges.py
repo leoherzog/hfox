@@ -90,6 +90,12 @@ def test_groups_membership_refuses_a_blank_contact_list(mock_api, verb, blank):
     refused(mock_api, "contacts", "groups", verb, "3", "--contacts", blank, match="contact id")
 
 
+@pytest.mark.parametrize("verb", ["add-contacts", "remove-contacts"])
+@pytest.mark.parametrize("ids", ["0", "4,0", "00"])
+def test_groups_membership_refuses_a_zero_contact_id(mock_api, verb, ids):
+    refused(mock_api, "contacts", "groups", verb, "3", "--contacts", ids, match="at least 1")
+
+
 # -- contact phones ----------------------------------------------------------
 @pytest.mark.parametrize("phone_type", ["m", "h", "o"])
 def test_contacts_create_accepts_the_documented_phone_type(phone_type):
@@ -134,7 +140,80 @@ def test_contacts_update_phone_options_need_a_number(mock_api, extra):
     )
 
 
+# -- optional one-line values ------------------------------------------------
+_EDIT = ("contacts", "update", "12", "--cf", "5=Gold")
+_GROUP = ("contacts", "groups", "create", "--name", "VIPs")
+BLANK_VALUES = [
+    (_EDIT, "--name", ""),
+    (_EDIT, "--name", " \t"),
+    (_EDIT, "--email", ""),
+    (_EDIT, "--email", "  "),
+    (_GROUP, "--description", ""),
+    (_GROUP, "--description", "  "),
+    (_GROUP, "--domains", ""),
+    (_GROUP, "--domains", "  "),
+    (_GROUP, "--domains", " , "),
+]
+
+
+@pytest.mark.parametrize("dry_run", [(), ("--dry-run",)], ids=["live", "dry-run"])
+@pytest.mark.parametrize(
+    "argv, flag, blank",
+    BLANK_VALUES,
+    ids=[f"{' '.join(argv[1:-2])} {flag} {blank!r}" for argv, flag, blank in BLANK_VALUES],
+)
+def test_contacts_blank_one_line_value_is_refused(mock_api, argv, flag, blank, dry_run):
+    message = refused(mock_api, *dry_run, *argv, flag, blank, match=flag)
+    assert message == f"{flag} must not be blank."
+
+
+def test_contacts_update_sends_name_and_email_without_outer_whitespace():
+    p = dry("contacts", "update", "12", "--name", "  Jane Doe ", "--email", " j@x.org\t")
+    assert p["body"] == {"name": "Jane Doe", "email": "j@x.org"}
+
+
+def test_groups_create_sends_description_without_outer_whitespace():
+    p = dry(*_GROUP, "--description", "  key accounts ", "--domains", " a.com , b.com ")
+    assert p["body"] == {
+        "name": "VIPs",
+        "description": "key accounts",
+        "tagged_domains": "a.com,b.com",
+    }
+
+
+@pytest.mark.parametrize(
+    "description, sent", [("", ""), ("  ", ""), ("  key accounts ", "key accounts")]
+)
+def test_groups_update_blank_description_clears(description, sent):
+    p = dry("contacts", "groups", "update", "3", "--description", description)
+    assert p["method"] == "POST"
+    assert p["url"].endswith("/contact_group/3/")
+    assert p["body"] == {"description": sent}
+
+
+def test_groups_update_help_says_a_blank_description_clears():
+    result = run("contacts", "groups", "update", "--help", env_extra={"COLUMNS": "200"})
+    assert result.exit_code == 0, result.output
+    assert "New description; '' clears it." in result.stdout
+
+
 # -- contact custom fields ---------------------------------------------------
+@pytest.mark.parametrize(
+    "argv, flag, typed, key",
+    [
+        (("create", "--name", "J", "--email", "j@x.org"), "--cf", "007", "c-cf-7"),
+        (("create", "--name", "J", "--email", "j@x.org"), "--cf", "c-cf-007", "c-cf-7"),
+        (("update", "12"), "--cf", "007", "c-cf-7"),
+        (("update", "12"), "--cf", "c-cf-007", "c-cf-7"),
+    ],
+)
+def test_contacts_custom_field_id_is_sent_without_leading_zeros(argv, flag, typed, key):
+    for option in ((flag, f"{typed}=x"), (f"{flag}-json", json.dumps({typed: "x"}))):
+        body = dry("contacts", *argv, *option)["body"]
+        assert {name: value for name, value in body.items() if "cf-" in name} == {key: "x"}
+
+
+
 @pytest.mark.parametrize(
     "flag, value, body",
     [
@@ -299,6 +378,37 @@ def test_assets_blank_new_contact_json_is_omitted(blank):
 )
 def test_assets_invalid_value_is_refused_naming_its_flag(mock_api, argv, flag):
     refused(mock_api, *argv, match=flag)
+
+
+@pytest.mark.parametrize("argv", [_ASSET, ("assets", "update", "10")], ids=["create", "update"])
+@pytest.mark.parametrize(
+    "option",
+    [
+        ("--contact-ids", "0"),
+        ("--contact-ids", "5,0"),
+        ("--contact-group-ids", "00"),
+        ("--cf", "0=x"),
+        ("--cf-json", '{"0": "x"}'),
+    ],
+    ids=lambda option: " ".join(option),
+)
+def test_assets_refuse_a_zero_id(mock_api, argv, option):
+    refused(mock_api, *argv, *option, match="at least 1")
+
+
+@pytest.mark.parametrize("argv", [_ASSET, ("assets", "update", "10")], ids=["create", "update"])
+@pytest.mark.parametrize(
+    "options, fields",
+    [
+        (("--cf", "007=x"), {"7": "x"}),
+        (("--cf-json", '{"0100": "x"}'), {"100": "x"}),
+        (("--cf", "7=a", "--cf", "007=b"), {"7": "b"}),
+        (("--cf", "007=a", "--cf-json", '{"7": "b"}'), {"7": "b"}),
+    ],
+    ids=["--cf", "--cf-json", "given twice", "across flags"],
+)
+def test_assets_custom_field_id_is_sent_without_leading_zeros(argv, options, fields):
+    assert dry(*argv, *options)["body"]["custom_fields"] == fields
 
 
 # -- asset staff identity ----------------------------------------------------

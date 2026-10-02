@@ -74,6 +74,76 @@ def test_list_blank_fields_is_omitted():
     assert p["url"].endswith("/tickets/?page=1&size=10")
 
 
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_list_blank_status_and_sort_are_omitted(blank):
+    p = preview("tickets", "list", "--status", blank, "--sort", blank)
+    assert p["method"] == "GET"
+    assert p["url"].endswith("/tickets/?page=1&size=10")
+    assert p["params"] == {"page": 1, "size": 10}
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_list_blank_status_with_a_query_defaults_to_all(blank):
+    p = preview("tickets", "list", "--status", blank, "-q", "printer")
+    assert p["params"] == {"status": "_all", "q": "printer", "page": 1, "size": 10}
+
+
+@pytest.mark.parametrize("status", ["_all", "_pending", "3"])
+def test_list_status_is_sent_as_typed(status):
+    p = preview("tickets", "list", "--status", status, "--sort", "priorityd")
+    assert p["params"] == {"status": status, "sort": "priorityd", "page": 1, "size": 10}
+
+
+@pytest.mark.parametrize(
+    ("status", "sent"),
+    [(" 3 ", "3"), ("\t_pending\n", "_pending"), (" 3 , 4 ", "3,4"), ("3,,4,", "3,4")],
+    ids=["id", "keyword", "padded entries", "blank entries"],
+)
+def test_list_status_is_sent_without_whitespace_around_its_entries(status, sent):
+    p = preview("tickets", "list", "--status", status)
+    assert p["params"] == {"status": sent, "page": 1, "size": 10}
+    assert f"status={sent.replace(',', '%2C')}&" in p["url"]
+
+
+def test_list_status_holding_only_commas_is_omitted():
+    p = preview("tickets", "list", "--status", " , ")
+    assert p["params"] == {"page": 1, "size": 10}
+
+
+def test_list_sort_and_query_are_sent_without_outer_whitespace():
+    p = preview("tickets", "list", "--sort", " updated\t", "-q", '  tag:"a  b" printer \n')
+    assert p["params"] == {
+        "status": "_all",
+        "q": 'tag:"a  b" printer',
+        "sort": "updated",
+        "page": 1,
+        "size": 10,
+    }
+
+
+def test_list_fields_are_sent_without_whitespace_around_its_entries():
+    p = preview("tickets", "list", "--fields", " id , subject ,")
+    assert p["params"] == {"fields": "id,subject", "page": 1, "size": 10}
+
+
+@pytest.mark.parametrize("status", ["3,0", " 0 , 4", "_all, -1"])
+def test_list_status_entry_below_1_is_rejected(status):
+    result = runner.invoke(cli, ["--dry-run", "tickets", "list", "--status", status], env=ENV)
+    assert isinstance(result.exception, ValidationError), result.exception
+    assert "--status" in str(result.exception)
+    assert "at least 1" in str(result.exception)
+    assert result.stdout == ""
+
+
+@pytest.mark.parametrize("status", ["0", "-3", "00"])
+def test_list_status_id_below_1_is_rejected(status):
+    result = runner.invoke(cli, ["--dry-run", "tickets", "list", "--status", status], env=ENV)
+    assert isinstance(result.exception, ValidationError), result.exception
+    assert "--status" in str(result.exception)
+    assert "at least 1" in str(result.exception)
+    assert result.stdout == ""
+
+
 def test_list_size_50_is_allowed():
     p = preview("tickets", "list", "--size", "50")
     assert p["params"]["size"] == 50
@@ -118,6 +188,22 @@ def test_per_ticket_verbs_reject_non_numeric_id(verb, ticket_id):
     result = runner.invoke(cli, args, env=ENV)
     assert isinstance(result.exception, ValidationError), result.exception
     assert result.stdout == ""
+
+
+@pytest.mark.parametrize("verb", VERBS, ids=[v[0] for v in VERBS])
+@pytest.mark.parametrize("ticket_id", ["0", "000"])
+def test_per_ticket_verbs_reject_a_zero_id(verb, ticket_id):
+    args = ["--dry-run", "tickets", verb[0], ticket_id, *verb[1:]]
+    result = runner.invoke(cli, args, env=ENV)
+    assert isinstance(result.exception, ValidationError), result.exception
+    assert "at least 1" in str(result.exception)
+    assert result.stdout == ""
+
+
+@pytest.mark.parametrize("verb", VERBS, ids=[v[0] for v in VERBS])
+def test_per_ticket_verbs_send_the_number_without_leading_zeros(verb):
+    p = preview("tickets", verb[0], "007", *verb[1:])
+    assert "/ticket/7/" in p["url"]
 
 
 def test_display_id_exits_3_through_entry_point():

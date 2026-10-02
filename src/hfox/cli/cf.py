@@ -44,13 +44,21 @@ def coerce_value(raw: str) -> Any:
 
 
 def _field_key(key: str, prefix: str, allowed: tuple[str, ...] | None) -> str:
-    """Map a numeric id to prefix+id; pass through a key carrying an allowed prefix."""
-    if _DIGITS.fullmatch(key):
-        return f"{prefix}{key}"
+    """Map a numeric id to prefix+id and keep an allowed prefix a key carries.
+
+    The id loses its leading zeros, so every spelling of a field yields one key. Raises
+    ValidationError for any other key and for an id of zero.
+    """
     prefixes = [p for p in ((prefix,) if allowed is None else allowed) if p]
-    for p in prefixes:
-        if key.startswith(p) and _DIGITS.fullmatch(key[len(p):]):
-            return key
+    for p in ("", *prefixes):
+        digits = key[len(p):]
+        if key.startswith(p) and _DIGITS.fullmatch(digits):
+            number = digits.lstrip("0")
+            if not number:
+                raise ValidationError(
+                    f"Invalid custom-field key '{key}'; a field id is at least 1."
+                )
+            return f"{p or prefix}{number}"
     forms = ["<id>", *(f"{p}<id>" for p in prefixes)]
     raise ValidationError(
         f"Invalid custom-field key '{key}'; expected {' or '.join(forms)} with a numeric id."
@@ -66,7 +74,8 @@ def parse_cf_options(
 ) -> dict[str, Any]:
     """Parse repeated "<id>=<value>" options into {prefix+id: coerced value}.
 
-    Keys already carrying a prefix in `allowed` (default: `prefix` alone) pass through.
+    A key already carrying a prefix in `allowed` (default: `prefix` alone) keeps it. Ids lose
+    their leading zeros, and a field given twice keeps its last value.
     Raises ValidationError on a malformed item, an invalid key or an all-blank value;
     the last names `json_flag`, the caller's flag that can send an empty value.
     """

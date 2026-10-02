@@ -54,6 +54,16 @@ def rejected(*args):
     return str(result.exception)
 
 
+def run_main(monkeypatch, capsys, *argv):
+    """Run main.app() in process; return (exit code, parsed stdout)."""
+    for key, value in ENV.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(sys, "argv", ["hfox", *argv])
+    with pytest.raises(SystemExit) as exc:
+        main.app()
+    return exc.value.code, json.loads(capsys.readouterr().out)
+
+
 # -- reply / note: property-only updates and --unassign ---------------------
 def test_reply_property_only_update():
     p = preview(
@@ -101,12 +111,14 @@ def test_attachment_alone_is_an_update(verb, path, tmp_path):
 
 
 @pytest.mark.parametrize("verb", ["reply", "note"])
-def test_null_value_rejects_attachment(verb, tmp_path):
+@pytest.mark.parametrize("flag", ["--cf-json", "--contact-cf-json"])
+def test_null_value_rejects_attachment(verb, flag, tmp_path):
     f = tmp_path / "a.txt"
     f.write_text("x")
-    assert "--attachment" in rejected(
-        "--dry-run", "tickets", verb, "5", "--cf-json", '{"3": null}', "--attachment", str(f)
+    message = rejected(
+        "--dry-run", "tickets", verb, "5", flag, '{"3": null}', "--attachment", str(f)
     )
+    assert message == "A null value cannot be combined with --attachment."
 
 
 @pytest.mark.parametrize("verb", ["reply", "note"])
@@ -175,6 +187,43 @@ def test_create_blank_subject_is_rejected():
         "--dry-run", "tickets", "create", "--subject", "  ", "--category", "3",
         "--client", "5", "--text", "body",
     )
+
+
+@pytest.mark.parametrize("flag", ["--cf-json", "--contact-cf-json"])
+def test_create_null_value_rejects_attachment(flag, tmp_path):
+    f = tmp_path / "a.txt"
+    f.write_text("x")
+    message = rejected(*CREATE, flag, '{"5": null}', "--attachment", str(f))
+    assert message == "A null value cannot be combined with --attachment."
+
+
+@pytest.mark.parametrize("flag", ["--cf-json", "--contact-cf-json"])
+def test_create_null_value_rejects_attachment_before_reading_it(flag, tmp_path):
+    message = rejected(*CREATE, flag, '{"5": null}', "--attachment", str(tmp_path / "gone.txt"))
+    assert message == "A null value cannot be combined with --attachment."
+
+
+@pytest.mark.parametrize("value", ["0", "-1"])
+@pytest.mark.parametrize(
+    "contact", [[], ["--name", "Han", "--email", "h@x.org"]], ids=["alone", "with-name-and-email"]
+)
+def test_create_client_below_1_exits_3(monkeypatch, capsys, value, contact):
+    code, payload = run_main(
+        monkeypatch, capsys, "--dry-run", "tickets", "create", "--subject", "S",
+        "--category", "3", "--text", "body", "--client", value, *contact,
+    )
+    assert code == 3
+    assert (payload["type"], payload["exit_code"]) == ("validation", 3)
+    assert payload["error"].startswith("Invalid value for '--client'")
+    assert "dry_run" not in payload
+
+
+def test_create_client_1_is_sent():
+    p = preview(
+        "--dry-run", "tickets", "create", "--subject", "S", "--category", "3",
+        "--client", "1", "--text", "body",
+    )
+    assert p["body"] == {"client": 1, "subject": "S", "text": "body", "category": 3}
 
 
 # -- create-bulk: partial failure -------------------------------------------
@@ -543,3 +592,96 @@ def test_attachment_holding_credentials_is_rejected(tmp_path):
     assert isinstance(result.exception, ValidationError), result.exception
     assert "contains HappyFox credentials" in str(result.exception)
     assert "secret-api-key-123" not in str(result.exception)
+
+
+# -- id, count and duration bounds --------------------------------------------
+_NEW = ("tickets", "create", "--subject", "S", "--client", "5", "--text", "b")
+_NEW_IN_3 = (*_NEW, "--category", "3")
+_REPLY = ("tickets", "reply", "5", "--text", "b")
+_NOTE = ("tickets", "note", "5", "--text", "b")
+_UPDATE = ("tickets", "update", "5", "--tags", "t")
+_MOVE = ("tickets", "move", "5")
+
+# (command that is complete once the flag has a value, id flag, body key)
+ID_FLAGS = [
+    (_NEW, "--category", "category"),
+    (_NEW_IN_3, "--priority", "priority"),
+    (_NEW_IN_3, "--assignee", "assignee"),
+    (_REPLY, "--status", "status"),
+    (_REPLY, "--priority", "priority"),
+    (_REPLY, "--assignee", "assignee"),
+    (_REPLY, "--last-staff-message", "last_staff_message"),
+    (_REPLY, "--parent-update", "parent_update"),
+    (_NOTE, "--status", "status"),
+    (_NOTE, "--priority", "priority"),
+    (_NOTE, "--assignee", "assignee"),
+    (_UPDATE, "--status", "status"),
+    (_UPDATE, "--priority", "priority"),
+    (_UPDATE, "--assignee", "assignee"),
+    (("tickets", "user-reply", "5", "--text", "b"), "--user", "user"),
+    (_MOVE, "--to-category", "target_category_id"),
+    ((*_MOVE, "--to-category", "2"), "--assign-to", "assign_to"),
+]
+ID_FLAG_IDS = [f"{argv[1]} {flag}" for argv, flag, _ in ID_FLAGS]
+TIME_SPENT = [_REPLY, _NOTE, _UPDATE]
+TIME_SPENT_IDS = ["reply", "note", "update"]
+
+
+@pytest.mark.parametrize("value", ["0", "-1"])
+@pytest.mark.parametrize(("argv", "flag", "key"), ID_FLAGS, ids=ID_FLAG_IDS)
+def test_id_option_below_1_exits_3(monkeypatch, capsys, argv, flag, key, value):
+    code, payload = run_main(monkeypatch, capsys, "--dry-run", *argv, flag, value)
+    assert code == 3
+    assert (payload["type"], payload["exit_code"]) == ("validation", 3)
+    assert payload["error"].startswith(f"Invalid value for '{flag}'")
+    assert "dry_run" not in payload
+
+
+@pytest.mark.parametrize(("argv", "flag", "key"), ID_FLAGS, ids=ID_FLAG_IDS)
+def test_id_option_of_1_is_sent(argv, flag, key):
+    assert preview("--dry-run", *argv, flag, "1")["body"][key] == 1
+
+
+@pytest.mark.parametrize("argv", TIME_SPENT, ids=TIME_SPENT_IDS)
+def test_negative_time_spent_exits_3(monkeypatch, capsys, argv):
+    code, payload = run_main(monkeypatch, capsys, "--dry-run", *argv, "--time-spent", "-1")
+    assert code == 3
+    assert (payload["type"], payload["exit_code"]) == ("validation", 3)
+    assert payload["error"].startswith("Invalid value for '--time-spent'")
+    assert "dry_run" not in payload
+
+
+@pytest.mark.parametrize("argv", TIME_SPENT, ids=TIME_SPENT_IDS)
+def test_time_spent_of_0_is_sent(argv):
+    assert preview("--dry-run", *argv, "--time-spent", "0")["body"]["time_spent"] == 0
+
+
+@pytest.mark.parametrize("value", ["0", "3,0", "00"])
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("tickets", "subscribe", "5", "--agents"),
+        ("tickets", "forward", "5", "--to", "a@x.org", "--subject", "s", "--message", "m",
+         "--ticket-attachments"),
+    ],
+    ids=["subscribe --agents", "forward --ticket-attachments"],
+)
+def test_id_list_with_a_zero_is_rejected(argv, value):
+    assert "at least 1" in rejected("--dry-run", *argv, value)
+
+
+def test_id_list_with_an_overlong_id_is_a_validation_error():
+    message = rejected("--dry-run", "tickets", "subscribe", "5", "--agents", "9" * 5000)
+    assert message == "Expected comma-separated ids; one has too many digits."
+
+
+@pytest.mark.parametrize("value", ["0", "00", "-4", "-0", "+0", " 0 "])
+def test_note_alert_id_below_1_is_rejected(value):
+    message = rejected("--dry-run", *_NOTE, "--alert", value)
+    assert "--alert" in message
+    assert "at least 1" in message
+
+
+@pytest.mark.parametrize("value", ["s", "c", "7"])
+def test_note_alert_is_sent_as_typed(value):
+    assert preview("--dry-run", *_NOTE, "--alert", value)["body"]["alert"] == value

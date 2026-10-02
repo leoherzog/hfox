@@ -1,5 +1,6 @@
 """`hfox auth` edge cases: login values, the login target, stored files, --quiet, --config-dir."""
 
+import base64
 import json
 import os
 import stat
@@ -119,8 +120,21 @@ def test_login_prompts_never_echo_the_secrets(mock_api, cfg_dir, tty):
         (SECRETS, {"HFOX_SUBDOMAIN": "  "}, "--subdomain", "HFOX_SUBDOMAIN"),
         (["--subdomain", "acme", "--api-key", API_KEY, "--auth-code", ""], {},
          "--auth-code", "HFOX_AUTH_CODE"),
+        (["--subdomain", "acme", "--api-key", " \t", "--auth-code", AUTH_CODE], {},
+         "--api-key", "HFOX_API_KEY"),
+        (["--subdomain", "acme", "--auth-code", AUTH_CODE], {"HFOX_API_KEY": "  "},
+         "--api-key", "HFOX_API_KEY"),
+        (["--subdomain", "acme", "--api-key", API_KEY], {"HFOX_AUTH_CODE": "  "},
+         "--auth-code", "HFOX_AUTH_CODE"),
     ],
-    ids=["blank --subdomain", "blank HFOX_SUBDOMAIN", "empty --auth-code"],
+    ids=[
+        "blank --subdomain",
+        "blank HFOX_SUBDOMAIN",
+        "empty --auth-code",
+        "blank --api-key",
+        "blank HFOX_API_KEY",
+        "blank HFOX_AUTH_CODE",
+    ],
 )
 def test_login_blank_value_without_tty_counts_as_missing(
     monkeypatch, cfg_dir, argv, env, flag, variable
@@ -132,6 +146,21 @@ def test_login_blank_value_without_tty_counts_as_missing(
     assert flag in message
     assert variable in message
     assert_nothing_saved(cfg_dir)
+
+
+def test_login_prompts_for_secrets_that_are_blank_in_the_environment(mock_api, cfg_dir, tty):
+    requests = mock_api(staff_ok())
+    result = runner.invoke(
+        cli,
+        ["auth", "login", "--subdomain", "acme", "--region", "us"],
+        env={"HFOX_API_KEY": "  ", "HFOX_AUTH_CODE": "\t"},
+        input=f"{API_KEY}\n{AUTH_CODE}\n",
+    )
+    assert result.exit_code == 0, result.stderr
+    sent = base64.b64decode(requests[0].headers["authorization"].removeprefix("Basic "))
+    assert sent.decode() == f"{API_KEY}:{AUTH_CODE}"
+    token = json.loads((cfg_dir / "token.json").read_text(encoding="utf-8"))
+    assert (token["api_key"], token["auth_code"]) == (API_KEY, AUTH_CODE)
 
 
 @pytest.mark.parametrize(
@@ -175,6 +204,188 @@ def test_login_validates_env_and_prompted_values_under_a_base_url_override(
     assert isinstance(result.exception, ValidationError)
     assert named in str(result.exception)
     assert_nothing_saved(cfg_dir)
+
+
+@pytest.mark.parametrize(
+    ("argv", "env", "typed"),
+    [
+        (["--subdomain", " acme "], {}, ""),
+        ([], {"HFOX_SUBDOMAIN": " acme "}, ""),
+        ([], {}, " acme \n"),
+    ],
+    ids=["--subdomain", "HFOX_SUBDOMAIN", "prompt"],
+)
+def test_login_saves_and_renders_the_subdomain_without_outer_spaces(
+    mock_api, cfg_dir, tty, argv, env, typed
+):
+    requests = mock_api(staff_ok())
+    result = runner.invoke(
+        cli, ["auth", "login", *argv, "--region", "us", *SECRETS], env=env, input=typed
+    )
+    assert result.exit_code == 0, result.stderr
+    assert requests[0].url.host == "acme.happyfox.com"
+    assert json.loads(result.stdout)["subdomain"] == "acme"
+    token = json.loads((cfg_dir / "token.json").read_text(encoding="utf-8"))
+    assert token["subdomain"] == "acme"
+    assert 'subdomain = "acme"' in read_config(cfg_dir)
+    assert json.loads(runner.invoke(cli, ["auth", "status"]).stdout)["subdomain"] == "acme"
+
+
+def test_login_under_a_stored_base_url_saves_the_stripped_subdomain(mock_api, cfg_dir):
+    saved(cfg_dir, base_url="https://gw.internal")
+    write_config(cfg_dir, 'subdomain = "acme"\nregion = "us"\ndefault_staff_id = 7\n')
+    mock_api(staff_ok())
+    result = runner.invoke(cli, login_as(" acme "))
+    assert result.exit_code == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert (payload["subdomain"], payload["default_staff_id"]) == ("acme", 7)
+    assert "The stored base URL https://gw.internal overrides --subdomain" in result.stderr
+    token = json.loads((cfg_dir / "token.json").read_text(encoding="utf-8"))
+    assert (token["subdomain"], token["base_url"]) == ("acme", "https://gw.internal")
+
+
+def sent_credentials(request):
+    header = request.headers["authorization"].removeprefix("Basic ")
+    return base64.b64decode(header).decode()
+
+
+@pytest.mark.parametrize(
+    ("argv", "env", "typed"),
+    [
+        (["--api-key", f" {API_KEY} ", "--auth-code", f"\t{AUTH_CODE}"], {}, ""),
+        ([], {"HFOX_API_KEY": f" {API_KEY} ", "HFOX_AUTH_CODE": f"{AUTH_CODE}  "}, ""),
+        ([], {}, f"  {API_KEY} \n {AUTH_CODE}\t\n"),
+    ],
+    ids=["flags", "environment", "prompts"],
+)
+def test_login_strips_the_secrets_before_the_probe_and_the_save(
+    mock_api, cfg_dir, tty, argv, env, typed
+):
+    requests = mock_api(staff_ok())
+    result = runner.invoke(
+        cli, ["auth", "login", "--subdomain", "acme", "--region", "us", *argv],
+        env=env, input=typed,
+    )
+    assert result.exit_code == 0, result.stderr
+    assert sent_credentials(requests[0]) == f"{API_KEY}:{AUTH_CODE}"
+    token = json.loads((cfg_dir / "token.json").read_text(encoding="utf-8"))
+    assert (token["api_key"], token["auth_code"]) == (API_KEY, AUTH_CODE)
+
+
+@pytest.mark.parametrize(
+    ("argv", "typed", "message"),
+    [
+        (["--auth-code", AUTH_CODE], "   \n", "API key must not be blank."),
+        (["--api-key", API_KEY], "\t \n", "Auth code must not be blank."),
+    ],
+    ids=["api key", "auth code"],
+)
+def test_login_rejects_a_whitespace_only_secret_typed_at_the_prompt(
+    monkeypatch, cfg_dir, tty, argv, typed, message
+):
+    no_client(monkeypatch)
+    result = runner.invoke(
+        cli, ["auth", "login", "--subdomain", "acme", "--region", "us", *argv],
+        input=f"{typed}{API_KEY}\n",
+    )
+    assert isinstance(result.exception, ValidationError)
+    assert str(result.exception) == message
+    assert result.stdout == ""
+    assert_nothing_saved(cfg_dir)
+
+
+def test_login_blank_secret_at_the_prompt_is_refused_under_dry_run(monkeypatch, cfg_dir, tty):
+    no_client(monkeypatch)
+    result = runner.invoke(
+        cli,
+        ["--dry-run", "auth", "login", "--subdomain", "acme", "--region", "us",
+         "--auth-code", AUTH_CODE],
+        input="  \n",
+    )
+    assert isinstance(result.exception, ValidationError)
+    assert result.stdout == ""
+
+
+# -- host case -------------------------------------------------------------------
+@pytest.mark.parametrize(
+    ("written", "host", "url"),
+    [
+        ("ACME", "acme", "https://acme.happyfox.com/api/1.1/json"),
+        ("Support.Acme.COM", "support.acme.com", "https://support.acme.com/api/1.1/json"),
+    ],
+    ids=["subdomain", "custom-host"],
+)
+@pytest.mark.parametrize("source", ["flag", "environment", "prompt"])
+def test_login_saves_and_renders_the_host_in_lowercase(
+    mock_api, cfg_dir, tty, source, written, host, url
+):
+    argv = ["--subdomain", written] if source == "flag" else []
+    env = {"HFOX_SUBDOMAIN": written} if source == "environment" else {}
+    typed = f"{written}\n" if source == "prompt" else ""
+    requests = mock_api(staff_ok())
+    result = runner.invoke(
+        cli, ["auth", "login", *argv, "--region", "us", *SECRETS], env=env, input=typed
+    )
+    assert result.exit_code == 0, result.stderr
+    assert str(requests[0].url) == f"{url}/staff/"
+    payload = json.loads(result.stdout)
+    assert (payload["subdomain"], payload["base_url"]) == (host, url)
+    assert f"Authenticated to {url} " in result.stderr
+    token = json.loads((cfg_dir / "token.json").read_text(encoding="utf-8"))
+    assert token["subdomain"] == host
+    assert f'subdomain = "{host}"' in read_config(cfg_dir)
+
+
+def test_login_lowercases_the_base_url_host_and_keeps_the_path_case(
+    mock_api, cfg_dir, monkeypatch
+):
+    monkeypatch.setenv("HFOX_BASE_URL", "HTTPS://Proxy.Example/Tenant/HF/")
+    requests = mock_api(staff_ok())
+    result = runner.invoke(cli, LOGIN)
+    assert result.exit_code == 0, result.stderr
+    assert str(requests[0].url) == "https://proxy.example/Tenant/HF/api/1.1/json/staff/"
+    assert json.loads(result.stdout)["base_url"] == "https://proxy.example/Tenant/HF/api/1.1/json"
+    token = json.loads((cfg_dir / "token.json").read_text(encoding="utf-8"))
+    assert token["base_url"] == "https://proxy.example/Tenant/HF"
+
+
+@pytest.mark.parametrize(
+    ("filename", "text"),
+    [
+        ("token.json", '{"subdomain": " ACME ", "api_key": " KEY-SECRET-123 "}'),
+        ("config.toml", 'subdomain = " ACME "\n'),
+    ],
+    ids=["token.json", "config.toml"],
+)
+def test_status_renders_a_stored_host_stripped_and_lowercased(cfg_dir, filename, text):
+    cfg_dir.mkdir(parents=True)
+    (cfg_dir / filename).write_text(text, encoding="utf-8")
+    payload = json.loads(runner.invoke(cli, ["auth", "status"]).stdout)
+    assert payload["subdomain"] == "acme"
+    assert payload["base_url"] == "https://acme.happyfox.com/api/1.1/json"
+    if filename == "token.json":
+        assert payload["api_key"] == "KE••••••23"
+
+
+def test_status_renders_an_env_host_stripped_and_lowercased(cfg_dir):
+    env = {"HFOX_SUBDOMAIN": " Support.Acme.COM ", "HFOX_API_KEY": f" {API_KEY} ",
+           "HFOX_AUTH_CODE": f" {AUTH_CODE} "}
+    result = runner.invoke(cli, ["auth", "status"], env=env)
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["subdomain"] == "support.acme.com"
+    assert payload["base_url"] == "https://support.acme.com/api/1.1/json"
+    assert payload["api_key"] == "KE••••••23"
+
+
+def test_status_check_sends_the_stripped_credentials(mock_api, cfg_dir):
+    cfg_dir.mkdir(parents=True)
+    token = {"subdomain": "acme", "api_key": f" {API_KEY}\n", "auth_code": f" {AUTH_CODE} "}
+    (cfg_dir / "token.json").write_text(json.dumps(token), encoding="utf-8")
+    requests = mock_api(staff_ok())
+    result = runner.invoke(cli, ["auth", "status", "--check"])
+    assert result.exit_code == 0, result.stderr
+    assert sent_credentials(requests[0]) == f"{API_KEY}:{AUTH_CODE}"
 
 
 def test_login_short_flags_name_the_subdomain_and_email(mock_api, cfg_dir):
@@ -277,9 +488,11 @@ def test_login_through_env_base_url_replaces_an_unusable_stored_one(
         ({"base_url": "https://gw.internal"}, 'subdomain = "acme"\nregion = "us"\n',
          login_as("acme"), {"HFOX_BASE_URL": "https://gw.internal/"}),
         ({}, 'subdomain = "acme"\nregion = "us"\n', login_as(" acme "), {}),
+        ({"base_url": "https://gw.internal/Hf"}, 'subdomain = "acme"\nregion = "us"\n',
+         login_as("acme"), {"HFOX_BASE_URL": "HTTPS://GW.Internal/Hf"}),
     ],
     ids=["no stored region", "unnormalized stored base URL", "same base URL from env",
-         "spaces around the subdomain"],
+         "spaces around the subdomain", "base URL host in another case"],
 )
 def test_login_to_an_equivalent_target_keeps_the_default(
     mock_api, cfg_dir, token, config, argv, env
@@ -395,6 +608,20 @@ def test_config_dir_flag_beats_the_environment_for_every_auth_command(
     payload = json.loads(logout.stdout)
     assert (payload["removed"], payload["config_dir"]) == (True, str(other))
     assert not (other / "token.json").exists()
+
+
+@pytest.mark.parametrize("blank", ["  ", "\t"], ids=["spaces", "tab"])
+def test_status_reads_past_a_whitespace_only_config_dir(cfg_dir, tmp_path, blank):
+    saved(cfg_dir)
+    default = tmp_path / "home" / ".config" / "hfox"
+
+    from_flag = runner.invoke(cli, ["--config-dir", blank, "auth", "status"])
+    payload = json.loads(from_flag.stdout)
+    assert (payload["config_dir"], payload["authenticated"]) == (str(cfg_dir), True)
+
+    from_env = runner.invoke(cli, ["auth", "status"], env={"HFOX_CONFIG_DIR": blank})
+    assert from_env.exit_code == 2
+    assert json.loads(from_env.stdout)["config_dir"] == str(default)
 
 
 # -- --quiet ---------------------------------------------------------------------

@@ -42,6 +42,18 @@ def _ndjson_line(data, stream) -> None:
 
 
 JSON_WRITERS = pytest.mark.parametrize("write", [_json_document, _ndjson_line])
+NON_FINITE = pytest.mark.parametrize(
+    "number", [float("nan"), float("inf"), float("-inf")], ids=["nan", "inf", "-inf"]
+)
+
+
+def _strict_loads(text: str):
+    """Parse JSON, failing on the bare NaN, Infinity and -Infinity that json.loads accepts."""
+
+    def refuse(name: str):
+        raise AssertionError(f"{name} is not JSON")
+
+    return json.loads(text, parse_constant=refuse)
 
 
 def _encoded(write, data, encoding) -> bytes:
@@ -146,6 +158,44 @@ def test_json_keeps_neighbors_of_the_escaped_ranges_raw(write, char):
     assert f"a{char}b" in buf.getvalue()
 
 
+@JSON_WRITERS
+@NON_FINITE
+def test_json_writes_null_for_a_non_finite_number_at_any_depth(write, number):
+    data = {"n": number, "rows": [number, {"deep": [[number]], "pair": (number, 1.5)}], "ok": -2.5}
+    buf = io.StringIO()
+    write(data, buf)
+    assert _strict_loads(buf.getvalue()) == {
+        "n": None,
+        "rows": [None, {"deep": [[None]], "pair": [None, 1.5]}],
+        "ok": -2.5,
+    }
+
+
+@JSON_WRITERS
+@NON_FINITE
+def test_json_writes_null_for_a_bare_non_finite_number(write, number):
+    buf = io.StringIO()
+    write(number, buf)
+    assert buf.getvalue() == "null\n"
+
+
+@JSON_WRITERS
+def test_json_leaves_the_data_it_was_given_unchanged(write):
+    row = {"n": float("inf")}
+    data = {"n": float("-inf"), "rows": [row]}
+    write(data, io.StringIO())
+    assert data == {"n": float("-inf"), "rows": [{"n": float("inf")}]}
+    assert data["rows"][0] is row
+
+
+@JSON_WRITERS
+def test_json_keeps_non_finite_names_inside_text(write):
+    data = {"NaN": "Infinity", "v": ["-Infinity", "NaN"], "big": 1e308}
+    buf = io.StringIO()
+    write(data, buf)
+    assert _strict_loads(buf.getvalue()) == data
+
+
 # --- table and csv ----------------------------------------------------------------
 
 
@@ -177,6 +227,38 @@ def test_csv_nested_cell_is_sanitized():
         ["tags", "who"],
         ['["ab"]', '[{"name": "cd"}]'],
     ]
+
+
+@NON_FINITE
+def test_csv_nested_cell_writes_null_for_a_non_finite_number(number):
+    row = {"low": [number, {"x": number, "pair": (number, 1.5)}], "ok": [-2.5]}
+    header, cells = _csv_rows([row])
+    assert header == ["low", "ok"]
+    assert cells == ['[null, {"x": null, "pair": [null, 1.5]}]', "[-2.5]"]
+    assert [_strict_loads(cell) for cell in cells] == [
+        [None, {"x": None, "pair": [None, 1.5]}],
+        [-2.5],
+    ]
+
+
+@NON_FINITE
+def test_table_nested_cell_writes_null_for_a_non_finite_number(number):
+    assert '[null, {"x": null}]' in _render([{"low": [number, {"x": number}]}], OutputFormat.TABLE)
+    assert '[{"x": null}]' in _render({"low": [{"x": number}]}, OutputFormat.TABLE)
+
+
+def test_nested_cell_leaves_the_data_it_was_given_unchanged():
+    inner = {"x": float("inf")}
+    row = {"low": [float("-inf"), inner]}
+    _render([row], OutputFormat.CSV)
+    assert row == {"low": [float("-inf"), {"x": float("inf")}]}
+    assert row["low"][1] is inner
+
+
+def test_nested_cell_keeps_key_order_separators_non_ascii_and_number_text():
+    cell = ["\u00e9 \ud83d\ude00", {"b": 1, "a": "NaN"}, 1.0, 1e20, -0.0, {}, [], None, True]
+    text = '["\u00e9 \ud83d\ude00", {"b": 1, "a": "NaN"}, 1.0, 1e+20, -0.0, {}, [], null, true]'
+    assert _csv_rows([{"cell": cell}]) == [["cell"], [text]]
 
 
 @pytest.mark.parametrize("value", ["-\u0663", "+\uff15", "-1.\u0665"])

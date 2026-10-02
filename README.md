@@ -41,7 +41,9 @@ its flag, then from `HFOX_SUBDOMAIN`, `HFOX_REGION`, `HFOX_API_KEY` or `HFOX_AUT
 from a prompt on stderr. Keep the two secrets off the command line, where the shell history
 and the process list expose them. When stdin is not a terminal, a missing region means `us`,
 and a missing subdomain, key or code exits 3 with an error naming each missing flag and its
-variable.
+variable. A whitespace-only flag or variable counts as missing, and a whitespace-only key or
+code typed at the prompt exits 3. Outer whitespace is stripped from the subdomain, key and
+code, and the subdomain is stored in lowercase.
 
 `--email` saves the id of the one agent with that email as the default staff id. Without
 `--email`, a login to the same subdomain, region and base URL keeps the stored default, and
@@ -66,7 +68,11 @@ otherwise `~/.config/hfox`, on every OS. `--config-dir` or `HFOX_CONFIG_DIR` ove
 | `config.toml` | non-secret: `subdomain`, `region`, `default_format`, `default_staff_id` |
 
 Every field resolves as environment variable, then file, then default. `config.toml` also
-accepts a hand-written `base_url`, read after `HFOX_BASE_URL` and `token.json`.
+accepts a hand-written `base_url`, read after `HFOX_BASE_URL` and `token.json`. An empty or
+whitespace-only value counts as unset in each source and in `--config-dir`. A set value loses
+its outer whitespace, and the subdomain and region are lowercased; a set config directory is
+used as written. `HFOX_TIMEOUT` and `HFOX_MAX_RETRIES` are the exceptions: only an empty
+value is unset there.
 
 A file that cannot be read or parsed, or that holds a non-string `subdomain`, `region`,
 `base_url`, `api_key` or `auth_code`, exits 5 with an error of type `config` that names the
@@ -77,21 +83,23 @@ directory that cannot be expanded; give the config directory as an absolute path
 |----------|------|
 | `HFOX_SUBDOMAIN`, `HFOX_REGION` | the account host |
 | `HFOX_API_KEY`, `HFOX_AUTH_CODE` | the credentials |
-| `HFOX_BASE_URL` | an `http(s)://host` root for a proxied account |
+| `HFOX_BASE_URL` | an `http(s)://host` root, with an optional path, for a proxied account |
 | `HFOX_STAFF_ID` | the default acting staff id |
 | `HFOX_FORMAT` | the default output format |
 | `HFOX_TIMEOUT`, `HFOX_MAX_RETRIES` | the defaults of `--timeout` and `--max-retries` |
 | `HFOX_CONFIG_DIR` | the config directory |
 
 `--region eu` targets `*.happyfox.net`; a custom domain goes in `--subdomain` as the full host
-(`support.acme.com`) and ignores the region. For proxied accounts, set `HFOX_BASE_URL`; a
-trailing `/api/1.1/json` is stripped and `auth login` stores the value. A stored base URL
-wins over `--subdomain`, so `auth login --subdomain` warns on stderr when one is in effect.
+(`support.acme.com`) and ignores the region. For proxied accounts, set `HFOX_BASE_URL`; its
+scheme and host are lowercased, a trailing `/api/1.1/json` is stripped, a path before it is
+kept in its own case, and `auth login` stores the result. A stored base URL wins over
+`--subdomain`, so `auth login --subdomain` warns on stderr when one is in effect.
 
-A base URL with another scheme, no host, a bad port, embedded credentials, a query or a
-fragment exits 3. The error leaves out any value that holds `@`, `?` or `#`, since it may
-carry a secret. An `http` base URL on a non-loopback host sends the credentials in cleartext;
-hfox warns on stderr once per invocation and proceeds.
+A base URL with another scheme, no host, a bad port, embedded credentials, a query, a
+fragment or a control character exits 3. So does a host that is not a host name, an IPv4
+address or a bracketed IPv6 address. The error leaves out any value that holds `@`, `?`
+or `#`, since it may carry a secret. An `http` base URL on a non-loopback host sends the
+credentials in cleartext; hfox warns on stderr once per invocation and proceeds.
 
 `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` and `NO_PROXY` are honored through httpx. TLS trust
 comes from the certifi bundle unless `SSL_CERT_FILE` or `SSL_CERT_DIR` names another one.
@@ -128,8 +136,10 @@ A global option that takes a value refuses one that starts with `-`, in the `--o
 form too, so `hfox --staff --dry-run tickets list` exits 3 with type `usage` instead of
 reading `--dry-run` as the staff name.
 
-An unknown format from `--format`, `HFOX_FORMAT` or `default_format` exits 3. In `config.toml`
-only an empty string means unset, so `default_format = false` is an unknown format.
+An unknown format from `--format`, `HFOX_FORMAT` or `default_format` exits 3. An empty or
+whitespace-only `--format` counts as not given. In `config.toml`
+only an empty or whitespace-only string means unset, so `default_format = false` is an unknown
+format.
 
 `--timeout` does not bound the whole command: retries, their backoff and any `Retry-After`
 wait come on top. Each retry prints one stderr line with the reason and the wait. GETs retry
@@ -140,7 +150,9 @@ any network error; writes retry only when no connection was made.
 For full exports, pass `--size 50` with `--page-all`. When `--page-limit` stops the walk
 early, hfox warns on stderr and still exits 0, so raise the limit for a complete export. On
 `tickets list`, add a stable `--sort` such as `ticketa`; `-q` searches always sort by
-relevance.
+relevance. A paged listing exits 5 with type `other`, with or without `--page-all`, when a
+page's `page_info` is set and not an object, its `page_count` is set and not a whole number
+of at least 0, or it reports more than one page and holds no list of rows.
 
 On `tickets list` and `contacts list`, `-q` means `--query`:
 
@@ -148,6 +160,8 @@ On `tickets list` and `contacts list`, `-q` means `--query`:
   space replaces the docs' `+`. Multi-word text is ANDed, which HappyFox does not document.
 - Contacts: `field:value` filters on `name`, `email`, `phone`, `updated_since` or
   `created_since`, ANDed when space-separated. Omit `+` from phone numbers.
+
+`--status`, `--sort` and `-q` are sent without outer whitespace, and a blank one is not sent.
 
 Endpoints without server-side search take local filters instead. Every `system` command and
 `contacts groups list` take `--name`, and `system staff` also takes `--email`. A filter keeps
@@ -208,13 +222,15 @@ row with one CRLF on every platform, and a newline inside a cell stays a bare LF
 
 Table and CSV cells drop control, bidi and zero-width characters, so ticket text cannot drive
 the terminal. Newline, tab and the zero-width joiner and non-joiner are kept. A CSV text cell
-that starts with `=`, `+`, `-`, `@` or a tab gets a leading apostrophe so a spreadsheet does
-not run it as a formula; plain signed decimals such as `-5` and `+15551234567` stay as they
-are.
+that starts with `=`, `+`, `-`, `@`, the full-width form of one of them, a tab or a line feed
+gets a leading apostrophe so a spreadsheet does not run it as a formula; plain signed
+decimals in ASCII such as `-5` and `+15551234567` stay as they are.
 
 JSON and NDJSON write C1 controls, bidi controls, line and paragraph separators and tag
 characters as `\uXXXX` escapes, and YAML escapes non-printable characters in a quoted string.
-A parser returns the same strings.
+A parser returns the same strings. JSON and NDJSON are strict JSON: a `NaN` or infinite
+number is written as `null`. A table or CSV cell that holds a list or an object is strict
+JSON text too, while such a number in a cell of its own prints as `nan`, `inf` or `-inf`.
 
 ## Errors and exit codes
 
@@ -294,11 +310,21 @@ hfox assets custom-fields  list | get
 hfox system    categories | priorities | staff | statuses | ticket-custom-fields | contact-custom-fields
 ```
 
-Ticket commands take the numeric ticket id, not the display id. `tickets update` changes
-status, priority, assignee, due date, tags, time spent and custom fields without posting a
-message. `--unassign` on `create`, `reply`, `note` and `update` sends a null assignee.
-`contacts create` and `create-bulk` also edit the contact with the same email and reset
-custom fields they do not send.
+Ticket commands take the numeric ticket id, not the display id, and read `007` as `7`.
+`contacts get` and `update` read a numeric contact id the same way. An
+argument or flag that takes an id exits 3 for `0`, except `--staff-id`. `tickets update`
+changes status, priority, assignee, due date, tags, time spent and custom fields without
+posting a message. `--unassign` on `create`, `reply`, `note` and `update` sends a null
+assignee. `contacts create` and `create-bulk` also edit the contact with the same email and
+reset custom fields they do not send.
+
+An empty or whitespace-only value exits 3 on `--due-date`, `--created-at`,
+`tickets create --phone`, `reply --subject`, `note --alert`, `move --note`,
+`contacts update --name` and `--email`, and `contacts groups create --description` and
+`--domains`. Apart from `--note`, these values are sent without outer whitespace. `--agents`
+and `--ticket-attachments`, when given, exit 3 unless they list an id. An empty value clears on
+`contacts groups update --description` and `--domains`, and `assets update --contact-ids ''`
+and `--contact-group-ids ''` send an empty list.
 
 ## Examples
 
@@ -353,12 +379,14 @@ list, and anything else is sent as the exact string.
 ```
 
 An all-blank value such as `--cf 5=` exits 3. `--cf-json '{"5": ""}'` sends values uncoerced.
-With `--attachment`, `null` values are dropped, or rejected on reply and note. `tickets create`,
-`reply` and `note` take contact fields through `--contact-cf` and `--contact-cf-json`.
+`tickets create`, `reply` and `note` reject a `null` value combined with `--attachment`, and
+take contact fields through `--contact-cf` and `--contact-cf-json`.
 
 Keys are numeric ids from `hfox system ticket-custom-fields`, `contact-custom-fields` or
 `hfox assets custom-fields list`, not agent-portal URLs. A key may carry its endpoint's
-prefix (`t-cf-5`); any other key exits 3.
+prefix (`t-cf-5`); any other key exits 3, and so does an id of `0`. An id is sent without
+leading zeros, so `007` and `t-cf-007` name field 7. A field given twice keeps the last
+value: `--cf` in the order given, then `--cf-json`, `--contact-cf` and `--contact-cf-json`.
 
 ### Custom-field choices
 

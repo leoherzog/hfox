@@ -690,6 +690,12 @@ def test_contacts_list_query_sent_unchanged():
     assert p["params"]["q"] == "name:adam email:adam@x.com"
 
 
+def test_contacts_list_query_is_sent_without_outer_whitespace():
+    p = preview("--dry-run", "contacts", "list", "-q", "  name:adam  email:adam@x.com \n")
+    assert p["params"]["q"] == "name:adam  email:adam@x.com"
+    assert p["url"].endswith("/users/?q=name%3Aadam++email%3Aadam%40x.com&page=1&size=10")
+
+
 def test_contacts_list_size_and_page_bounds_exit_3():
     for flag, value in (("--size", "51"), ("--size", "0"), ("--page", "0")):
         proc = run_app(["contacts", "list", flag, value])
@@ -706,6 +712,18 @@ def test_contacts_update_rejects_path_traversal(mock_api):
         mock_api, "contacts", "update", "5/../../tickets", "--name", "x",
         match="Invalid contact",
     )
+
+
+@pytest.mark.parametrize("verb", [("get",), ("update", "--name", "x")], ids=["get", "update"])
+@pytest.mark.parametrize("contact", ["0", "000"])
+def test_contacts_reject_a_zero_id(mock_api, verb, contact):
+    _fails_offline(mock_api, "contacts", verb[0], contact, *verb[1:], match="Invalid contact")
+
+
+@pytest.mark.parametrize("verb", [("get",), ("update", "--name", "x")], ids=["get", "update"])
+def test_contacts_send_the_id_without_leading_zeros(verb):
+    p = preview("--dry-run", "contacts", verb[0], "007", *verb[1:])
+    assert p["url"].endswith("/api/1.1/json/user/7/")
 
 
 def test_contacts_update_by_email_set_login():

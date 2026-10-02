@@ -23,13 +23,16 @@ from hfox.cli._util import (
     count_failures,
     filter_rows,
     fold,
-    load_json_file,
     open_guarded,
     parse_json,
     read_text_file,
+    split_csv_ints,
     validate_contact_ref,
+    validate_ticket_id,
 )
 from hfox.cli.cf import coerce_value, parse_cf_json, parse_cf_options
+from hfox.cli.context import AppContext
+from hfox.core.config import Config
 from hfox.core.errors import ExitCode, ValidationError
 
 SECRET = "edge-api-key-0123456789"
@@ -46,9 +49,15 @@ needs_modes = pytest.mark.skipif(
     reason="POSIX permission modes, enforced for a non-root user",
 )
 
+
+def _read_json(path):
+    """Read JSON the way a command does, through AppContext."""
+    return AppContext(config=Config()).read_json(path, "--file")
+
+
 READERS = {
     "text": read_text_file,
-    "json": load_json_file,
+    "json": _read_json,
     "attach": lambda path: attach({}, [path]),
 }
 reader = pytest.mark.parametrize("read", READERS.values(), ids=READERS.keys())
@@ -165,6 +174,108 @@ def test_validate_contact_ref_rejects_a_slash_or_whitespace_after_the_at_sign(va
     assert exc.value.exit_code is ExitCode.VALIDATION
 
 
+@pytest.mark.parametrize(
+    ("value", "ref"),
+    [
+        ("7", "7"),
+        ("007", "7"),
+        ("0100", "100"),
+        ("9" * 5000, "9" * 5000),
+        ("a.b+c@x.co", "a.b+c@x.co"),
+        ("007@x.org", "007@x.org"),
+    ],
+)
+def test_validate_contact_ref_returns_an_id_without_leading_zeros_and_an_email_as_given(value, ref):
+    assert validate_contact_ref(value) == ref
+
+
+@pytest.mark.parametrize("value", ["0", "000", "-7", "+7", " 7", "７", "7.0"])
+def test_validate_contact_ref_rejects_zero_and_other_number_forms(value):
+    with pytest.raises(ValidationError) as exc:
+        validate_contact_ref(value)
+    assert str(exc.value) == (
+        f"Invalid contact '{value}'; expected a positive id or an email address."
+    )
+
+
+@pytest.mark.parametrize("value", ["0", "000"])
+def test_validate_ticket_id_rejects_zero(value):
+    with pytest.raises(ValidationError) as exc:
+        validate_ticket_id(value)
+    assert str(exc.value) == f"Invalid ticket id '{value}'; a ticket number is at least 1."
+
+
+@pytest.mark.parametrize(
+    ("value", "number"), [("5", "5"), ("0042", "42"), ("100", "100"), ("9" * 5000, "9" * 5000)]
+)
+def test_validate_ticket_id_returns_the_number_without_leading_zeros(value, number):
+    assert validate_ticket_id(value) == number
+
+
+@pytest.mark.parametrize("value", ["0", "1,0,3", "00", " 0 , 2"])
+def test_split_csv_ints_rejects_a_zero(value):
+    with pytest.raises(ValidationError) as exc:
+        split_csv_ints(value)
+    assert str(exc.value) == f"Expected ids of at least 1, got '{value}'."
+
+
+def test_split_csv_ints_reads_leading_zeros_as_the_number():
+    assert split_csv_ints("007, 10") == [7, 10]
+
+
+def test_split_csv_ints_rejects_an_id_too_long_for_int():
+    with pytest.raises(ValidationError) as exc:
+        split_csv_ints(f"3,{'9' * 5000}")
+    assert str(exc.value) == "Expected comma-separated ids; one has too many digits."
+
+
+@pytest.mark.parametrize("value", ["0", "00", "-1", "-0", "+0", " 0 ", "-12"])
+def test_validate_id_text_rejects_a_whole_number_below_1(value):
+    with pytest.raises(ValidationError) as exc:
+        util_mod.validate_id_text(value, "--alert")
+    assert str(exc.value) == f"Invalid --alert value '{value}'; an id must be at least 1."
+
+
+@pytest.mark.parametrize("value", [None, "1", "+5", "010", "s", "_all", "", "0.5", "-", "０"])
+def test_validate_id_text_returns_other_values_unchanged(value):
+    assert util_mod.validate_id_text(value, "--alert") is value
+
+
+@pytest.mark.parametrize(
+    ("value", "result"),
+    [(None, None), ("", None), (" \t\n", None), (" updated ", "updated"), ("a  b", "a  b")],
+)
+def test_strip_or_none_drops_outer_whitespace_and_a_blank_value(value, result):
+    assert util_mod.strip_or_none(value) == result
+
+
+@pytest.mark.parametrize(
+    ("value", "result"), [(None, None), (" 2026-02-03\t", "2026-02-03"), ("a  b", "a  b")]
+)
+def test_strip_or_reject_drops_outer_whitespace_and_passes_a_missing_value(value, result):
+    assert util_mod.strip_or_reject(value, "--due-date") == result
+
+
+@pytest.mark.parametrize("value", ["", "  ", "\t\n"])
+def test_strip_or_reject_rejects_a_blank_value_naming_the_flag(value):
+    with pytest.raises(ValidationError) as exc:
+        util_mod.strip_or_reject(value, "--due-date")
+    assert str(exc.value) == "--due-date must not be blank."
+    assert exc.value.exit_code is ExitCode.VALIDATION
+
+
+@pytest.mark.parametrize(("value", "ids"), [(None, None), ("3", [3]), (" 3 , 004,", [3, 4])])
+def test_require_ids_returns_the_ids_and_passes_a_missing_value(value, ids):
+    assert util_mod.require_ids(value, "--agents") == ids
+
+
+@pytest.mark.parametrize("value", ["", "  ", " , "])
+def test_require_ids_rejects_a_list_without_an_id_naming_the_flag(value):
+    with pytest.raises(ValidationError) as exc:
+        util_mod.require_ids(value, "--agents")
+    assert str(exc.value) == "--agents needs at least one id."
+
+
 # -- the Windows console probe ------------------------------------------------
 @pytest.mark.parametrize("answer", [1, 0])
 def test_has_console_is_whether_get_console_mode_succeeds_on_the_stream_handle(
@@ -228,14 +339,14 @@ def test_hard_link_to_token_json_is_refused_however_the_guard_is_spelled(tmp_pat
         open_guarded(str(link), forbidden=spell(store))
 
 
-def test_load_json_file_applies_the_guard_and_the_credential_check(tmp_path):
+def test_read_text_file_applies_the_guard_and_the_credential_check(tmp_path):
     store = _store(tmp_path)
     copy = tmp_path / "copy.json"
     copy.write_bytes((store / "token.json").read_bytes())
     with pytest.raises(ValidationError, match=REFUSED):
-        load_json_file(str(store / "token.json"), forbidden=[store])
+        read_text_file(str(store / "token.json"), forbidden=[store])
     with pytest.raises(ValidationError, match=LEAKS):
-        load_json_file(str(copy), secrets=[SECRET])
+        read_text_file(str(copy), secrets=[SECRET])
 
 
 # -- file state ---------------------------------------------------------------
@@ -365,7 +476,7 @@ def test_attach_closes_every_file_also_when_a_later_one_is_refused(tmp_path, mon
 
 
 # -- read errors --------------------------------------------------------------
-@pytest.mark.parametrize("read", [read_text_file, load_json_file], ids=["text", "json"])
+@pytest.mark.parametrize("read", [read_text_file, _read_json], ids=["text", "json"])
 def test_read_error_is_a_validation_error_naming_the_file(tmp_path, monkeypatch, read):
     f = tmp_path / "flaky.json"
     f.write_text("[1]", encoding="utf-8")
@@ -541,3 +652,55 @@ def test_key_error_lists_the_forms_the_call_site_accepts(kwargs, forms):
     with pytest.raises(ValidationError) as exc:
         parse_cf_options(["x-9=1"], **kwargs)
     assert sorted(re.findall(r"[\w-]*<id>", str(exc.value))) == sorted(forms)
+
+
+@pytest.mark.parametrize(
+    ("key", "kwargs"),
+    [
+        ("0", {}),
+        ("000", {}),
+        ("t-cf-0", {}),
+        ("ccf-00", {"allowed": ("t-cf-", "ccf-")}),
+        ("0", {"prefix": "", "allowed": ()}),
+    ],
+    ids=["bare", "bare zeros", "prefixed", "allowed prefix", "asset"],
+)
+def test_custom_field_id_of_zero_is_rejected(key, kwargs):
+    message = f"Invalid custom-field key '{key}'; a field id is at least 1."
+    with pytest.raises(ValidationError) as exc:
+        parse_cf_options([f"{key}=x"], **kwargs)
+    assert str(exc.value) == message
+    with pytest.raises(ValidationError) as exc:
+        parse_cf_json(json.dumps({key: "x"}), **kwargs)
+    assert str(exc.value) == message
+
+
+TICKET_OR_CONTACT = {"prefix": "t-cf-", "allowed": ("t-cf-", "c-cf-")}
+TICKET_OR_REPLY = {"prefix": "t-cf-", "allowed": ("t-cf-", "ccf-")}
+
+
+@pytest.mark.parametrize(
+    ("key", "kwargs", "sent"),
+    [
+        ("007", {}, "t-cf-7"),
+        ("t-cf-007", {}, "t-cf-7"),
+        ("c-cf-007", TICKET_OR_CONTACT, "c-cf-7"),
+        ("007", {"prefix": "c-cf-"}, "c-cf-7"),
+        ("ccf-007", TICKET_OR_REPLY, "ccf-7"),
+        ("007", {"prefix": "ccf-"}, "ccf-7"),
+        ("0100", {"prefix": "", "allowed": ()}, "100"),
+        ("10", {}, "t-cf-10"),
+        ("t-cf-100", {}, "t-cf-100"),
+    ],
+)
+def test_custom_field_id_loses_its_leading_zeros(key, kwargs, sent):
+    assert parse_cf_options([f"{key}=x"], **kwargs) == {sent: "x"}
+    assert parse_cf_json(json.dumps({key: "x"}), **kwargs) == {sent: "x"}
+
+
+def test_two_spellings_of_one_custom_field_keep_the_last_value():
+    assert parse_cf_options(["7=a", "7=b"]) == {"t-cf-7": "b"}
+    assert parse_cf_options(["7=a", "007=b"]) == {"t-cf-7": "b"}
+    assert parse_cf_options(["t-cf-007=a", "7=b"]) == {"t-cf-7": "b"}
+    assert parse_cf_json('{"7": "a", "007": "b"}') == {"t-cf-7": "b"}
+    assert parse_cf_json('{"007": "a", "t-cf-7": "b"}') == {"t-cf-7": "b"}

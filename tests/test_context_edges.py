@@ -87,6 +87,11 @@ def ndjson(text):
     return [json.loads(line) for line in text.splitlines()]
 
 
+def serve(body):
+    """Return a 200 response holding `body` as JSON; None is a response without a body."""
+    return httpx.Response(200) if body is None else httpx.Response(200, json=body)
+
+
 # -- dry-run preview ----------------------------------------------------------
 def test_dry_run_of_a_bare_get_previews_null_params_body_and_attachments():
     result = run("--dry-run", "tickets", "get", "5")
@@ -290,6 +295,104 @@ def test_ndjson_filter_reads_rows_under_a_custom_root_key(mock_api, capsys):
         {"page_info": {"page_count": 2}, "items": [{"id": 1, "name": "Laptop"}]},
         {"page_info": {"page_count": 2}, "items": [{"id": 3, "name": "Laptop dock"}]},
     ]
+
+
+# Bodies that hold no row list and report at most one page.
+ROWLESS = [
+    {"id": 1, "name": "x"},
+    {"error": "maintenance", "page_info": {"page_count": 1}},
+    {"page_info": {"page_count": 1, "count": 0}, "data": None},
+    {"data": {"id": 1, "name": "x"}},
+    {"data": "text", "page_count": 0},
+    {"rows": None, "page_count": 1.0},
+    "text",
+    None,
+]
+FLAT = [OutputFormat.TABLE, OutputFormat.CSV, OutputFormat.YAML]
+
+
+@pytest.mark.parametrize("body", ROWLESS)
+@pytest.mark.parametrize("fmt", FLAT)
+def test_page_all_returns_an_only_page_without_a_row_list_as_one_page_does(mock_api, fmt, body):
+    captured = mock_api(lambda req: serve(body))
+    walked = make_ctx(page_all=True, page_delay_ms=0, fmt=fmt).paginate("tickets/")
+    assert walked == make_ctx(fmt=fmt).paginate("tickets/")
+    assert walked == body
+    assert len(captured) == 2
+
+
+@pytest.mark.parametrize("body", ROWLESS)
+@pytest.mark.parametrize("fmt", ["table", "csv", "yaml"])
+def test_page_all_renders_an_only_page_without_a_row_list_as_one_page_does(mock_api, fmt, body):
+    mock_api(lambda req: serve(body))
+    one = run("-f", fmt, "tickets", "list")
+    walked = run("--page-all", "-f", fmt, "tickets", "list")
+    assert (walked.exit_code, one.exit_code) == (0, 0), walked.output
+    assert (walked.stdout, walked.stderr) == (one.stdout, one.stderr)
+    assert walked.stdout.strip()
+
+
+@pytest.mark.parametrize("body", ROWLESS)
+def test_page_all_prints_an_only_page_without_a_row_list_as_its_ndjson_line(mock_api, body):
+    mock_api(lambda req: serve(body))
+    result = run("--page-all", "tickets", "list")
+    assert result.exit_code == 0, result.output
+    assert ndjson(result.stdout) == [body]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [[], [{"id": 1}], {"page_info": {"page_count": 1, "count": 0}, "data": []}, {"rows": []}],
+)
+def test_page_all_returns_the_rows_of_an_only_page_that_holds_a_row_list(mock_api, body):
+    mock_api(lambda req: serve(body))
+    ctx = make_ctx(page_all=True, page_delay_ms=0, fmt=OutputFormat.TABLE)
+    assert ctx.paginate("tickets/") == ([{"id": 1}] if body == [{"id": 1}] else [])
+
+
+@pytest.mark.parametrize(
+    ("last", "rows"),
+    [
+        ({"page_info": {"page_count": 1, "count": 0}, "data": None}, []),
+        ({"error": "maintenance"}, []),
+        ("text", []),
+        (None, []),
+        ({"data": {"id": 9}}, [{"id": 9}]),
+    ],
+)
+@pytest.mark.parametrize("fmt", FLAT)
+def test_page_all_keeps_earlier_rows_when_the_last_page_holds_no_row_list(
+    mock_api, fmt, last, rows
+):
+    first = {"page_info": {"page_count": 2}, "data": [{"id": 1}, {"id": 2}]}
+    captured = mock_api(lambda req: serve(first if req.url.params["page"] == "1" else last))
+    ctx = make_ctx(page_all=True, page_delay_ms=0, fmt=fmt)
+    assert ctx.paginate("tickets/") == [{"id": 1}, {"id": 2}, *rows]
+    assert len(captured) == 2
+
+
+@pytest.mark.parametrize("body", [{"id": 1, "name": "x"}, {"error": "x", "data": None}, "x", None])
+def test_filter_finds_no_row_in_an_only_page_without_a_row_list(mock_api, capsys, body):
+    mock_api(lambda req: serve(body))
+    for fmt in FLAT:
+        ctx = make_ctx(page_all=True, page_delay_ms=0, fmt=fmt)
+        assert ctx.paginate("assets/", filters={"name": "x"}) == []
+    with pytest.raises(typer.Exit) as exc:
+        make_ctx(page_all=True, page_delay_ms=0).paginate("assets/", filters={"name": "x"})
+    assert exc.value.exit_code == 0
+    assert ndjson(capsys.readouterr().out) == [
+        {**body, "data": []} if isinstance(body, dict) else []
+    ]
+
+
+@pytest.mark.parametrize("fmt", ["table", "csv", "yaml"])
+def test_filter_over_an_only_page_without_a_row_list_renders_an_empty_result(mock_api, fmt):
+    mock_api(lambda req: serve({"id": 1, "name": "x"}))
+    filtered = run("--page-all", "-f", fmt, "assets", "list", "--name", "x")
+    mock_api(lambda req: serve([]))
+    empty = run("--page-all", "-f", fmt, "assets", "list", "--name", "x")
+    assert filtered.exit_code == 0, filtered.output
+    assert (filtered.stdout, filtered.stderr) == (empty.stdout, empty.stderr)
 
 
 @pytest.mark.parametrize(("delay_ms", "slept"), [(250, [0.25, 0.25]), (0, [])])

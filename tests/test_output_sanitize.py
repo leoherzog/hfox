@@ -7,7 +7,13 @@ import json
 import pytest
 import yaml
 
-from hfox.cli.output import OutputFormat, render, render_ndjson_line, sanitize_cell
+from hfox.cli.output import (
+    _FORMULA_TRIGGERS,
+    OutputFormat,
+    render,
+    render_ndjson_line,
+    sanitize_cell,
+)
 
 ESC = "\x1b"
 C1_CSI = "\x9b"
@@ -43,6 +49,10 @@ def _render(data, fmt) -> str:
     buf = io.StringIO()
     render(data, fmt, stream=buf)
     return buf.getvalue()
+
+
+# Full-width "=", "+", "-" and "@".
+FULL_WIDTH_TRIGGERS = ["\uff1d", "\uff0b", "\uff0d", "\uff20"]
 
 
 def _csv_rows(data) -> list[list[str]]:
@@ -135,6 +145,13 @@ def test_table_keeps_joiners(char):
     assert f"a{char}b" in _render([{"name": f"a{char}b"}], OutputFormat.TABLE)
 
 
+@pytest.mark.parametrize("value", ["=1+1", "\n=cmd()", "\uff1d1+1", "\uff0d5"])
+def test_table_never_prefixes_formula_cells(value):
+    text = _render([{value: value}], OutputFormat.TABLE)
+    assert value.strip() in text
+    assert "'" not in text
+
+
 # --- csv ------------------------------------------------------------------------
 
 
@@ -217,9 +234,53 @@ def test_csv_prefixes_formula_cells(value):
     assert _csv_rows([{"v": value}]) == [["v"], ["'" + value]]
 
 
-def test_csv_prefixes_cell_led_by_carriage_return_trigger():
-    # CR is dropped by sanitizing, so the trigger behind it leads the cell.
-    assert _csv_rows([{"v": "\r=1+1"}]) == [["v"], ["'=1+1"]]
+@pytest.mark.parametrize("value", ["\n=cmd()", "\n-5", "\nplain", "\n", "\n\n5"])
+def test_csv_prefixes_cells_that_start_with_a_line_feed(value):
+    assert _csv_rows([{"v": value}]) == [["v"], ["'" + value]]
+    assert _csv_rows([{value: "x"}]) == [["'" + value], ["x"]]
+
+
+@pytest.mark.parametrize("trigger", FULL_WIDTH_TRIGGERS)
+@pytest.mark.parametrize("rest", ["", "1+1", "cmd()", "SUM(A1)"])
+def test_csv_prefixes_full_width_formula_cells(trigger, rest):
+    value = trigger + rest
+    assert _csv_rows([{"v": value}]) == [["v"], ["'" + value]]
+    assert _csv_rows([{value: "x"}]) == [["'" + value], ["x"]]
+
+
+# The signed-decimal exemption is ASCII only.
+@pytest.mark.parametrize(
+    "value", ["\uff0d5", "\uff0b15551234567", "\uff0d\uff15", "\uff0b\uff13.\uff11\uff14"]
+)
+def test_csv_prefixes_full_width_signed_numbers(value):
+    assert _csv_rows([{"v": value}]) == [["v"], ["'" + value]]
+
+
+# CR is dropped by sanitizing, so whatever follows it leads the cell.
+@pytest.mark.parametrize(
+    ("value", "cell"),
+    [
+        ("\r=1+1", "'=1+1"),
+        ("\r=cmd()", "'=cmd()"),
+        ("\r\r@SUM(A1)", "'@SUM(A1)"),
+        ("\r\tx", "'\tx"),
+        ("\r\n=cmd()", "'\n=cmd()"),
+        ("\r\uff1dcmd()", "'\uff1dcmd()"),
+    ],
+)
+def test_csv_prefixes_trigger_behind_a_dropped_carriage_return(value, cell):
+    assert _csv_rows([{"v": value}]) == [["v"], [cell]]
+    assert _csv_rows([{value: "x"}]) == [[cell], ["x"]]
+
+
+@pytest.mark.parametrize(("value", "cell"), [("\rplain", "plain"), ("\r", ""), ("\r-5", "-5")])
+def test_csv_leaves_plain_text_behind_a_dropped_carriage_return(value, cell):
+    assert _csv_rows([{"v": value}]) == [["v"], [cell]]
+
+
+def test_every_formula_trigger_survives_sanitizing():
+    # A trigger that sanitizing drops can never lead a cell.
+    assert [trigger for trigger in _FORMULA_TRIGGERS if sanitize_cell(trigger) != trigger] == []
 
 
 def test_csv_prefixes_trigger_exposed_by_sanitizing():

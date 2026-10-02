@@ -25,7 +25,6 @@ from hfox.cli._util import (
     filter_needles,
     filter_rows,
     fold,
-    load_json_file,
     require_nonblank,
     split_csv,
     split_csv_ints,
@@ -441,13 +440,13 @@ def test_require_nonblank_rejects_blank(value):
     assert "--subject" in str(exc.value)
 
 
-@pytest.mark.parametrize("value", ["0", "5", "0042"])
-def test_validate_ticket_id_accepts_digits(value):
-    assert validate_ticket_id(value) == value
+@pytest.mark.parametrize(("value", "number"), [("5", "5"), ("0042", "42")])
+def test_validate_ticket_id_accepts_digits(value, number):
+    assert validate_ticket_id(value) == number
 
 
 @pytest.mark.parametrize(
-    "value", ["", "abc", "#DC00000003", "5/../tickets", "..", "１２", " 5", "-1"]
+    "value", ["", "0", "abc", "#DC00000003", "5/../tickets", "..", "１２", " 5", "-1"]
 )
 def test_validate_ticket_id_rejects_non_digits(value):
     with pytest.raises(ValidationError):
@@ -461,7 +460,7 @@ def test_validate_contact_ref_accepts_id_or_email(value):
 
 @pytest.mark.parametrize(
     "value",
-    ["", "0", "007", "-3", "abc", "5/../../tickets", "a/b@x.com", "a@b@c", "@x", "a @x", ".."],
+    ["", "0", "000", "-3", "abc", "5/../../tickets", "a/b@x.com", "a@b@c", "@x", "a @x", ".."],
 )
 def test_validate_contact_ref_rejects_other_values(value):
     with pytest.raises(ValidationError):
@@ -563,50 +562,50 @@ def test_attach_total_over_limit_raises_before_reading(tmp_path, monkeypatch):
     assert MAX_ATTACHMENT_BYTES == 25_000_000
 
 
-def test_load_json_file_ok(tmp_path):
+def test_read_json_ok(tmp_path):
     f = tmp_path / "data.json"
     f.write_text(json.dumps([{"id": 1}, {"id": 2}]), encoding="utf-8")
-    assert load_json_file(str(f)) == [{"id": 1}, {"id": 2}]
+    assert make_ctx().read_json(str(f), "--file") == [{"id": 1}, {"id": 2}]
 
 
-def test_load_json_file_accepts_utf8_bom(tmp_path):
+def test_read_json_accepts_utf8_bom(tmp_path):
     f = tmp_path / "bom.json"
     f.write_bytes(b"\xef\xbb\xbf" + b'{"a": "caf\xc3\xa9"}')
-    assert load_json_file(str(f)) == {"a": "café"}
+    assert make_ctx().read_json(str(f), "--file") == {"a": "café"}
 
 
-def test_load_json_file_missing(tmp_path):
+def test_read_json_missing(tmp_path):
     with pytest.raises(ValidationError) as exc:
-        load_json_file(str(tmp_path / "absent.json"))
+        make_ctx().read_json(str(tmp_path / "absent.json"), "--file")
     assert "File not found" in str(exc.value)
 
 
-def test_load_json_file_invalid_json(tmp_path):
+def test_read_json_invalid_json(tmp_path):
     f = tmp_path / "bad.json"
     f.write_text("{not valid", encoding="utf-8")
     with pytest.raises(ValidationError) as exc:
-        load_json_file(str(f))
+        make_ctx().read_json(str(f), "--file")
     assert "Invalid JSON" in str(exc.value)
     assert exc.value.exit_code is ExitCode.VALIDATION
 
 
 @pytest.mark.parametrize("encoding", ["latin-1", "utf-16"])
-def test_load_json_file_rejects_non_utf8(tmp_path, encoding):
+def test_read_json_rejects_non_utf8(tmp_path, encoding):
     f = tmp_path / "enc.json"
     f.write_text('{"name": "Zoë"}', encoding=encoding)
     with pytest.raises(ValidationError) as exc:
-        load_json_file(str(f))
+        make_ctx().read_json(str(f), "--file")
     assert exc.value.exit_code is ExitCode.VALIDATION
 
 
 @pytest.mark.parametrize(
     "text", ['[{"n": NaN}]', '{"n": Infinity}', '{"n": -Infinity}', '{"n": 1e400}']
 )
-def test_load_json_file_rejects_non_finite_numbers(tmp_path, text):
+def test_read_json_rejects_non_finite_numbers(tmp_path, text):
     f = tmp_path / "nan.json"
     f.write_text(text, encoding="utf-8")
     with pytest.raises(ValidationError) as exc:
-        load_json_file(str(f))
+        make_ctx().read_json(str(f), "--file")
     assert "Invalid JSON" in str(exc.value)
 
 

@@ -255,6 +255,22 @@ def test_login_proxied_base_url_is_rendered(mock_api, cfg_dir, monkeypatch):
     assert json.loads(result.stdout)["base_url"] == "https://gw.internal/api/1.1/json"
 
 
+@pytest.mark.parametrize(
+    "url",
+    ["https://proxy.example/hf", "https://proxy.example/hf/", "https://proxy.example/hf/api/1.1/json"],
+    ids=["bare", "trailing-slash", "api-prefix"],
+)
+def test_login_keeps_a_base_url_path_prefix(mock_api, cfg_dir, monkeypatch, url):
+    monkeypatch.setenv("HFOX_BASE_URL", url)
+    requests = mock_api(staff_ok())
+    result = runner.invoke(cli, LOGIN)
+    assert result.exit_code == 0, result.stderr
+    assert str(requests[0].url) == "https://proxy.example/hf/api/1.1/json/staff/"
+    assert json.loads(result.stdout)["base_url"] == "https://proxy.example/hf/api/1.1/json"
+    token = json.loads((cfg_dir / "token.json").read_text())
+    assert token["base_url"] == "https://proxy.example/hf"
+
+
 def test_login_warns_when_a_stored_base_url_overrides_subdomain(mock_api, cfg_dir):
     saved(cfg_dir, base_url="https://gw.internal")
     requests = mock_api(staff_ok())

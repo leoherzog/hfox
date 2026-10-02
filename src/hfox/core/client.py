@@ -16,6 +16,7 @@ from .. import __version__
 from .errors import (
     APIError,
     AuthError,
+    HfoxError,
     NetworkError,
     NotFoundError,
     RateLimitError,
@@ -185,6 +186,17 @@ class HappyFoxClient:
         return self.request("GET", path, params=params)
 
     # -- pagination --------------------------------------------------------
+    def get_page(
+        self, path: str, *, params: dict[str, Any] | None = None, root_key: str = "data"
+    ) -> Any:
+        """GET one page of a listing with `params` as given and return its raw body.
+
+        Raises HfoxError for an envelope a page walk would refuse.
+        """
+        body = self.get(path, params=params)
+        _unwrap_page(body, root_key, path)
+        return body
+
     def paginate(
         self,
         path: str,
@@ -196,7 +208,10 @@ class HappyFoxClient:
         size: int = MAX_PAGE_SIZE,
         on_truncated: Callable[[int, int], None] | None = None,
     ) -> Iterator[Any]:
-        """Yield records across pages until exhausted or page_limit is reached."""
+        """Yield records across pages until exhausted or page_limit is reached.
+
+        Raises as `paginate_pages` does, before yielding a record of the page at fault.
+        """
         for body in self.paginate_pages(
             path,
             params=params,
@@ -206,7 +221,7 @@ class HappyFoxClient:
             size=size,
             on_truncated=on_truncated,
         ):
-            records, _ = _unwrap_page(body, root_key)
+            records, _ = _unwrap_page(body, root_key, path)
             yield from records
 
     def paginate_pages(
@@ -224,7 +239,9 @@ class HappyFoxClient:
 
         Handles both the `page_info.page_count` and the top-level `page_count`
         envelopes. `on_truncated(last_page, page_count)` fires when page_limit
-        stops the walk with pages remaining.
+        stops the walk with pages remaining. A page whose `page_info` is not an object,
+        whose `page_count` is not a whole number of at least 0, or that reports more than
+        one page and holds no row list, is yielded and then raises HfoxError.
         """
         if page_limit < 1:
             raise ValidationError("page_limit must be at least 1.")
@@ -236,7 +253,7 @@ class HappyFoxClient:
             params["page"] = page
             body = self.get(path, params=params)
             yield body
-            _, page_count = _unwrap_page(body, root_key)
+            _, page_count = _unwrap_page(body, root_key, path)
             pages_fetched += 1
             if page_count is None or page >= page_count:
                 return
@@ -247,6 +264,16 @@ class HappyFoxClient:
             page += 1
             if page_delay_ms > 0:
                 self._sleep(page_delay_ms / 1000.0)
+
+    def get_all(self, path: str, *, root_key: str = "data", **walk: Any) -> Any:
+        """Walk the pages as `paginate_pages` does and return their records as one list.
+
+        A walk whose only page holds no row list returns that page's body, as `get_page` does.
+        """
+        pages = list(self.paginate_pages(path, root_key=root_key, **walk))
+        if len(pages) == 1 and not isinstance(_records(pages[0], root_key), list):
+            return pages[0]
+        return [row for page in pages for row in _unwrap_page(page, root_key, path)[0]]
 
 
 def first_page_params(params: dict[str, Any] | None, size: int = MAX_PAGE_SIZE) -> dict[str, Any]:
@@ -327,22 +354,79 @@ def _clean_params(params: dict[str, Any] | None) -> dict[str, Any] | None:
     return cleaned or None
 
 
-def _unwrap_page(body: Any, root_key: str) -> tuple[list[Any], int | None]:
-    """Return (records, page_count) from a paginated response body."""
+def _unwrap_page(
+    body: Any, root_key: str, path: str | None = None
+) -> tuple[list[Any], int | None]:
+    """Return (records, page_count) from a paginated response body.
+
+    A null or missing `page_info` or `page_count` counts as absent; any other wrong shape
+    raises HfoxError naming `path`. So does an object that reports more than one page and
+    holds no row list, since its rows cannot be read. Any other body without a row list is
+    one page.
+    """
     if isinstance(body, list):
         return body, None
-    if isinstance(body, dict):
-        records = body.get(root_key)
-        if records is None and "rows" in body:  # reports envelope
-            records = body.get("rows")
-        if not isinstance(records, list):
-            return ([] if records is None else [records]), None
-        page_info = body.get("page_info") or {}
-        page_count = page_info.get("page_count")
-        if page_count is None:
-            page_count = body.get("page_count")
+    if not isinstance(body, dict):
+        return [], None
+    page_info = body.get("page_info")
+    if page_info is None:
+        page_info = {}
+    elif not isinstance(page_info, dict):
+        raise _bad_envelope("page_info", path)
+    page_count = page_info.get("page_count")
+    if page_count is None:
+        page_count = body.get("page_count")
+    page_count = _page_count(page_count, path)
+    records = _records(body, root_key)
+    if isinstance(records, list):
         return records, page_count
-    return [], None
+    if page_count is not None and page_count > 1:
+        raise HfoxError(
+            f"Unexpected page in {_where(path)}: it reports {page_count} pages "
+            "but holds no list of rows."
+        )
+    return ([] if records is None else [records]), page_count
+
+
+def _records(body: Any, root_key: str) -> Any:
+    """Return the value a page body holds as its rows; a list when it holds a row list.
+
+    A bare list is its own rows. An object holds them under `root_key`, or under the reports
+    key `rows` when `root_key` is null or missing. Any other body holds None.
+    """
+    if isinstance(body, list):
+        return body
+    if not isinstance(body, dict):
+        return None
+    records = body.get(root_key)
+    if records is None and "rows" in body:
+        records = body.get("rows")
+    return records
+
+
+def _page_count(value: Any, path: str | None) -> int | None:
+    """Return a page count as an int, None when absent.
+
+    Raises HfoxError unless the value is a whole JSON number of at least 0. A bool is not
+    one, and a guessed count could end the walk early without a sign.
+    """
+    if value is None:
+        return None
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise _bad_envelope("page_count", path)
+    return value
+
+
+def _bad_envelope(field: str, path: str | None) -> HfoxError:
+    return HfoxError(
+        f"Unexpected {field} in {_where(path)}; cannot tell how many pages there are."
+    )
+
+
+def _where(path: str | None) -> str:
+    return f"the {path} response" if path else "the response"
 
 
 def _extract_error(response: httpx.Response) -> Any:

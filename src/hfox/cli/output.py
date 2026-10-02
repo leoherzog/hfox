@@ -116,7 +116,8 @@ def _stringify(value: Any) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, (dict, list)):
-        return json.dumps(value, ensure_ascii=False, default=str)
+        # A nested cell is strict JSON text, so a non-finite number becomes null.
+        return json.dumps(_finite(value), ensure_ascii=False, allow_nan=False, default=str)
     return str(value)
 
 
@@ -138,7 +139,10 @@ def sanitize_text(text: str) -> str:
 sanitize_cell = sanitize_text
 
 
-_FORMULA_TRIGGERS = ("=", "+", "-", "@", "\t", "\r")
+# Matched after sanitize_cell, which drops CR, so CR is not listed. The escapes are the
+# full-width "=", "+", "-" and "@".
+_FORMULA_TRIGGERS = ("=", "+", "-", "@", "\t", "\n", "\uff1d", "\uff0b", "\uff0d", "\uff20")
+# ASCII only: a full-width sign or digit is never exempt.
 _SIGNED_DECIMAL = re.compile(r"[+-]?[0-9]+(\.[0-9]+)?")
 
 
@@ -191,9 +195,29 @@ def _json_escape(match: re.Match[str]) -> str:
     return f"\\u{0xD800 + (code >> 10):04x}\\u{0xDC00 + (code & 0x3FF):04x}"
 
 
+def _finite(data: Any) -> Any:
+    """Copy JSON data with None in place of every NaN and infinity, as JSON.stringify does."""
+    if isinstance(data, float):
+        return data if math.isfinite(data) else None
+    if isinstance(data, dict):
+        return {key: _finite(value) for key, value in data.items()}
+    if isinstance(data, (list, tuple)):
+        return [_finite(item) for item in data]
+    return data
+
+
 def _dump_json(data: Any, stream, **kwargs: Any) -> str:
-    """Serialize to JSON text that carries terminal-affecting characters as escapes."""
-    text = json.dumps(data, ensure_ascii=_ascii_only(stream), default=str, **kwargs)
+    """Serialize to strict JSON text that carries terminal-affecting characters as escapes.
+
+    Every JSON document hfox prints comes from here. A non-finite number becomes null.
+    """
+    text = json.dumps(
+        _finite(data),
+        ensure_ascii=_ascii_only(stream),
+        allow_nan=False,
+        default=str,
+        **kwargs,
+    )
     return _JSON_ESCAPED.sub(_json_escape, text)
 
 

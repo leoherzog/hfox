@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 import hfox.core.config as config_mod
+from hfox.core.client import request_url
 from hfox.core.config import (
     Config,
     ConfigError,
@@ -128,6 +129,23 @@ def test_config_dir_override_beats_env(home, monkeypatch, tmp_path):
     assert config_dir("") == tmp_path / "env"
 
 
+@pytest.mark.parametrize("blank", [" ", "  ", "\t", " \n"], ids=["space", "two", "tab", "newline"])
+def test_config_dir_whitespace_only_values_count_as_unset(home, monkeypatch, tmp_path, blank):
+    monkeypatch.setenv("HFOX_CONFIG_DIR", blank)
+    assert config_dir() == home / ".config" / "hfox"
+    assert config_dir(blank) == home / ".config" / "hfox"
+    assert load_config(blank).dir == home / ".config" / "hfox"
+    monkeypatch.setenv("HFOX_CONFIG_DIR", str(tmp_path / "env"))
+    assert config_dir(blank) == tmp_path / "env"
+
+
+def test_config_dir_keeps_the_outer_spaces_of_a_set_value(home, monkeypatch):
+    # A directory name may start or end with a space, so only an all-blank value is unset.
+    monkeypatch.setenv("HFOX_CONFIG_DIR", " env ")
+    assert config_dir() == Path(" env ")
+    assert config_dir(" flag ") == Path(" flag ")
+
+
 def test_config_dir_never_uses_legacy_home_dir(home):
     (home / ".hfox").mkdir()
     write_token(home / ".hfox", api_key="legacy-key-000", auth_code="legacy-code-000")
@@ -159,6 +177,11 @@ def test_guarded_dirs_deduplicated(home, monkeypatch, tmp_path):
     monkeypatch.setenv("HFOX_CONFIG_DIR", str(tmp_path / "env"))
     assert guarded_dirs(tmp_path / "env") == (tmp_path / "env", default)
     assert guarded_dirs(default) == (default, tmp_path / "env")
+
+
+def test_guarded_dirs_skips_a_whitespace_only_env_value(home, monkeypatch, tmp_path):
+    monkeypatch.setenv("HFOX_CONFIG_DIR", "  ")
+    assert guarded_dirs(tmp_path / "flag") == (tmp_path / "flag", home / ".config" / "hfox")
 
 
 @pytest.fixture
@@ -262,6 +285,26 @@ def test_guarded_secrets_drops_short_and_non_string(home, tmp_path):
     write_token(tmp_path / "flag", api_key="short", auth_code=12345678)
     cfg = Config(api_key="1234567", auth_code="12345678", dir=tmp_path / "flag")
     assert guarded_secrets(cfg) == ("12345678",)
+
+
+def test_guarded_secrets_drops_whitespace_only_values(home, tmp_path):
+    # load_config reads such a value as unset, and it would match any indented file.
+    write_token(tmp_path / "flag", api_key=" " * 8, auth_code="\t" * 8 + "\n")
+    cfg = Config(api_key=" " * 12, auth_code="active-code-456", dir=tmp_path / "flag")
+    assert guarded_secrets(cfg) == ("active-code-456",)
+
+
+def test_guarded_secrets_lists_each_credential_without_outer_whitespace(home, tmp_path):
+    # The padded copy in the file contains the stripped value, so one entry covers both.
+    write_token(tmp_path / "flag", api_key="  file-key-12345\n", auth_code=" active-code-456 ")
+    cfg = Config(api_key="\tactive-key-123 ", auth_code="active-code-456", dir=tmp_path / "flag")
+    assert guarded_secrets(cfg) == ("active-key-123", "active-code-456", "file-key-12345")
+
+
+def test_guarded_secrets_measures_the_length_without_outer_whitespace(home, tmp_path):
+    write_token(tmp_path / "flag", api_key="  1234567  ")
+    cfg = Config(api_key="   abc   ", auth_code=None, dir=tmp_path / "flag")
+    assert guarded_secrets(cfg) == ()
 
 
 @pytest.mark.parametrize("content", ["{not json", "[1, 2]", '"just-a-string-value"'])
@@ -425,6 +468,41 @@ def test_validate_host_echoes_a_value_without_credentials():
     assert validate_host(" support.acme.com ") == "support.acme.com"
 
 
+@pytest.mark.parametrize(
+    ("value", "host"),
+    [("ACME", "acme"), (" Acme-Corp ", "acme-corp"), ("Support.Acme.COM", "support.acme.com")],
+    ids=["subdomain", "padded", "custom-host"],
+)
+def test_validate_host_lowercases(value, host):
+    assert validate_host(value) == host
+
+
+def test_base_url_lowercases_the_host():
+    assert Config(subdomain="ACME", region="EU").base_url == (
+        "https://acme.happyfox.net/api/1.1/json"
+    )
+    assert Config(subdomain="Support.Acme.COM").base_url == (
+        "https://support.acme.com/api/1.1/json"
+    )
+
+
+def test_lowercasing_never_makes_a_non_ascii_host_valid(tmp_path):
+    # str.lower() maps the Kelvin sign U+212A to an ASCII "k".
+    with pytest.raises(ValidationError):
+        validate_host("acmeK")
+    write_token(tmp_path, subdomain="ACMEK")
+    cfg = load_config(tmp_path)
+    assert cfg.subdomain == "acmeK"
+    with pytest.raises(ValidationError):
+        _ = cfg.base_url
+    assert normalize_base_url("https://GWK.Example/A") == "https://gwK.example/A"
+
+
+def test_validate_host_echoes_a_rejected_value_as_written():
+    with pytest.raises(ValidationError, match=r"Invalid subdomain/host ' Ac Me ': expected"):
+        validate_host(" Ac Me ")
+
+
 def test_config_base_url_rejects_credentials():
     cfg = Config(base_url_override="https://alice:hunter2pw@gw.example.com")
     with pytest.raises(ValidationError) as exc:
@@ -461,6 +539,174 @@ def test_normalize_base_url_echoes_a_value_without_secret_parts():
 def test_normalize_base_url_accepts_plain_roots():
     assert normalize_base_url("https://gw.example.com/api/1.1/json/") == "https://gw.example.com"
     assert normalize_base_url("http://localhost:8080") == "http://localhost:8080"
+
+
+@pytest.mark.parametrize(
+    ("url", "root"),
+    [
+        ("https://proxy.example/hf", "https://proxy.example/hf"),
+        ("https://proxy.example/hf/", "https://proxy.example/hf"),
+        ("https://proxy.example/hf/api/1.1/json", "https://proxy.example/hf"),
+        ("https://proxy.example/hf/api/1.1/json/", "https://proxy.example/hf"),
+        ("http://localhost:8080/a/b/", "http://localhost:8080/a/b"),
+    ],
+    ids=["bare", "trailing-slash", "api-prefix", "api-prefix-and-slash", "two-segments"],
+)
+def test_normalize_base_url_keeps_a_path_prefix(url, root):
+    assert normalize_base_url(url) == root
+    assert Config(base_url_override=url).base_url == f"{root}/api/1.1/json"
+
+
+@pytest.mark.parametrize(
+    ("url", "root"),
+    [
+        ("https://GW.Example.COM", "https://gw.example.com"),
+        ("HTTPS://GW.Example.COM:8443/", "https://gw.example.com:8443"),
+        ("https://Proxy.Example/HF/Tenant", "https://proxy.example/HF/Tenant"),
+        ("https://Proxy.Example/HF/api/1.1/json/", "https://proxy.example/HF"),
+        ("Http://LOCALHOST:8080/A/b", "http://localhost:8080/A/b"),
+        ("http://[2001:DB8::1]:8080/X", "http://[2001:db8::1]:8080/X"),
+        ("https://gw.example.com/a://B", "https://gw.example.com/a://B"),
+    ],
+    ids=["host", "scheme-and-port", "path", "api-prefix", "localhost", "ipv6", "path-with-scheme"],
+)
+def test_normalize_base_url_lowercases_scheme_and_host_and_keeps_the_path_case(url, root):
+    assert normalize_base_url(url) == root
+    assert Config(base_url_override=url).base_url == f"{root}/api/1.1/json"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://gw.exa\tmple.com/x",
+        "https:/\t/GW.example.com/x",
+        "https://gw.example.com/a\nb",
+        "https://gw.example.com/a\rb",
+        "\x01https://GW.example.com",
+        "https://gw.example.com\x00",
+        "https://gw.example.com/x\x7f",
+    ],
+    ids=["tab-in-host", "tab-in-slashes", "lf", "cr", "leading-control", "trailing-nul", "del"],
+)
+def test_normalize_base_url_rejects_a_control_character(url):
+    # urlsplit drops these before parsing, so the value would pass and then fail as sent.
+    with pytest.raises(ValidationError) as exc:
+        normalize_base_url(url, "HFOX_BASE_URL")
+    assert str(exc.value) == f"Invalid HFOX_BASE_URL {url!r}: expected http(s)://host."
+    with pytest.raises(ValidationError):
+        _ = Config(base_url_override=url).base_url
+
+
+def test_normalize_base_url_strips_outer_whitespace_before_the_control_check():
+    assert normalize_base_url("\t https://GW.example.com/Hf \r\n") == "https://gw.example.com/Hf"
+
+
+def assert_base_url_rejected(url):
+    with pytest.raises(ValidationError) as exc:
+        normalize_base_url(url, "HFOX_BASE_URL")
+    assert str(exc.value) == f"Invalid HFOX_BASE_URL {url!r}: expected http(s)://host."
+    with pytest.raises(ValidationError):
+        _ = Config(base_url_override=url).base_url
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://gw exa mple.com",
+        "https://gw.example.com /x",
+        "https://gw.example.com: 8080",
+        "https: //gw.example.com",
+        "https://gw\u00a0x.example.com",
+        "https://gw\u3000x.example.com",
+        "https://gw\u2028x.example.com",
+        "https://gw.example.com\u0085/x",
+        "http://[::1 ]",
+    ],
+    ids=[
+        "host", "host-end", "port", "scheme", "nbsp", "ideographic", "line-separator", "nel",
+        "bracketed",
+    ],
+)
+def test_normalize_base_url_rejects_whitespace_in_the_host(url):
+    assert_base_url_rejected(url)
+
+
+@pytest.mark.parametrize(
+    ("url", "root", "sent"),
+    [
+        ("https://gw.example.com/a b", "https://gw.example.com/a b", "/a%20b"),
+        ("https://gw.example.com/hf /api/1.1/json", "https://gw.example.com/hf ", "/hf%20"),
+        ("https://gw.example.com/a\u2003b", "https://gw.example.com/a\u2003b", "/a%E2%80%83b"),
+    ],
+    ids=["space", "before-api-prefix", "em-space"],
+)
+def test_normalize_base_url_keeps_whitespace_in_the_path(url, root, sent):
+    assert normalize_base_url(url) == root
+    base_url = Config(base_url_override=url).base_url
+    assert request_url(base_url, "staff/") == f"https://gw.example.com{sent}/api/1.1/json/staff/"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://gw<x>.example.com",
+        "https://gw%20x.example.com",
+        "https://gw!x.example.com",
+        "https://gw*.example.com",
+        "https://gw\\x.example.com",
+        'https://gw"x".example.com',
+        "https://gw,x.example.com",
+        "https://gw..example.com",
+        "https://.example.com",
+        "https://gw\u200bx.example.com",
+        "https://256.1.1.1",
+        "https://[2001:db8::zz]",
+        "https://[gw.example.com]",
+        "https://xn--a.example.com",
+        "https://xn--.example.com:8443/x",
+    ],
+    ids=[
+        "angle-brackets", "percent-escape", "bang", "star", "backslash", "quotes", "comma",
+        "empty-label", "leading-dot", "zero-width-space", "ipv4-octet", "ipv6-digit",
+        "bracketed-name", "bad-punycode", "empty-punycode",
+    ],
+)
+def test_normalize_base_url_rejects_a_host_no_request_can_reach(url):
+    assert_base_url_rejected(url)
+
+
+@pytest.mark.parametrize(
+    ("url", "root"),
+    [
+        ("https://10.0.0.5", "https://10.0.0.5"),
+        ("https://10.0.0.5:8443/x", "https://10.0.0.5:8443/x"),
+        ("http://[::1]", "http://[::1]"),
+        ("http://[2001:db8::1]:8080", "http://[2001:db8::1]:8080"),
+        ("http://localhost", "http://localhost"),
+        ("http://localhost:8080/", "http://localhost:8080"),
+        ("https://gw.example.com/a%20b", "https://gw.example.com/a%20b"),
+        ("https://gw.example.com/a%20b/api/1.1/json", "https://gw.example.com/a%20b"),
+        ("https://hf_proxy:8443", "https://hf_proxy:8443"),
+        ("https://gw-1.example.com.", "https://gw-1.example.com."),
+        ("https://xn--bcher-kva.example", "https://xn--bcher-kva.example"),
+        ("https://bücher.example/x", "https://bücher.example/x"),
+        ("https://gw.example.com/café", "https://gw.example.com/café"),
+    ],
+    ids=[
+        "ipv4", "ipv4-port-path", "ipv6", "ipv6-port", "localhost", "localhost-port",
+        "encoded-space", "encoded-space-and-api-prefix", "underscore", "root-dot", "punycode",
+        "idn", "non-ascii-path",
+    ],
+)
+def test_normalize_base_url_accepts_a_reachable_host(url, root):
+    assert normalize_base_url(url) == root
+    assert Config(base_url_override=url).base_url == f"{root}/api/1.1/json"
+
+
+def test_normalize_base_url_keeps_the_api_prefix_match_case_sensitive():
+    assert normalize_base_url("https://gw.example.com/API/1.1/JSON") == (
+        "https://gw.example.com/API/1.1/JSON"
+    )
 
 
 @pytest.mark.parametrize(

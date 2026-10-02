@@ -9,6 +9,7 @@ import pytest
 from conftest import subprocess_env
 from typer.testing import CliRunner
 
+import hfox.cli.main as main_mod
 from hfox.cli.main import cli
 from hfox.core.errors import CancelledError, ValidationError
 
@@ -601,11 +602,17 @@ def test_dry_run_list_sends_size_and_page():
         ("assets", "types", "list", "--page", "0"),
     ],
 )
-def test_out_of_range_ids_and_paging_are_usage_errors(mock_api, args):
+def test_out_of_range_ids_and_paging_are_validation_errors(mock_api, monkeypatch, capsys, args):
     captured = mock_api(lambda r: httpx.Response(200, json={}))
-    result = run(*args)
-    assert result.exit_code == 2  # click usage error; main.app() maps it to 3
-    assert "range" in result.output
+    for key, value in ENV.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(sys, "argv", ["hfox", *args])
+    with pytest.raises(SystemExit) as exc:
+        main_mod.app()
+    payload = json.loads(capsys.readouterr().out)
+    assert exc.value.code == 3
+    assert (payload["type"], payload["exit_code"]) == ("validation", 3)
+    assert "range" in payload["error"]
     assert captured == []
 
 

@@ -36,7 +36,7 @@ MAX_ATTACHMENT_BYTES = 25_000_000
 NOT_IN_GROUP = "Contact not part of the contact group"
 
 _DIGITS = re.compile(r"[0-9]+")
-_CONTACT_ID = re.compile(r"[1-9][0-9]*")
+_SIGNED_DIGITS = re.compile(r"[+-]?[0-9]+")
 _EMAIL = re.compile(r"[^@/\s]+@[^@/\s]+")
 
 
@@ -90,13 +90,32 @@ def split_csv(value: str | None) -> list[str] | None:
 
 
 def split_csv_ints(value: str | None) -> list[int] | None:
-    """Split a comma-separated string of ASCII digits into ints; [] when blank, None for None."""
+    """Split a comma-separated string of ids into ints; [] when blank, None for None.
+
+    Raises ValidationError unless every part is ASCII digits naming an id of at least 1.
+    """
     parts = split_csv(value)
     if parts is None:
         return None if value is None else []
     if not all(_DIGITS.fullmatch(p) for p in parts):
         raise ValidationError(f"Expected comma-separated integers, got '{value}'.")
-    return [int(p) for p in parts]
+    if not all(p.strip("0") for p in parts):
+        raise ValidationError(f"Expected ids of at least 1, got '{value}'.")
+    try:
+        return [int(p) for p in parts]
+    except ValueError as exc:  # int() refuses more than 4300 digits
+        raise ValidationError("Expected comma-separated ids; one has too many digits.") from exc
+
+
+def require_ids(value: str | None, flag: str) -> list[int] | None:
+    """Return the ids of an optional comma-separated flag; None when it was not given.
+
+    Raises ValidationError naming `flag` when the value lists no id.
+    """
+    ids = split_csv_ints(value)
+    if value is not None and not ids:
+        raise ValidationError(f"{flag} needs at least one id.")
+    return ids
 
 
 def require_nonblank(value: str | None, flag: str) -> str:
@@ -111,20 +130,56 @@ def nonblank_or_none(value: str | None) -> str | None:
     return value if value and value.strip() else None
 
 
+def strip_or_none(value: str | None) -> str | None:
+    """Return `value` without outer whitespace, or None when it is missing or whitespace-only."""
+    return (value and value.strip()) or None
+
+
+def strip_or_reject(value: str | None, flag: str) -> str | None:
+    """Return an optional one-line value without outer whitespace; None when it was not given.
+
+    Raises ValidationError naming `flag` when the value is empty or whitespace-only.
+    """
+    return None if value is None else require_nonblank(value, flag).strip()
+
+
 def validate_ticket_id(value: str) -> str:
-    """Return a ticket number; raise ValidationError unless it is ASCII digits."""
+    """Return a ticket number without leading zeros, for the request path.
+
+    Raises ValidationError unless `value` is ASCII digits naming a number of at least 1.
+    """
     if not _DIGITS.fullmatch(value):
         raise ValidationError(f"Invalid ticket id '{value}'; expected the numeric ticket number.")
+    number = value.lstrip("0")
+    if not number:
+        raise ValidationError(f"Invalid ticket id '{value}'; a ticket number is at least 1.")
+    return number
+
+
+def validate_id_text(value: str | None, flag: str) -> str | None:
+    """Return `value` unchanged; raise ValidationError when it is a whole number below 1.
+
+    For a flag that takes an id or a keyword; text that is not a whole number passes.
+    """
+    if value is None:
+        return None
+    text = value.strip()
+    if _SIGNED_DIGITS.fullmatch(text) and (text.startswith("-") or not text.strip("+0")):
+        raise ValidationError(f"Invalid {flag} value '{value}'; an id must be at least 1.")
     return value
 
 
 def validate_contact_ref(value: str) -> str:
-    """Return a contact reference; raise ValidationError unless it is a positive id or an email."""
-    if not (_CONTACT_ID.fullmatch(value) or _EMAIL.fullmatch(value)):
+    """Return a contact id without leading zeros, or an email address as given, for the path.
+
+    Raises ValidationError unless `value` is ASCII digits naming an id of at least 1, or an email.
+    """
+    number = value.lstrip("0") if _DIGITS.fullmatch(value) else ""
+    if not (number or _EMAIL.fullmatch(value)):
         raise ValidationError(
             f"Invalid contact '{value}'; expected a positive id or an email address."
         )
-    return value
+    return number or value
 
 
 def _refusal(p: Path) -> ValidationError:
@@ -331,14 +386,6 @@ def parse_json(text: str, source: str) -> Any:
         return json.loads(text, parse_constant=_reject_constant, parse_float=_finite_float)
     except ValueError as exc:  # includes JSONDecodeError
         raise ValidationError(f"Invalid JSON in {source}: {exc}") from exc
-
-
-def load_json_file(
-    path: str, *, forbidden: Iterable[Path] = (), secrets: Iterable[str] = ()
-) -> Any:
-    """Read and parse a UTF-8 JSON file through read_text_file; '-' is an ordinary name."""
-    p = _expand(path)
-    return parse_json(read_text_file(path, forbidden=forbidden, secrets=secrets), str(p))
 
 
 def count_failures(result: Any, *, benign: str | None = None) -> int:

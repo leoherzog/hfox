@@ -16,6 +16,7 @@ from hfox.core.config import (
     load_config,
     save_credentials,
     save_settings,
+    stored_account,
     validate_host,
 )
 from hfox.core.errors import AuthError, ValidationError
@@ -197,7 +198,8 @@ def test_base_url_override_stands_in_for_the_subdomain():
 # --- load_config precedence -----------------------------------------------------------
 
 
-def test_empty_env_values_fall_back_to_the_files(tmp_path, monkeypatch):
+@pytest.mark.parametrize("blank", ["", "  ", "\t"], ids=["empty", "spaces", "tab"])
+def test_blank_env_values_fall_back_to_the_files(tmp_path, monkeypatch, blank):
     cfg_dir = tmp_path / "hfox"
     save_credentials(
         cfg_dir,
@@ -207,7 +209,7 @@ def test_empty_env_values_fall_back_to_the_files(tmp_path, monkeypatch):
         auth_code="disk-code",
         base_url="https://disk.example",
     )
-    save_settings(cfg_dir, {"default_format": "yaml"})
+    save_settings(cfg_dir, {"default_format": "yaml", "default_staff_id": 7})
     for name in (
         "HFOX_SUBDOMAIN",
         "HFOX_REGION",
@@ -215,13 +217,166 @@ def test_empty_env_values_fall_back_to_the_files(tmp_path, monkeypatch):
         "HFOX_AUTH_CODE",
         "HFOX_BASE_URL",
         "HFOX_FORMAT",
+        "HFOX_STAFF_ID",
     ):
-        monkeypatch.setenv(name, "")
+        monkeypatch.setenv(name, blank)
     cfg = load_config(cfg_dir)
     assert (cfg.subdomain, cfg.region) == ("disk", "eu")
     assert (cfg.api_key, cfg.auth_code) == ("disk-key", "disk-code")
     assert cfg.base_url_override == "https://disk.example"
+    assert cfg.base_url_source == f"base_url in {cfg_dir / 'token.json'}"
     assert cfg.default_format == "yaml"
+    assert (cfg.default_staff_id, cfg.staff_id_error) == (7, None)
+
+
+def test_whitespace_only_token_values_fall_back_to_config_toml(tmp_path):
+    write_token(
+        tmp_path, subdomain="  ", region=" ", base_url="\t", api_key="  ", auth_code="\n"
+    )
+    write_toml(
+        tmp_path, 'subdomain = "cfg"\nregion = "eu"\nbase_url = "https://cfg.example"\n'
+    )
+    cfg = load_config(tmp_path)
+    assert (cfg.subdomain, cfg.region) == ("cfg", "eu")
+    assert cfg.base_url_override == "https://cfg.example"
+    assert cfg.base_url_source == f"base_url in {tmp_path / 'config.toml'}"
+    assert (cfg.api_key, cfg.auth_code) == (None, None)
+    assert cfg.is_authenticated is False
+
+
+def test_whitespace_only_values_in_both_files_resolve_to_the_defaults(tmp_path):
+    write_token(tmp_path, subdomain=" ", region=" ", base_url=" ")
+    write_toml(
+        tmp_path,
+        'subdomain = " "\nregion = " "\nbase_url = " "\ndefault_format = " "\n'
+        'default_staff_id = " "\n',
+    )
+    cfg = load_config(tmp_path)
+    assert (cfg.subdomain, cfg.region, cfg.base_url_override) == (None, "us", None)
+    assert cfg.default_format == "json"
+    assert (cfg.default_staff_id, cfg.staff_id_error) == (None, None)
+
+
+PADDED = {
+    "subdomain": " acme ",
+    "region": "\teu ",
+    "base_url": "  https://gw.internal/Hf\n",
+    "api_key": " key-12345 ",
+    "auth_code": "\tcode-12345\n",
+}
+
+
+def assert_stripped(cfg):
+    assert (cfg.subdomain, cfg.region) == ("acme", "eu")
+    assert cfg.base_url_override == "https://gw.internal/Hf"
+    assert (cfg.api_key, cfg.auth_code) == ("key-12345", "code-12345")
+
+
+def test_a_padded_env_value_is_set_and_stripped(tmp_path, monkeypatch):
+    write_token(tmp_path, subdomain="tok", api_key="tok-key-12345")
+    for key, value in PADDED.items():
+        monkeypatch.setenv(f"HFOX_{key.upper()}", value)
+    monkeypatch.setenv("HFOX_FORMAT", " yaml ")
+    cfg = load_config(tmp_path)
+    assert_stripped(cfg)
+    assert cfg.default_format == "yaml"
+
+
+def test_a_padded_token_value_is_set_and_stripped(tmp_path):
+    write_token(tmp_path, **PADDED)
+    write_toml(tmp_path, 'subdomain = "cfg"\nregion = "us"\n')
+    assert_stripped(load_config(tmp_path))
+
+
+def test_a_padded_config_toml_value_is_set_and_stripped(tmp_path):
+    write_token(tmp_path, api_key=PADDED["api_key"], auth_code=PADDED["auth_code"])
+    write_toml(
+        tmp_path,
+        'subdomain = " acme "\nregion = "\\teu "\nbase_url = "  https://gw.internal/Hf\\n"\n'
+        'default_format = " yaml "\n',
+    )
+    cfg = load_config(tmp_path)
+    assert_stripped(cfg)
+    assert cfg.default_format == "yaml"
+
+
+@pytest.mark.parametrize("filename", ["token.json", "config.toml"])
+def test_stored_account_strips_as_load_config_does(tmp_path, filename):
+    values = {key: PADDED[key] for key in ("subdomain", "region", "base_url")}
+    if filename == "token.json":
+        write_token(tmp_path, **values)
+    else:
+        write_toml(tmp_path, "".join(f"{k} = {json.dumps(v)}\n" for k, v in values.items()))
+    cfg = load_config(tmp_path)
+    assert stored_account(tmp_path) == {
+        "subdomain": cfg.subdomain,
+        "region": cfg.region,
+        "base_url": cfg.base_url_override,
+        "default_staff_id": None,
+    }
+    assert stored_account(tmp_path)["subdomain"] == "acme"
+
+
+# --- host case ------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("written", "host", "url"),
+    [
+        ("ACME", "acme", "https://acme.happyfox.com/api/1.1/json"),
+        (" Support.Acme.COM ", "support.acme.com", "https://support.acme.com/api/1.1/json"),
+    ],
+    ids=["subdomain", "custom-host"],
+)
+@pytest.mark.parametrize("source", ["env", "token.json", "config.toml"])
+def test_load_config_lowercases_the_host(tmp_path, monkeypatch, source, written, host, url):
+    if source == "env":
+        monkeypatch.setenv("HFOX_SUBDOMAIN", written)
+    elif source == "token.json":
+        write_token(tmp_path, subdomain=written)
+    else:
+        write_toml(tmp_path, f'subdomain = "{written}"\n')
+    cfg = load_config(tmp_path)
+    assert cfg.subdomain == host
+    assert cfg.base_url == url
+    if source != "env":
+        assert stored_account(tmp_path)["subdomain"] == host
+
+
+@pytest.mark.parametrize("source", ["env", "token.json", "config.toml"])
+def test_base_url_override_lowercases_the_host_and_keeps_the_path_case(
+    tmp_path, monkeypatch, source
+):
+    written = "HTTPS://GW.Internal:8443/Tenant/HF/"
+    if source == "env":
+        monkeypatch.setenv("HFOX_BASE_URL", written)
+    elif source == "token.json":
+        write_token(tmp_path, base_url=written)
+    else:
+        write_toml(tmp_path, f'base_url = "{written}"\n')
+    assert load_config(tmp_path).base_url == "https://gw.internal:8443/Tenant/HF/api/1.1/json"
+
+
+@pytest.mark.parametrize("literal", ["false", "0", "[]"])
+def test_non_string_default_format_stays_set(tmp_path, literal):
+    write_toml(tmp_path, f"default_format = {literal}\n")
+    assert load_config(tmp_path).default_format == tomllib.loads(f"v = {literal}")["v"]
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [("subdomain", "cfg"), ("region", "eu"), ("base_url", "https://cfg.example")],
+    ids=["subdomain", "region", "base_url"],
+)
+@pytest.mark.parametrize("blank", [None, "", "  "], ids=["null", "empty", "spaces"])
+def test_load_config_and_stored_account_agree_on_an_unset_token_value(
+    tmp_path, key, value, blank
+):
+    write_token(tmp_path, **{key: blank})
+    write_toml(tmp_path, f'{key} = "{value}"\n')
+    cfg = load_config(tmp_path)
+    loaded = {"subdomain": cfg.subdomain, "region": cfg.region, "base_url": cfg.base_url_override}
+    assert loaded[key] == stored_account(tmp_path)[key] == value
 
 
 def test_token_json_beats_config_toml(tmp_path):
@@ -264,25 +419,155 @@ def test_malformed_env_staff_id_does_not_fall_back_to_config_toml(tmp_path, monk
     assert "HFOX_STAFF_ID" in str(cfg.staff_id_error)
 
 
+def test_whitespace_only_env_staff_id_leaves_a_malformed_config_toml_value_named(
+    tmp_path, monkeypatch
+):
+    path = write_toml(tmp_path, 'default_staff_id = "x"\n')
+    monkeypatch.setenv("HFOX_STAFF_ID", "  ")
+    cfg = load_config(tmp_path)
+    assert cfg.default_staff_id is None
+    assert f"default_staff_id in {path}" in str(cfg.staff_id_error)
+    assert "HFOX_STAFF_ID" not in str(cfg.staff_id_error)
+
+
+@pytest.mark.parametrize("blank", ["", "  "], ids=["empty", "spaces"])
 @pytest.mark.parametrize(
     ("token", "toml", "filename"),
     [
-        # An empty HFOX_BASE_URL is unset, so the token value is the one in use.
+        # A blank HFOX_BASE_URL is unset, so the token value is the one in use.
         ({"base_url": "gw.internal:8443"}, "", "token.json"),
-        # An empty token value is unset, so the config.toml value is the one in use.
-        ({"base_url": ""}, 'base_url = "gw.internal:8443"\n', "config.toml"),
+        # A blank token value is unset, so the config.toml value is the one in use.
+        ({"base_url": "{blank}"}, 'base_url = "gw.internal:8443"\n', "config.toml"),
     ],
     ids=["token.json", "config.toml"],
 )
-def test_base_url_error_skips_empty_sources_when_naming_the_file(
-    tmp_path, monkeypatch, token, toml, filename
+def test_base_url_error_skips_blank_sources_when_naming_the_file(
+    tmp_path, monkeypatch, token, toml, filename, blank
 ):
-    write_token(tmp_path, **token)
+    write_token(tmp_path, **{key: value.format(blank=blank) for key, value in token.items()})
     write_toml(tmp_path, toml)
-    monkeypatch.setenv("HFOX_BASE_URL", "")
+    monkeypatch.setenv("HFOX_BASE_URL", blank)
     with pytest.raises(ValidationError) as exc:
         _ = load_config(tmp_path).base_url
     assert f"base_url in {tmp_path / filename}" in str(exc.value)
+
+
+# --- blank HFOX_FORMAT through main.app() ---------------------------------------------
+
+
+def test_whitespace_only_env_format_falls_back_to_json(monkeypatch, capsys):
+    monkeypatch.setenv("HFOX_FORMAT", "  ")
+    code, out, _ = run_main(monkeypatch, capsys, ["--dry-run", "auth", "logout"])
+    assert code == 0
+    assert json.loads(out)["dry_run"] is True
+
+
+def test_whitespace_only_env_format_leaves_the_config_file_as_the_named_source(
+    tmp_path, monkeypatch, capsys
+):
+    path = write_toml(tmp_path, 'default_format = "xml"\n')
+    monkeypatch.setenv("HFOX_FORMAT", "  ")
+    code, out, _ = run_main(
+        monkeypatch, capsys, ["--config-dir", str(tmp_path), "--dry-run", "auth", "logout"]
+    )
+    payload = json.loads(out)
+    assert (code, payload["type"]) == (3, "validation")
+    assert payload["error"] == (
+        f"Unknown output format 'xml' from default_format in {path}; "
+        "expected json, table, csv or yaml."
+    )
+
+
+def test_padded_env_format_is_named_without_its_padding(monkeypatch, capsys):
+    monkeypatch.setenv("HFOX_FORMAT", " xml ")
+    code, out, _ = run_main(monkeypatch, capsys, ["--dry-run", "auth", "logout"])
+    payload = json.loads(out)
+    assert (code, payload["type"]) == (3, "validation")
+    assert payload["error"] == (
+        "Unknown output format 'xml' from HFOX_FORMAT; expected json, table, csv or yaml."
+    )
+
+
+# --- blank config directory through main.app() ----------------------------------------
+
+
+@pytest.mark.parametrize("blank", ["  ", "\t"], ids=["spaces", "tab"])
+def test_whitespace_only_env_config_dir_falls_back_to_the_default(
+    tmp_path, monkeypatch, capsys, blank
+):
+    monkeypatch.setenv("HFOX_CONFIG_DIR", blank)
+    code, out, _ = run_main(monkeypatch, capsys, ["--dry-run", "auth", "logout"])
+    assert code == 0
+    assert json.loads(out)["config_dir"] == str(tmp_path / "home" / ".config" / "hfox")
+
+
+@pytest.mark.parametrize("form", ["separate", "equals"])
+def test_whitespace_only_config_dir_flag_falls_back_to_the_env_value(
+    tmp_path, monkeypatch, capsys, form
+):
+    flag = ["--config-dir", "  "] if form == "separate" else ["--config-dir=  "]
+    code, out, _ = run_main(monkeypatch, capsys, [*flag, "--dry-run", "auth", "logout"])
+    assert code == 0
+    assert json.loads(out)["config_dir"] == str(tmp_path / "cfg")
+
+
+# --- control character in the base URL through main.app() -----------------------------
+
+
+@pytest.mark.parametrize("argv", [["system", "staff"], ["auth", "status"]], ids=["read", "status"])
+def test_base_url_with_a_control_character_exits_3_and_sends_nothing(
+    mock_api, monkeypatch, capsys, argv
+):
+    captured = mock_api(lambda request: pytest.fail("no request expected"))
+    for key, value in (("SUBDOMAIN", "acme"), ("API_KEY", "k"), ("AUTH_CODE", "c")):
+        monkeypatch.setenv(f"HFOX_{key}", value)
+    monkeypatch.setenv("HFOX_BASE_URL", "https://gw.exa\tmple.com")
+    code, out, _ = run_main(monkeypatch, capsys, argv)
+    payload = json.loads(out)
+    assert (code, payload["type"]) == (3, "validation")
+    assert payload["error"] == (
+        "Invalid HFOX_BASE_URL 'https://gw.exa\\tmple.com': expected http(s)://host."
+    )
+    assert captured == []
+
+
+# --- an unusable base URL host through main.app() -------------------------------------
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [["system", "staff"], ["--dry-run", "system", "staff"], ["auth", "status"], ["auth", "login"]],
+    ids=["read", "dry-run", "status", "login"],
+)
+@pytest.mark.parametrize("source", ["env", "token.json", "config.toml"])
+@pytest.mark.parametrize(
+    "url",
+    ["https://gw exa mple.com", "https://gw<x>.example.com", "https://xn--a.example.com"],
+    ids=["space", "brackets", "punycode"],
+)
+def test_base_url_with_an_unusable_host_exits_3_and_sends_nothing(
+    mock_api, tmp_path, monkeypatch, capsys, argv, source, url
+):
+    captured = mock_api(lambda request: pytest.fail("no request expected"))
+    for key, value in (("SUBDOMAIN", "acme"), ("API_KEY", "k"), ("AUTH_CODE", "c")):
+        monkeypatch.setenv(f"HFOX_{key}", value)
+    cfg_dir = tmp_path / "cfg"
+    if source == "env":
+        monkeypatch.setenv("HFOX_BASE_URL", url)
+        name = "HFOX_BASE_URL"
+    elif source == "token.json":
+        write_token(cfg_dir, base_url=url)
+        name = f"base_url in {cfg_dir / 'token.json'}"
+    else:
+        write_toml(cfg_dir, f'base_url = "{url}"\n')
+        name = f"base_url in {cfg_dir / 'config.toml'}"
+    code, out, _ = run_main(monkeypatch, capsys, argv)
+    payload = json.loads(out)
+    assert (code, payload["type"]) == (3, "validation")
+    assert payload["error"] == f"Invalid {name} {url!r}: expected http(s)://host."
+    assert captured == []
+    # A rejected login writes nothing.
+    assert not (cfg_dir / "token.json").exists() or source == "token.json"
 
 
 # --- ConfigError ----------------------------------------------------------------------

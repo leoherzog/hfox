@@ -18,10 +18,13 @@ from ._util import (
     exit_on_failures,
     nonblank_or_none,
     parse_json,
+    require_ids,
     require_nonblank,
     split_csv,
-    split_csv_ints,
+    strip_or_none,
+    strip_or_reject,
     text_file_help,
+    validate_id_text,
     validate_ticket_id,
 )
 from .cf import CF_HELP, CF_JSON_HELP, parse_cf_json, parse_cf_options
@@ -53,11 +56,15 @@ def _check_unassign(unassign: bool, assignee: int | None, attachment: list[str] 
         raise ValidationError("--unassign cannot be combined with --attachment.")
 
 
+def _check_null(body: dict[str, Any], attachment: list[str] | None) -> None:
+    """Reject a null in `body` alongside a file; multipart form data would drop it."""
+    if attachment and None in body.values():
+        raise ValidationError("A null value cannot be combined with --attachment.")
+
+
 def _check_update(body: dict[str, Any], noun: str, attachment: list[str] | None) -> None:
     """Require a message, a file or a property, and reject a null alongside a file."""
-    if attachment and None in body.values():
-        # Multipart form data would drop the null that clears a field.
-        raise ValidationError("A null value cannot be combined with --attachment.")
+    _check_null(body, attachment)
     if attachment or body.get("html") or body.get("plaintext"):
         return
     if any(k in _PROPERTY_KEYS or k.startswith(_UPDATE_CF_PREFIXES) for k in body):
@@ -96,7 +103,11 @@ def list_tickets(
 ):
     """List, search or filter tickets."""
     obj = get_ctx(ctx)
-    query = nonblank_or_none(query)
+    query = strip_or_none(query)
+    statuses = split_csv(status)
+    for entry in statuses or []:
+        validate_id_text(entry, "--status")
+    status = comma_join(statuses)
     if query and not status:
         # The documented search URL is tickets/?status=_all&q=...
         status = "_all"
@@ -105,7 +116,7 @@ def list_tickets(
             "status": status,
             "category": category or None,
             "q": query,
-            "sort": sort,
+            "sort": strip_or_none(sort),
             "minify_response": minify or None,
             "fields": comma_join(split_csv(fields)),
             "page": page,
@@ -126,7 +137,7 @@ def get_ticket(
 ):
     """Fetch one ticket."""
     obj = get_ctx(ctx)
-    validate_ticket_id(ticket_id)
+    ticket_id = validate_ticket_id(ticket_id)
     params = compact({"show_cf_changes": show_cf_changes or None})
     data = obj.call("GET", f"ticket/{ticket_id}/", params=params)
     obj.render(data)
@@ -137,11 +148,11 @@ def create_ticket(
     ctx: typer.Context,
     subject: str = typer.Option(..., "--subject", help="Ticket subject."),
     category: int = typer.Option(
-        ..., "--category", help="Public category id (see hfox system categories)."
+        ..., "--category", min=1, help="Public category id (see hfox system categories)."
     ),
     name: str = typer.Option(None, "--name", help="Contact name (for a new contact)."),
     email: str = typer.Option(None, "--email", help="Contact email (for a new contact)."),
-    client: int = typer.Option(None, "--client", help="Existing contact (client) id."),
+    client: int = typer.Option(None, "--client", min=1, help="Existing contact (client) id."),
     phone: str = typer.Option(None, "--phone", help="Contact phone number."),
     text: str = typer.Option(None, "--text", help="Plain-text ticket body."),
     text_file: str = typer.Option(
@@ -151,8 +162,8 @@ def create_ticket(
     html_file: str = typer.Option(
         None, "--html-file", help=text_file_help("HTML ticket body")
     ),
-    priority: int = typer.Option(None, "--priority", help="Priority id."),
-    assignee: int = typer.Option(None, "--assignee", help="Assignee staff id."),
+    priority: int = typer.Option(None, "--priority", min=1, help="Priority id."),
+    assignee: int = typer.Option(None, "--assignee", min=1, help="Assignee staff id."),
     unassign: bool = typer.Option(False, "--unassign", help=CREATE_UNASSIGN_HELP),
     tags: str = typer.Option(None, "--tags", help="Comma-separated tags."),
     cc: str = typer.Option(None, "--cc", help="Comma-separated CC addresses."),
@@ -181,7 +192,7 @@ def create_ticket(
     name, email = nonblank_or_none(name), nonblank_or_none(email)
     if not (text or html):
         raise ValidationError("Provide a ticket body with --text or --html.")
-    if not ((name and email) or client):
+    if not ((name and email) or client is not None):
         raise ValidationError(
             "Identify the contact: pass both --name and --email, or --client <id>."
         )
@@ -190,7 +201,7 @@ def create_ticket(
             "name": name,
             "email": email,
             "client": client,
-            "phone": phone,
+            "phone": strip_or_reject(phone, "--phone"),
             "subject": subject,
             "text": text,
             "html": html,
@@ -200,8 +211,8 @@ def create_ticket(
             "tags": comma_join(split_csv(tags)),
             "cc": comma_join(split_csv(cc)),
             "bcc": comma_join(split_csv(bcc)),
-            "created_at": created_at,
-            "due_date": due_date,
+            "created_at": strip_or_reject(created_at, "--created-at"),
+            "due_date": strip_or_reject(due_date, "--due-date"),
             "visible_only_staff": visible_only_staff or None,
         }
     )
@@ -211,6 +222,7 @@ def create_ticket(
     body.update(parse_cf_json(cf_json, "t-cf-", ("t-cf-", "c-cf-")))
     body.update(parse_cf_options(contact_cf, prefix="c-cf-", json_flag="--contact-cf-json"))
     body.update(parse_cf_json(contact_cf_json, "c-cf-", flag="--contact-cf-json"))
+    _check_null(body, attachment)
     result = obj.call("POST", "tickets/", **obj.attach(body, attachment))
     obj.render(result)
     if isinstance(result, dict) and result.get("display_id"):
@@ -267,12 +279,12 @@ def reply(
     text_file: str = typer.Option(
         None, "--text-file", help=text_file_help("plain-text reply body")
     ),
-    status: int = typer.Option(None, "--status", help="New status id."),
-    priority: int = typer.Option(None, "--priority", help="New priority id."),
-    assignee: int = typer.Option(None, "--assignee", help="New assignee staff id."),
+    status: int = typer.Option(None, "--status", min=1, help="New status id."),
+    priority: int = typer.Option(None, "--priority", min=1, help="New priority id."),
+    assignee: int = typer.Option(None, "--assignee", min=1, help="New assignee staff id."),
     unassign: bool = typer.Option(False, "--unassign", help=UNASSIGN_HELP),
     time_spent: int = typer.Option(
-        None, "--time-spent", help="Minutes spent; some categories require it."
+        None, "--time-spent", min=0, help="Minutes spent; some categories require it."
     ),
     due_date: str = typer.Option(None, "--due-date", help="Due date."),
     tags: str = typer.Option(None, "--tags", help=UPDATE_TAGS_HELP),
@@ -286,11 +298,12 @@ def reply(
         False, "--send-survey", help="Send a satisfaction survey."
     ),
     last_staff_message: int = typer.Option(
-        None, "--last-staff-message", help="Id of the last staff message seen."
+        None, "--last-staff-message", min=1, help="Id of the last staff message seen."
     ),
     parent_update: int = typer.Option(
         None,
         "--parent-update",
+        min=1,
         help="Id of the parent update (for tickets from Facebook/Twitter conversations).",
     ),
     cf: list[str] = typer.Option(None, "--cf", help=CF_HELP),
@@ -305,7 +318,7 @@ def reply(
 ):
     """Post a public staff reply to a ticket, or change its properties."""
     obj = get_ctx(ctx)
-    validate_ticket_id(ticket_id)
+    ticket_id = validate_ticket_id(ticket_id)
     _check_unassign(unassign, assignee, attachment)
     body = compact(
         {
@@ -315,11 +328,11 @@ def reply(
             "priority": priority,
             "assignee": assignee,
             "time_spent": time_spent,
-            "due_date": due_date,
+            "due_date": strip_or_reject(due_date, "--due-date"),
             "tags": comma_join(split_csv(tags)),
             "cc": comma_join(split_csv(cc)),
             "bcc": comma_join(split_csv(bcc)),
-            "subject": subject,
+            "subject": strip_or_reject(subject, "--subject"),
             "update_customer": update_customer or None,
             "send_survey": send_survey or None,
             "last_staff_message": last_staff_message,
@@ -359,12 +372,12 @@ def note(
         "--alert",
         help="Alert 's' (all subscribers), 'c' (category agents) or an agent id.",
     ),
-    status: int = typer.Option(None, "--status", help="New status id."),
-    priority: int = typer.Option(None, "--priority", help="New priority id."),
-    assignee: int = typer.Option(None, "--assignee", help="New assignee staff id."),
+    status: int = typer.Option(None, "--status", min=1, help="New status id."),
+    priority: int = typer.Option(None, "--priority", min=1, help="New priority id."),
+    assignee: int = typer.Option(None, "--assignee", min=1, help="New assignee staff id."),
     unassign: bool = typer.Option(False, "--unassign", help=UNASSIGN_HELP),
     time_spent: int = typer.Option(
-        None, "--time-spent", help="Minutes spent; some categories require it."
+        None, "--time-spent", min=0, help="Minutes spent; some categories require it."
     ),
     due_date: str = typer.Option(None, "--due-date", help="Due date."),
     tags: str = typer.Option(None, "--tags", help=UPDATE_TAGS_HELP),
@@ -380,18 +393,18 @@ def note(
 ):
     """Add a private note to a ticket, or change its properties."""
     obj = get_ctx(ctx)
-    validate_ticket_id(ticket_id)
+    ticket_id = validate_ticket_id(ticket_id)
     _check_unassign(unassign, assignee, attachment)
     body = compact(
         {
             "html": nonblank_or_none(obj.text_input(html, html_file, "--html")),
             "plaintext": nonblank_or_none(obj.text_input(text, text_file, "--text")),
-            "alert": alert,
+            "alert": validate_id_text(strip_or_reject(alert, "--alert"), "--alert"),
             "status": status,
             "priority": priority,
             "assignee": assignee,
             "time_spent": time_spent,
-            "due_date": due_date,
+            "due_date": strip_or_reject(due_date, "--due-date"),
             "tags": comma_join(split_csv(tags)),
         }
     )
@@ -413,7 +426,7 @@ def note(
 def user_reply(
     ctx: typer.Context,
     ticket_id: str = typer.Argument(..., help=TICKET_HELP),
-    user: int = typer.Option(..., "--user", help="Contact (user) id posting the reply."),
+    user: int = typer.Option(..., "--user", min=1, help="Contact (user) id posting the reply."),
     text: str = typer.Option(None, "--text", help="Reply body."),
     text_file: str = typer.Option(None, "--text-file", help=text_file_help("reply body")),
     cc: str = typer.Option(None, "--cc", help="Comma-separated CC addresses."),
@@ -424,7 +437,7 @@ def user_reply(
 ):
     """Post a reply to a ticket as the contact (user)."""
     obj = get_ctx(ctx)
-    validate_ticket_id(ticket_id)
+    ticket_id = validate_ticket_id(ticket_id)
     text = obj.text_input(text, text_file, "--text")
     if text is None:
         raise ValidationError("Provide the reply body with --text or --text-file.")
@@ -447,14 +460,14 @@ def user_reply(
 def update(
     ctx: typer.Context,
     ticket_id: str = typer.Argument(..., help=TICKET_HELP),
-    status: int = typer.Option(None, "--status", help="New status id."),
-    priority: int = typer.Option(None, "--priority", help="New priority id."),
-    assignee: int = typer.Option(None, "--assignee", help="New assignee staff id."),
+    status: int = typer.Option(None, "--status", min=1, help="New status id."),
+    priority: int = typer.Option(None, "--priority", min=1, help="New priority id."),
+    assignee: int = typer.Option(None, "--assignee", min=1, help="New assignee staff id."),
     unassign: bool = typer.Option(False, "--unassign", help=UNASSIGN_HELP),
     due_date: str = typer.Option(None, "--due-date", help="Due date."),
     tags: str = typer.Option(None, "--tags", help=UPDATE_TAGS_HELP),
     time_spent: int = typer.Option(
-        None, "--time-spent", help="Minutes spent; some categories require it."
+        None, "--time-spent", min=0, help="Minutes spent; some categories require it."
     ),
     cf: list[str] = typer.Option(None, "--cf", help=CF_HELP),
     cf_json: str = typer.Option(None, "--cf-json", help=CF_JSON_HELP),
@@ -463,7 +476,7 @@ def update(
 ):
     """Change ticket properties without posting a message."""
     obj = get_ctx(ctx)
-    validate_ticket_id(ticket_id)
+    ticket_id = validate_ticket_id(ticket_id)
     _check_unassign(unassign, assignee, None)
     body = compact(
         {
@@ -471,7 +484,7 @@ def update(
             "priority": priority,
             "assignee": assignee,
             "time_spent": time_spent,
-            "due_date": due_date,
+            "due_date": strip_or_reject(due_date, "--due-date"),
             "tags": comma_join(split_csv(tags)),
         }
     )
@@ -497,7 +510,7 @@ def update_cf(
 ):
     """Update one or more custom fields on a ticket."""
     obj = get_ctx(ctx)
-    validate_ticket_id(ticket_id)
+    ticket_id = validate_ticket_id(ticket_id)
     fields = parse_cf_options(cf, prefix="t-cf-")
     fields.update(parse_cf_json(cf_json, "t-cf-"))
     if not fields:
@@ -519,7 +532,7 @@ def tags(
 ):
     """Add and/or remove tags on a ticket."""
     obj = get_ctx(ctx)
-    validate_ticket_id(ticket_id)
+    ticket_id = validate_ticket_id(ticket_id)
     add_tags = comma_join(split_csv(add))
     remove_tags = comma_join(split_csv(remove))
     if not (add_tags or remove_tags):
@@ -551,13 +564,9 @@ def subscribe(
 ):
     """Subscribe agents to a ticket."""
     obj = get_ctx(ctx)
-    validate_ticket_id(ticket_id)
-    body = compact(
-        {
-            "staff_id": obj.require_staff_id(staff_id, staff),
-            "data": split_csv_ints(agents),
-        }
-    )
+    ticket_id = validate_ticket_id(ticket_id)
+    agent_ids = require_ids(agents, "--agents")
+    body = compact({"staff_id": obj.require_staff_id(staff_id, staff), "data": agent_ids})
     result = obj.call("POST", f"ticket/{ticket_id}/subscribe/", json=body)
     obj.render(result)
 
@@ -575,7 +584,7 @@ def unsubscribe(
 ):
     """Unsubscribe an agent from a ticket."""
     obj = get_ctx(ctx)
-    validate_ticket_id(ticket_id)
+    ticket_id = validate_ticket_id(ticket_id)
     body = {"staff_id": obj.require_staff_id(staff_id, staff)}
     result = obj.call("POST", f"ticket/{ticket_id}/unsubscribe/", json=body)
     obj.render(result)
@@ -621,7 +630,7 @@ def forward(
 ):
     """Forward a ticket to one or more recipients."""
     obj = get_ctx(ctx)
-    validate_ticket_id(ticket_id)
+    ticket_id = validate_ticket_id(ticket_id)
     recipients = comma_join(split_csv(to))
     if recipients is None:
         raise ValidationError("--to must list at least one address.")
@@ -630,6 +639,7 @@ def forward(
     if message is None:
         raise ValidationError("Provide the forward message with --message or --message-file.")
     require_nonblank(message, "--message")
+    attachment_ids = require_ids(ticket_attachments, "--ticket-attachments")
     body = compact(
         {
             "to": recipients,
@@ -643,7 +653,7 @@ def forward(
             "send_all_messages": send_all_messages,
             "include_pvt_notes": include_private_notes or None,
             "convert_replies_as_new_ticket": convert_replies,
-            "ticket_attachments": split_csv_ints(ticket_attachments),
+            "ticket_attachments": attachment_ids,
         }
     )
     result = obj.call("POST", f"ticket/{ticket_id}/forward/", **obj.attach(body, attachment))
@@ -654,17 +664,21 @@ def forward(
 def move(
     ctx: typer.Context,
     ticket_id: str = typer.Argument(..., help=TICKET_HELP),
-    to_category: int = typer.Option(..., "--to-category", help="Target category id."),
+    to_category: int = typer.Option(..., "--to-category", min=1, help="Target category id."),
     staff: str = typer.Option(None, "--staff", help=STAFF_HELP),
     staff_id: int = typer.Option(None, "--staff-id", min=0, help=STAFF_ID_HELP),
     note: str = typer.Option(None, "--note", help="Note to record with the move."),
     note_file: str = typer.Option(None, "--note-file", help=text_file_help("move note")),
-    assign_to: int = typer.Option(None, "--assign-to", help="Assignee staff id after the move."),
+    assign_to: int = typer.Option(
+        None, "--assign-to", min=1, help="Assignee staff id after the move."
+    ),
 ):
     """Move a ticket to another category; the acting agent's role needs the move permission."""
     obj = get_ctx(ctx)
-    validate_ticket_id(ticket_id)
+    ticket_id = validate_ticket_id(ticket_id)
     note = obj.text_input(note, note_file, "--note")
+    if note is not None:
+        require_nonblank(note, "--note")
     body = compact(
         {
             "staff_id": obj.require_staff_id(staff_id, staff),
@@ -687,7 +701,7 @@ def delete(
 ):
     """Delete a ticket (destructive)."""
     obj = get_ctx(ctx)
-    validate_ticket_id(ticket_id)
+    ticket_id = validate_ticket_id(ticket_id)
     body = {"staff_id": obj.require_staff_id(staff_id, staff)}
     obj.confirm(f"Delete ticket {ticket_id}?", yes=yes)
     result = obj.call("POST", f"ticket/{ticket_id}/delete/", json=body)

@@ -16,6 +16,7 @@ from .. import __version__
 from ..core.config import CONFIG_FILENAME, load_config
 from ..core.errors import CancelledError, HfoxError, UsageError, ValidationError
 from . import assets, auth, contacts, output, system, tickets
+from ._util import nonblank_or_none
 from .context import AppContext, as_hfox_error
 from .output import OutputFormat
 
@@ -212,14 +213,19 @@ def main(
 
 
 def _resolve_format(flag: str | None, config) -> OutputFormat:
-    """Parse the output format; an unknown name raises ValidationError naming its source."""
+    """Parse the output format; an unknown name raises ValidationError naming its source.
+
+    An empty or whitespace-only `flag` counts as not given.
+    """
+    flag = nonblank_or_none(flag)
     value = flag if flag else config.default_format
     if value is None or value == "":
         return OutputFormat.JSON
     if str(value).strip().lower() not in _FORMAT_NAMES:
+        # load_config reads past a whitespace-only HFOX_FORMAT to the file value.
         if flag:
             source = "--format"
-        elif os.environ.get("HFOX_FORMAT"):
+        elif (os.environ.get("HFOX_FORMAT") or "").strip():
             source = "HFOX_FORMAT"
         else:
             source = f"default_format in {config.dir / CONFIG_FILENAME}"

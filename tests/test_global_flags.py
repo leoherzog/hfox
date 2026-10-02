@@ -105,6 +105,10 @@ def test_quiet_and_query_combine(mock_api):
         (("tickets", "list", "--format=table"), "--format"),
         (("tickets", "list", "--format", "table"), "--format"),
         (("tickets", "list", "-f", "table"), "-f"),
+        # A blank value does not hide the flag from the scan.
+        (("tickets", "list", "--format", "  "), "--format"),
+        (("tickets", "list", "--format="), "--format"),
+        (("tickets", "list", "-f", ""), "-f"),
         (("tickets", "list", "--page-all"), "--page-all"),
         (("tickets", "get", "5", "--staff-id", "3"), "--staff-id"),
         (("tickets", "get", "5", "--staff", "alice"), "--staff"),
@@ -409,6 +413,92 @@ def test_known_formats_are_accepted(value):
 def test_empty_env_format_counts_as_unset():
     result = run("--dry-run", "system", "statuses", env_extra={"HFOX_FORMAT": ""})
     assert result.exit_code == 0, result.output
+
+
+# An empty or whitespace-only --format, in every spelling click accepts.
+BLANK_FORMAT = [
+    ("--format", ""),
+    ("--format", "  "),
+    ("--format", "\t"),
+    ("--format=",),
+    ("--format=  ",),
+    ("-f", ""),
+    ("-f", "  "),
+    ("-f  ",),
+]
+
+blank_format = pytest.mark.parametrize("flag", BLANK_FORMAT, ids=repr)
+
+
+@blank_format
+def test_blank_format_flag_falls_back_to_json(run_app, flag):
+    # The flag after the blank value is still parsed as a flag.
+    code, payload, err = run_app(*flag, "--dry-run", "system", "statuses")
+    assert code == 0, payload
+    assert payload["dry_run"] is True
+    assert err == ""
+
+
+@blank_format
+def test_blank_format_flag_falls_through_to_the_environment(mock_api, flag):
+    mock_api(lambda req: httpx.Response(200, json=[{"id": 1, "name": "Open"}]))
+    result = run(*flag, "system", "statuses", env_extra={"HFOX_FORMAT": "csv"})
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines() == ["id,name", "1,Open"]
+
+
+@blank_format
+def test_blank_format_flag_falls_through_to_the_config_file(mock_api, tmp_path, flag):
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    (cfg / "config.toml").write_text('default_format = "csv"\n', encoding="utf-8")
+    mock_api(lambda req: httpx.Response(200, json=[{"id": 1, "name": "Open"}]))
+    result = run(*flag, "system", "statuses")
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines() == ["id,name", "1,Open"]
+
+
+@blank_format
+def test_blank_format_flag_leaves_the_environment_as_the_named_source(run_app, flag):
+    code, payload, _ = run_app(*flag, "--dry-run", "system", "statuses", HFOX_FORMAT="xml")
+    assert code == 3
+    assert payload == {
+        "error": "Unknown output format 'xml' from HFOX_FORMAT; expected json, table, csv or yaml.",
+        "type": "validation",
+        "exit_code": 3,
+    }
+
+
+@blank_format
+def test_blank_format_flag_leaves_the_config_file_as_the_named_source(run_app, tmp_path, flag):
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    (cfg / "config.toml").write_text('default_format = "xml"\n', encoding="utf-8")
+    code, payload, _ = run_app(*flag, "--dry-run", "system", "statuses")
+    assert (code, payload["type"]) == (3, "validation")
+    assert payload["error"] == (
+        f"Unknown output format 'xml' from default_format in {cfg / 'config.toml'}; "
+        "expected json, table, csv or yaml."
+    )
+
+
+@pytest.mark.parametrize(
+    ("flag", "shown"),
+    [
+        (("--format", "bogus"), "bogus"),
+        (("--format=bogus",), "bogus"),
+        (("-fbogus",), "bogus"),
+        (("--format", " xml "), " xml "),
+        (("--format", "json csv"), "json csv"),
+    ],
+    ids=repr,
+)
+def test_unknown_format_flag_is_named_over_a_valid_environment_format(run_app, flag, shown):
+    code, payload, _ = run_app(*flag, "--dry-run", "system", "statuses", HFOX_FORMAT="csv")
+    assert (code, payload["type"]) == (3, "validation")
+    assert payload["error"] == (
+        f"Unknown output format {shown!r} from --format; expected json, table, csv or yaml."
+    )
 
 
 # -- --timeout and --max-retries ----------------------------------------------

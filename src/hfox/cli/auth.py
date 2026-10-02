@@ -24,7 +24,7 @@ from ..core.config import (
 )
 from ..core.errors import AuthError, HfoxError, ValidationError
 from . import _util, output
-from ._util import fold, nonblank_or_none
+from ._util import fold, nonblank_or_none, require_nonblank
 from .context import emit_dry_run, get_ctx
 
 app = typer.Typer(no_args_is_help=True, help="Manage HappyFox credentials.")
@@ -130,8 +130,8 @@ def login(
 
     subdomain = nonblank_or_none(subdomain)
     region = nonblank_or_none(region)
-    api_key = api_key or None
-    auth_code = auth_code or None
+    api_key = nonblank_or_none(api_key)
+    auth_code = nonblank_or_none(auth_code)
 
     interactive = _util.stdin_is_tty()
     required = (("--subdomain", subdomain), ("--api-key", api_key), ("--auth-code", auth_code))
@@ -141,16 +141,19 @@ def login(
     if subdomain is None:
         subdomain = obj.prompt("HappyFox subdomain (e.g. acme)")
     # The subdomain is stored even when a base URL override routes the requests.
-    validate_host(subdomain)
+    subdomain = validate_host(subdomain)
     if region is None:
         region = obj.prompt("Data center [us/eu]", default="us") if interactive else "us"
     region = region.strip().lower()
     if region not in REGION_HOSTS:
         raise ValidationError(f"region must be one of {list(REGION_HOSTS)}")
+    # A whitespace-only answer is refused, as validate_host refuses one for the subdomain.
     if api_key is None:
-        api_key = obj.prompt("API key", hide_input=True)
+        api_key = require_nonblank(obj.prompt("API key", hide_input=True), "API key")
     if auth_code is None:
-        auth_code = obj.prompt("Auth code", hide_input=True)
+        auth_code = require_nonblank(obj.prompt("Auth code", hide_input=True), "Auth code")
+    # load_config strips a stored secret, so the probe and the files hold the stripped one.
+    api_key, auth_code = api_key.strip(), auth_code.strip()
 
     override = obj.config.base_url_override
     if override:

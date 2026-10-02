@@ -28,7 +28,11 @@ STAFF = [
 CREATE = ("tickets", "create", "--subject", "S", "--category", "3", "--client", "5", "--text", "b")
 REPLY = ("tickets", "reply", "5", "--text", "b")
 NOTE = ("tickets", "note", "5", "--text", "b")
+UPDATE = ("tickets", "update", "5", "--status", "3")
 UPDATE_CF = ("tickets", "update-cf", "5", "--cf", "1=x")
+SUBSCRIBE = ("tickets", "subscribe", "5")
+FORWARD = ("tickets", "forward", "5", "--to", "a@x.org", "--subject", "s", "--message", "m")
+MOVE = ("tickets", "move", "5", "--to-category", "2")
 
 CHOICES = [
     {"id": 11, "text": "Option 1", "dependant_fields": []},
@@ -171,6 +175,15 @@ def test_reply_sends_message_options():
     }
 
 
+# -- update-cf: JSON only, so a null is sent ----------------------------------
+def test_update_cf_sends_a_null():
+    p = preview("tickets", "update-cf", "5", "--cf-json", '{"4": null}')
+    assert p["method"] == "POST"
+    assert p["url"].endswith("/ticket/5/update_custom_fields/")
+    assert p["body"] == {"staff": 1, "t-cf-4": None}
+    assert p["attachments"] is None
+
+
 # -- custom-field keys: a flag takes only its own endpoint's prefixes ---------
 STAFF_UPDATE_FOREIGN = [
     ("--cf", "c-cf-3"),
@@ -260,6 +273,8 @@ INVALID = [
     (("forward", "5", "--to", "a@x.org", "--subject", "s"), "--message"),
     (("unsubscribe", "DC5"), "DC5"),
     (("delete", "DC5", "--yes"), "DC5"),
+    (("subscribe", "5", "--agents", "x"), "integers"),
+    ((*FORWARD[1:], "--ticket-attachments", "x"), "integers"),
 ]
 
 
@@ -268,6 +283,122 @@ def test_invalid_command_is_rejected_before_the_staff_lookup(mock_api, argv, nam
     captured = staff_api(mock_api)
     assert named in rejected("tickets", *argv, "--staff", "bob@x.org", env=NO_STAFF)
     assert captured == []
+
+
+# -- optional one-line values: blank is rejected, outer whitespace is dropped --
+# (argv that is complete without the flag, the flag, its body key, a value)
+LINE_FLAGS = [
+    (CREATE, "--phone", "phone", "555-0100"),
+    (CREATE, "--created-at", "created_at", "2026-01-02T03:04:05"),
+    (CREATE, "--due-date", "due_date", "2026-02-03"),
+    (REPLY, "--due-date", "due_date", "2026-02-03"),
+    (REPLY, "--subject", "subject", "Re: printer"),
+    (NOTE, "--alert", "alert", "s"),
+    (NOTE, "--due-date", "due_date", "2026-02-03"),
+    (UPDATE, "--due-date", "due_date", "2026-02-03"),
+]
+LINE_IDS = [f"{argv[1]} {flag}" for argv, flag, _, _ in LINE_FLAGS]
+ID_LISTS = [
+    (SUBSCRIBE, "--agents", "data"),
+    (FORWARD, "--ticket-attachments", "ticket_attachments"),
+]
+ID_LIST_IDS = [f"{argv[1]} {flag}" for argv, flag, _ in ID_LISTS]
+
+
+@pytest.mark.parametrize("dry_run", [(), ("--dry-run",)], ids=["live", "dry-run"])
+@pytest.mark.parametrize("blank", ["", " \t"], ids=["empty", "whitespace"])
+@pytest.mark.parametrize(("argv", "flag", "key", "value"), LINE_FLAGS, ids=LINE_IDS)
+def test_blank_one_line_value_is_rejected_before_the_staff_lookup(
+    mock_api, argv, flag, key, value, blank, dry_run
+):
+    captured = staff_api(mock_api)
+    staff = () if argv is CREATE else ("--staff", "bob@x.org")
+    message = rejected(*dry_run, *argv, flag, blank, *staff, env=NO_STAFF)
+    assert message == f"{flag} must not be blank."
+    assert captured == []
+
+
+@pytest.mark.parametrize(("argv", "flag", "key", "value"), LINE_FLAGS, ids=LINE_IDS)
+def test_one_line_value_is_sent_without_outer_whitespace(argv, flag, key, value):
+    assert preview(*argv, flag, f"  {value}\t")["body"][key] == value
+
+
+def test_note_alert_id_is_checked_and_sent_without_outer_whitespace():
+    assert preview(*NOTE, "--alert", " 7 ")["body"]["alert"] == "7"
+    assert "at least 1" in rejected("--dry-run", *NOTE, "--alert", " 0 ")
+
+
+@pytest.mark.parametrize("dry_run", [(), ("--dry-run",)], ids=["live", "dry-run"])
+@pytest.mark.parametrize("blank", ["", "  ", " , "], ids=["empty", "whitespace", "commas"])
+@pytest.mark.parametrize(("argv", "flag", "key"), ID_LISTS, ids=ID_LIST_IDS)
+def test_blank_id_list_is_rejected_before_the_staff_lookup(
+    mock_api, argv, flag, key, blank, dry_run
+):
+    captured = staff_api(mock_api)
+    message = rejected(*dry_run, *argv, flag, blank, "--staff", "bob@x.org", env=NO_STAFF)
+    assert message == f"{flag} needs at least one id."
+    assert captured == []
+
+
+@pytest.mark.parametrize(("argv", "flag", "key"), ID_LISTS, ids=ID_LIST_IDS)
+def test_id_list_is_sent_as_numbers(argv, flag, key):
+    assert preview(*argv, flag, " 11 , 012 ")["body"][key] == [11, 12]
+
+
+@pytest.mark.parametrize("dry_run", [(), ("--dry-run",)], ids=["live", "dry-run"])
+@pytest.mark.parametrize("blank", ["", " \t\n"], ids=["empty", "whitespace"])
+def test_blank_move_note_is_rejected_before_the_staff_lookup(mock_api, blank, dry_run):
+    captured = staff_api(mock_api)
+    message = rejected(*dry_run, *MOVE, "--note", blank, "--staff", "bob@x.org", env=NO_STAFF)
+    assert message == "--note must not be blank."
+    assert captured == []
+
+
+def test_move_note_is_sent_as_typed():
+    assert preview(*MOVE)["body"] == {"staff_id": 1, "target_category_id": 2}
+    assert preview(*MOVE, "--note", " moved\n")["body"]["move_note"] == " moved\n"
+
+
+# -- custom-field ids: one field, however its id is spelled --------------------
+# (argv that is complete without a custom field, flag, id as typed, body key)
+PADDED_KEYS = [
+    (CREATE, "--cf", "007", "t-cf-7"),
+    (CREATE, "--cf", "t-cf-007", "t-cf-7"),
+    (CREATE, "--cf", "c-cf-007", "c-cf-7"),
+    (CREATE, "--contact-cf", "007", "c-cf-7"),
+    (REPLY, "--cf", "ccf-007", "ccf-7"),
+    (REPLY, "--contact-cf", "007", "ccf-7"),
+    (NOTE, "--contact-cf", "ccf-007", "ccf-7"),
+    (UPDATE, "--cf", "007", "t-cf-7"),
+    (("tickets", "update-cf", "5"), "--cf", "t-cf-007", "t-cf-7"),
+]
+
+
+@pytest.mark.parametrize(
+    ("argv", "flag", "typed", "key"),
+    PADDED_KEYS,
+    ids=[f"{argv[1]} {flag} {typed}" for argv, flag, typed, _ in PADDED_KEYS],
+)
+def test_custom_field_id_is_sent_without_leading_zeros(argv, flag, typed, key):
+    for option in ((flag, f"{typed}=x"), (f"{flag}-json", json.dumps({typed: "x"}))):
+        body = preview(*argv, *option)["body"]
+        assert {name: value for name, value in body.items() if "cf-" in name} == {key: "x"}
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        ("--cf", "7=a", "--cf", "7=b"),
+        ("--cf", "7=a", "--cf", "007=b"),
+        ("--cf", "007=a", "--cf", "t-cf-7=b"),
+        ("--cf", "007=a", "--cf-json", '{"7": "b"}'),
+        ("--cf", "7=z", "--cf-json", '{"7": "a", "t-cf-007": "b"}'),
+    ],
+    ids=["identical", "padded", "prefixed", "across flags", "within the JSON"],
+)
+def test_one_custom_field_given_twice_sends_the_last_value(options):
+    p = preview("tickets", "update-cf", "5", *options)
+    assert p["body"] == {"staff": 1, "t-cf-7": "b"}
 
 
 # -- tags / subscribe / user-reply / forward ----------------------------------

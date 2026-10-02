@@ -289,8 +289,11 @@ class AppContext:
         """Fetch a listing.
 
         --page-all in JSON streams one NDJSON page per line, then exits; in other
-        formats it returns the flat record list. Otherwise returns the single page.
-        `filters` keep matching rows on every page (see filter_rows) and require --page-all.
+        formats it returns the flat record list, or the body of an only page that holds no
+        row list, which `render_list` shows as it does without --page-all. Otherwise returns
+        the single page, or raises HfoxError for an envelope the walk would refuse.
+        `filters` keep matching rows on every page (see filter_rows) and require --page-all;
+        a filtered walk always returns the list of matching rows.
         """
         filters = filters or {}
         needles = filter_needles(filters)
@@ -306,7 +309,7 @@ class AppContext:
             emit_dry_run(self.config.base_url, "GET", path, params=params)
             raise typer.Exit(0)
         if not self.page_all:
-            return self.client.get(path, params=params)
+            return self.client.get_page(path, params=params, root_key=root_key)
         walk = {
             "params": params,
             "root_key": root_key,
@@ -315,6 +318,9 @@ class AppContext:
             "on_truncated": _warn_truncated,
         }
         if self.fmt is not OutputFormat.JSON:
+            if not needles:
+                return self.client.get_all(path, **walk)
+            # A filter returns matching rows only, never a body without a row list as it is.
             return filter_rows(list(self.client.paginate(path, **walk)), filters)
         try:
             for page in self.client.paginate_pages(path, **walk):
