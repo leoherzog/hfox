@@ -121,6 +121,7 @@ Global flags go before the resource: `hfox -f table tickets list`, not `hfox tic
 A global flag after the resource exits 3 with an error of type `usage` that says where the
 flag goes. That also holds when the flag follows an option that takes a value, so
 `tickets note 5 --text --dry-run` is refused. Write `--text=--dry-run` to send such a literal.
+A short flag with its value attached, such as `-ftable`, is sent as the value there.
 
 A global option that takes a value refuses one that starts with `-`, so
 `hfox --staff --dry-run tickets list` exits 3 with type `usage` instead of reading `--dry-run`

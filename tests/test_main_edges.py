@@ -1,4 +1,6 @@
-"""Root app edges: stream setup, format sources, paging flags, entry points, system rendering."""
+"""Root app edges: stream setup, format sources, paging flags, short global flag placement,
+entry points, system rendering.
+"""
 
 import io
 import json
@@ -256,6 +258,55 @@ def test_every_bare_group_prints_its_help_and_exits_0(run_app):
         code, out, _ = run_app(*path)
         assert code == 0, path
         assert f"Usage: hfox {' '.join(path)} [OPTIONS]" in out, path
+
+
+# -- short global flags after the resource ------------------------------------
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("tickets", "note", "5", "--text", "-v"),
+        ("tickets", "note", "5", "--text", "-f"),
+        ("tickets", "list", "-q", "-v"),
+    ],
+    ids=" ".join,
+)
+def test_short_global_flag_swallowed_as_an_option_value_sends_nothing(run_app, mock_api, argv):
+    captured = mock_api(lambda req: httpx.Response(200, json={}))
+    code, out, err = run_app(*argv)
+    flag = argv[-1]
+    assert code == 3
+    assert json.loads(out) == {
+        "error": f"{flag} is a global flag and goes before the resource: "
+        f"hfox {flag} <resource> <verb>.",
+        "type": "usage",
+        "exit_code": 3,
+        "hint": "Global flags precede the resource; see `hfox --help`.",
+    }
+    assert err == ""
+    assert captured == []
+
+
+@pytest.mark.parametrize("value", ["-v", "-f"])
+def test_equals_form_sends_a_literal_short_flag(value):
+    result = run("--dry-run", "tickets", "note", "5", f"--text={value}")
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["body"]["plaintext"] == value
+
+
+# A short flag with text attached cannot be told from data such as `-fixed`.
+@pytest.mark.parametrize("value", ["-fjson", "-f=json", "-forward", "-version"])
+def test_value_that_only_starts_with_a_short_global_flag_is_sent(value):
+    result = run("--dry-run", "tickets", "note", "5", "--text", value)
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["body"]["plaintext"] == value
+
+
+def test_short_global_flag_after_the_terminator_is_left_alone(run_app):
+    code, out, _ = run_app("--dry-run", "tickets", "get", "--", "-v")
+    payload = json.loads(out)
+    assert (code, payload["type"]) == (3, "validation")
+    assert "global flag" not in payload["error"]
+    assert "'-v'" in payload["error"]
 
 
 # -- python -m hfox -----------------------------------------------------------

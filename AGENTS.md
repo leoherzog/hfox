@@ -144,11 +144,14 @@ params, so an added root option is covered.
 
 A global flag placed after the resource raises `UsageError` saying where it goes. Two
 detectors produce it. `_RootGroup.resolve_command` scans the tokens up to a `--` terminator
-for a root-only long flag, bare or as `--flag=value`, which also catches one swallowed as the
-value of the option before it. `app()` maps a `NoSuchOption` from a subcommand whose name is
-a root option, which covers short forms and `--staff`/`--staff-id` on commands that do not
-declare them. A subcommand must therefore never declare a long flag with a root-only name;
-`tests/test_global_flags.py` walks the command tree to enforce it.
+for a root-only flag, which also catches one swallowed as the value of the option before it.
+A long flag matches bare or as `--flag=value`; a short one (`-f`, `-v`) matches only as a
+whole token. `app()` maps a `NoSuchOption` from a subcommand whose name is a root option,
+which covers a short flag with text attached (`-fjson`) and `--staff`/`--staff-id` on
+commands that do not declare them. A token like `-fjson` swallowed as an option's value is
+sent as data, since it cannot be told from text such as `-fixed`. A subcommand must therefore
+never declare a flag, long or short, with a root-only name; `tests/test_global_flags.py`
+walks the command tree to enforce it.
 
 ## The AppContext contract (read before adding a command)
 

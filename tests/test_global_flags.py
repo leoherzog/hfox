@@ -278,14 +278,11 @@ def _walk(command, path=()):
         yield from _walk(sub, (*path, name))
 
 
-def test_no_subcommand_declares_a_root_only_long_flag():
+def test_no_subcommand_declares_a_root_only_flag():
     root = typer.main.get_command(cli)
-    root_only = {
-        name
-        for name in main_mod._root_flags(root) - main_mod._PER_COMMAND_FLAGS
-        if name.startswith("--")
-    }
+    root_only = main_mod._root_flags(root) - main_mod._PER_COMMAND_FLAGS
     assert {"--dry-run", "--format", "--page-all", "--quiet", "--timeout"} <= root_only
+    assert {name for name in root_only if not name.startswith("--")} == {"-f", "-v"}
     assert "--help" not in root_only
     seen = 0
     for path, command in _walk(root):

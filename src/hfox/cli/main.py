@@ -105,13 +105,12 @@ class _RootGroup(TyperGroup):
         # A root-only flag after the resource would otherwise be an unknown option, or be
         # swallowed as the value of the option before it. `--opt=--dry-run` sends the literal.
         if not ctx.resilient_parsing:
-            flags = {
-                name for name in _root_flags(self) - _PER_COMMAND_FLAGS if name.startswith("--")
-            }
+            flags = _root_flags(self) - _PER_COMMAND_FLAGS
             for token in args:
                 if token == "--":
                     break
-                name = token.partition("=")[0]
+                # A short flag matches only as a whole token: `-fjson` may be data like `-fixed`.
+                name = token.partition("=")[0] if token.startswith("--") else token
                 if name in flags:
                     raise _misplaced(name)
         return super().resolve_command(ctx, args)
@@ -254,7 +253,8 @@ def app() -> None:
         exc.show()
         raise SystemExit(0) from None
     except click_exceptions.NoSuchOption as exc:
-        # Covers short forms and the per-command names the token scan leaves alone.
+        # Covers short flags with text attached, such as `-fjson`, and the per-command names
+        # the token scan leaves alone.
         parent = getattr(exc.ctx, "parent", None)
         if parent is not None and exc.option_name in _root_flags(command):
             _fail(_misplaced(exc.option_name))
