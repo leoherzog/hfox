@@ -209,8 +209,8 @@ def create_ticket(
         body["assignee"] = None
     body.update(parse_cf_options(cf, prefix="t-cf-", allowed=("t-cf-", "c-cf-")))
     body.update(parse_cf_json(cf_json, "t-cf-", ("t-cf-", "c-cf-")))
-    body.update(parse_cf_options(contact_cf, prefix="c-cf-"))
-    body.update(parse_cf_json(contact_cf_json, "c-cf-"))
+    body.update(parse_cf_options(contact_cf, prefix="c-cf-", json_flag="--contact-cf-json"))
+    body.update(parse_cf_json(contact_cf_json, "c-cf-", flag="--contact-cf-json"))
     result = obj.call("POST", "tickets/", **obj.attach(body, attachment))
     obj.render(result)
     if isinstance(result, dict) and result.get("display_id"):
@@ -330,8 +330,8 @@ def reply(
         body["assignee"] = None
     body.update(parse_cf_options(cf, prefix="t-cf-", allowed=("t-cf-", "ccf-")))
     body.update(parse_cf_json(cf_json, "t-cf-", ("t-cf-", "ccf-")))
-    body.update(parse_cf_options(contact_cf, prefix="ccf-"))
-    body.update(parse_cf_json(contact_cf_json, "ccf-"))
+    body.update(parse_cf_options(contact_cf, prefix="ccf-", json_flag="--contact-cf-json"))
+    body.update(parse_cf_json(contact_cf_json, "ccf-", flag="--contact-cf-json"))
     _check_update(body, "reply", attachment)
     body = {"staff": obj.require_staff_id(staff_id, staff), **body}
     result = obj.call(
@@ -399,8 +399,8 @@ def note(
         body["assignee"] = None
     body.update(parse_cf_options(cf, prefix="t-cf-", allowed=("t-cf-", "ccf-")))
     body.update(parse_cf_json(cf_json, "t-cf-", ("t-cf-", "ccf-")))
-    body.update(parse_cf_options(contact_cf, prefix="ccf-"))
-    body.update(parse_cf_json(contact_cf_json, "ccf-"))
+    body.update(parse_cf_options(contact_cf, prefix="ccf-", json_flag="--contact-cf-json"))
+    body.update(parse_cf_json(contact_cf_json, "ccf-", flag="--contact-cf-json"))
     _check_update(body, "note", attachment)
     body = {"staff": obj.require_staff_id(staff_id, staff), **body}
     result = obj.call(

@@ -386,6 +386,11 @@ def test_parse_cf_options_errors_name_the_offending_item(items, named):
     assert [text for text in named if text not in str(exc.value)] == []
 
 
+def test_parse_cf_options_blank_value_names_the_json_flag_the_caller_gives():
+    with pytest.raises(ValidationError, match="use --contact-cf-json to send an empty value"):
+        parse_cf_options(["4="], prefix="c-cf-", json_flag="--contact-cf-json")
+
+
 @pytest.mark.parametrize(
     ("kwargs", "forms"),
     [

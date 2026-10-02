@@ -215,9 +215,12 @@ Helpers:
   other value as text and caps files at `MAX_ATTACHMENT_BYTES` in total.
 - `exit_on_failures(result, *, benign=None)`, called after rendering, exits 1 when any entry
   has `success: false`; group removals pass `benign=NOT_IN_GROUP`.
-- `cli/cf.py`: `parse_cf_options(items, *, prefix, allowed)` and `parse_cf_json(raw, prefix,
-  allowed)` prefix numeric keys and pass through keys carrying an `allowed` prefix (default:
-  `prefix`); other keys raise. `parse_asset_cf` takes bare ids only.
+- `cli/cf.py`: `parse_cf_options(items, *, prefix, allowed, json_flag="--cf-json")` and
+  `parse_cf_json(raw, prefix, allowed, flag="--cf-json")` prefix numeric keys and pass through
+  keys carrying an `allowed` prefix (default: `prefix`); other keys raise. The empty-value
+  error names `json_flag`, and the invalid-JSON and not-an-object errors name `flag`, so a
+  `--contact-cf` call site passes `json_flag="--contact-cf-json"` and a `--contact-cf-json`
+  one `flag="--contact-cf-json"`. `parse_asset_cf` takes bare ids only.
 - `cli/output.py`: `OutputFormat.parse` raises `ValidationError` for an unknown name.
   `sanitize_cell` drops every `Cc` and `Cf` character except newline, tab, U+200C and U+200D;
   table and CSV cells and headers pass through it. CSV also prefixes `'` to a string cell

@@ -166,3 +166,14 @@ def test_parse_cf_json_rejects_non_object():
         parse_cf_json("[1, 2, 3]")
     with pytest.raises(ValidationError):
         parse_cf_json('"a string"')
+
+
+@pytest.mark.parametrize("raw", ["{not json}", "[1, 2, 3]"], ids=["invalid JSON", "non-object"])
+def test_parse_cf_json_errors_name_the_flag(raw):
+    with pytest.raises(ValidationError) as exc:
+        parse_cf_json(raw)
+    assert "--cf-json" in str(exc.value)
+    with pytest.raises(ValidationError) as exc:
+        parse_cf_json(raw, flag="--contact-cf-json")
+    assert "--contact-cf-json" in str(exc.value)
+    assert "--cf-json" not in str(exc.value)

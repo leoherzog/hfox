@@ -203,6 +203,53 @@ def test_custom_field_key_with_a_foreign_prefix_is_rejected(argv, flag, key):
     assert f"'{key}'" in rejected("--dry-run", *argv, flag, value)
 
 
+# -- an empty value: the error names the JSON flag that sends it --------------
+# (argv, the flag given an empty value, its JSON sibling, the body key that sibling writes)
+EMPTY_VALUES = [
+    (CREATE, "--cf", "--cf-json", "t-cf-4"),
+    (CREATE, "--contact-cf", "--contact-cf-json", "c-cf-4"),
+    (REPLY, "--cf", "--cf-json", "t-cf-4"),
+    (REPLY, "--contact-cf", "--contact-cf-json", "ccf-4"),
+    (NOTE, "--cf", "--cf-json", "t-cf-4"),
+    (NOTE, "--contact-cf", "--contact-cf-json", "ccf-4"),
+]
+
+
+@pytest.mark.parametrize(
+    ("argv", "flag", "json_flag", "key"),
+    EMPTY_VALUES,
+    ids=[f"{argv[1]} {flag}" for argv, flag, _, _ in EMPTY_VALUES],
+)
+def test_empty_custom_field_value_names_the_json_flag_that_sends_it(argv, flag, json_flag, key):
+    result = run("--dry-run", *argv, flag, "4=")
+    error = result.exception
+    assert isinstance(error, ValidationError), error
+    assert (error.type, error.exit_code) == ("validation", 3)
+    assert result.stdout == ""
+    assert f"use {json_flag} to send an empty value" in str(error)
+    body = preview(*argv, json_flag, '{"4": ""}')["body"]
+    assert {name: value for name, value in body.items() if "cf-" in name} == {key: ""}
+
+
+# -- a broken JSON value: the error names the flag that carries it ------------
+JSON_FLAGS = ("--cf-json", "--contact-cf-json")
+BROKEN_JSON = {"malformed": "{bad", "not an object": "[1]"}
+
+
+@pytest.mark.parametrize("argv", [CREATE, REPLY, NOTE], ids=["create", "reply", "note"])
+@pytest.mark.parametrize("broken", JSON_FLAGS)
+@pytest.mark.parametrize("value", BROKEN_JSON.values(), ids=BROKEN_JSON.keys())
+def test_broken_custom_field_json_names_its_own_flag(argv, broken, value):
+    (valid,) = set(JSON_FLAGS) - {broken}
+    result = run("--dry-run", *argv, broken, value, valid, '{"4": "ok"}')
+    error = result.exception
+    assert isinstance(error, ValidationError), error
+    assert (error.type, error.exit_code) == ("validation", 3)
+    assert result.stdout == ""
+    assert broken in str(error)
+    assert valid not in str(error)
+
+
 # -- local checks run before the staff lookup ---------------------------------
 # (argv with a local fault, the flag or value the error names)
 INVALID = [

@@ -62,11 +62,13 @@ def parse_cf_options(
     *,
     prefix: str = "t-cf-",
     allowed: tuple[str, ...] | None = None,
+    json_flag: str = "--cf-json",
 ) -> dict[str, Any]:
     """Parse repeated "<id>=<value>" options into {prefix+id: coerced value}.
 
     Keys already carrying a prefix in `allowed` (default: `prefix` alone) pass through.
-    Raises ValidationError on a malformed item, an invalid key or an all-blank value.
+    Raises ValidationError on a malformed item, an invalid key or an all-blank value;
+    the last names `json_flag`, the caller's flag that can send an empty value.
     """
     out: dict[str, Any] = {}
     for item in items or []:
@@ -75,7 +77,7 @@ def parse_cf_options(
             raise ValidationError(f"Invalid custom field '{item}'; expected '<id>=<value>'.")
         if value.strip() == "":
             raise ValidationError(
-                f"Empty value in custom field '{item}'; use --cf-json to send an empty value."
+                f"Empty value in custom field '{item}'; use {json_flag} to send an empty value."
             )
         out[_field_key(key.strip(), prefix, allowed)] = coerce_value(value)
     return out
@@ -90,14 +92,16 @@ def parse_cf_json(
     raw: str | None,
     prefix: str = "t-cf-",
     allowed: tuple[str, ...] | None = None,
+    flag: str = "--cf-json",
 ) -> dict[str, Any]:
     """Parse a JSON object of field id -> value into {prefix+id: value}, values uncoerced.
 
-    Keys follow the parse_cf_options rules. Returns {} for a blank input.
+    Keys follow the parse_cf_options rules. Returns {} for a blank input. Raises
+    ValidationError naming `flag`, the caller's flag, for input that is not a JSON object.
     """
     if raw is None or raw.strip() == "":
         return {}
-    parsed = parse_json(raw, "custom-field option")
+    parsed = parse_json(raw, flag)
     if not isinstance(parsed, dict):
-        raise ValidationError("Custom-field JSON must be an object mapping field id -> value.")
+        raise ValidationError(f"{flag} must be an object mapping field id -> value.")
     return {_field_key(key, prefix, allowed): value for key, value in parsed.items()}
