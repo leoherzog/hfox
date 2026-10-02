@@ -36,7 +36,7 @@ MIN_SECRET_LENGTH = 8
 
 
 class ConfigError(HfoxError):
-    """A config or token file that cannot be read or parsed."""
+    """A config or token file that cannot be read, parsed, written or removed."""
 
     exit_code = ExitCode.OTHER
     type = "config"
@@ -326,23 +326,28 @@ class Config:
 
 _CONFIG_HINT = "Fix or delete the file."
 _TOKEN_HINT = "Delete the file and run `hfox auth login`."
+_WRITE_HINT = "Check the permissions on the config directory, or choose another with --config-dir."
+
+# Absence is decided by the open or unlink itself, since Path.exists() answers for an
+# unsearchable directory differently across Python versions.
+_ABSENT = (FileNotFoundError, NotADirectoryError)
 
 
 def _read_toml(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {}
     try:
         with path.open("rb") as fh:
             return tomllib.load(fh)
+    except _ABSENT:
+        return {}
     except (OSError, ValueError) as exc:
         raise ConfigError(f"Cannot read config file {path}: {exc}", hint=_CONFIG_HINT) from exc
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {}
     try:
         token = json.loads(path.read_text(encoding="utf-8"))
+    except _ABSENT:
+        return {}
     except (OSError, ValueError) as exc:
         raise ConfigError(f"Cannot read token file {path}: {exc}", hint=_TOKEN_HINT) from exc
     if not isinstance(token, dict):
@@ -487,7 +492,10 @@ def save_credentials(
     base_url: str | None = None,
     warn: Callable[[str], None] | None = None,
 ) -> Path:
-    """Persist secrets to token.json in the config directory at mode 0600."""
+    """Persist secrets to token.json in the config directory at mode 0600.
+
+    Raises ConfigError when the file cannot be written.
+    """
     payload: dict[str, Any] = {
         "subdomain": subdomain,
         "region": region,
@@ -497,7 +505,10 @@ def save_credentials(
     if base_url:
         payload["base_url"] = base_url
     path = cfg_dir / TOKEN_FILENAME
-    _atomic_write(path, json.dumps(payload, indent=2) + "\n", mode=0o600, warn=warn)
+    try:
+        _atomic_write(path, json.dumps(payload, indent=2) + "\n", mode=0o600, warn=warn)
+    except OSError as exc:
+        raise ConfigError(f"Cannot write token file {path}: {exc}", hint=_WRITE_HINT) from exc
     return path
 
 
@@ -511,7 +522,7 @@ def save_settings(
     """Merge non-secret settings into config.toml, then delete the `remove` keys.
 
     An incoming string with a control character raises ValidationError; values already in
-    the file are kept and escaped.
+    the file are kept and escaped. Raises ConfigError when the file cannot be written.
     """
     existing = _read_toml(cfg_dir / CONFIG_FILENAME)
     incoming = {k: v for k, v in settings.items() if v is not None}
@@ -525,14 +536,23 @@ def save_settings(
     for key in remove:
         existing.pop(key, None)
     path = cfg_dir / CONFIG_FILENAME
-    _atomic_write(path, _toml_dumps(existing), mode=0o644, warn=warn)
+    try:
+        _atomic_write(path, _toml_dumps(existing), mode=0o644, warn=warn)
+    except OSError as exc:
+        raise ConfigError(f"Cannot write config file {path}: {exc}", hint=_WRITE_HINT) from exc
     return path
 
 
 def clear_credentials(cfg_dir: Path) -> bool:
-    """Remove token.json. Returns True if a file was deleted."""
+    """Remove token.json. Returns True if a file was deleted.
+
+    Raises ConfigError when the file is there and cannot be removed.
+    """
     path = cfg_dir / TOKEN_FILENAME
-    if path.exists():
+    try:
         path.unlink()
-        return True
-    return False
+    except _ABSENT:
+        return False
+    except OSError as exc:
+        raise ConfigError(f"Cannot remove token file {path}: {exc}", hint=_WRITE_HINT) from exc
+    return True

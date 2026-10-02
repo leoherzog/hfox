@@ -536,7 +536,7 @@ def test_no_temp_file_left_after_failed_replace(tmp_path, monkeypatch):
         raise OSError("disk full")
 
     monkeypatch.setattr(os, "replace", failing_replace)
-    with pytest.raises(OSError, match="disk full"):
+    with pytest.raises(ConfigError, match="disk full"):
         save_credentials(cfg_dir, subdomain="acme", region="us", api_key="k", auth_code="c")
     assert list(cfg_dir.iterdir()) == []
 
@@ -553,7 +553,7 @@ def test_failed_write_keeps_existing_file(tmp_path, monkeypatch):
     path = save_settings(cfg_dir, {"subdomain": "acme"})
     before = path.read_text(encoding="utf-8")
     monkeypatch.setattr(os, "replace", lambda src, dst: (_ for _ in ()).throw(OSError("no")))
-    with pytest.raises(OSError):
+    with pytest.raises(ConfigError):
         save_settings(cfg_dir, {"subdomain": "other"})
     assert path.read_text(encoding="utf-8") == before
     assert [p.name for p in cfg_dir.iterdir()] == ["config.toml"]

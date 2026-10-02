@@ -1,6 +1,7 @@
 """`hfox auth` edge cases: login values, the login target, stored files, --quiet, --config-dir."""
 
 import json
+import os
 import stat
 import sys
 
@@ -22,6 +23,13 @@ AUTH_CODE = "CODE-SECRET-456"
 SECRETS = ["--api-key", API_KEY, "--auth-code", AUTH_CODE]
 LOGIN = ["auth", "login", "--subdomain", "acme", "--region", "us", *SECRETS]
 STAFF = [{"id": 7, "email": "a@x.org"}]
+WRITE_HINT = "Check the permissions on the config directory, or choose another with --config-dir."
+
+# Mode bits bind neither Windows nor root.
+needs_modes = pytest.mark.skipif(
+    sys.platform == "win32" or os.geteuid() == 0,
+    reason="POSIX permission modes, enforced for a non-root user",
+)
 
 
 @pytest.fixture
@@ -29,6 +37,20 @@ def cfg_dir(tmp_path, monkeypatch):
     path = tmp_path / "hfox"
     monkeypatch.setenv("HFOX_CONFIG_DIR", str(path))
     return path
+
+
+@pytest.fixture
+def read_only():
+    """Return a function that sets a directory to mode 0500; cleanup sets it back to 0700."""
+    changed = []
+
+    def apply(path):
+        path.chmod(0o500)
+        changed.append(path)
+
+    yield apply
+    for path in changed:
+        path.chmod(0o700)
 
 
 def staff_ok(staff=STAFF):
@@ -312,6 +334,43 @@ def test_login_warns_when_a_write_cannot_restrict_the_directory(
     assert len(warned) == 1
     assert str(cfg_dir) in warned[0]
     assert json.loads(result.stdout)["authenticated"] is True
+
+
+@needs_modes
+def test_logout_in_a_read_only_directory_is_a_config_error(
+    cfg_dir, read_only, monkeypatch, capsys
+):
+    saved(cfg_dir)
+    read_only(cfg_dir)
+    code, out, _ = run_main(monkeypatch, capsys, ["auth", "logout"])
+    body = json.loads(out)
+    assert code == 5
+    assert (body["type"], body["exit_code"]) == ("config", 5)
+    assert body["error"].startswith(f"Cannot remove token file {cfg_dir / 'token.json'}: ")
+    assert body["hint"] == WRITE_HINT
+    assert (cfg_dir / "token.json").exists()
+
+
+@needs_modes
+def test_login_below_a_read_only_directory_is_a_config_error(
+    mock_api, tmp_path, read_only, monkeypatch, capsys
+):
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    read_only(parent)
+    monkeypatch.setenv("HFOX_CONFIG_DIR", str(parent / "hfox"))
+    mock_api(staff_ok())
+    code, out, err = run_main(monkeypatch, capsys, LOGIN)
+    body = json.loads(out)
+    assert code == 5
+    assert (body["type"], body["exit_code"]) == ("config", 5)
+    assert body["error"].startswith(
+        f"Cannot write token file {parent / 'hfox' / 'token.json'}: "
+    )
+    assert body["hint"] == WRITE_HINT
+    assert list(parent.iterdir()) == []
+    for secret in (API_KEY, AUTH_CODE):
+        assert secret not in out + err
 
 
 def test_config_dir_flag_beats_the_environment_for_every_auth_command(

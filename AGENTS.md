@@ -387,6 +387,12 @@ it. One account, no profiles; `--profile`, `HFOX_PROFILE` and `--columns` are re
   `api_key` or `auth_code` in `token.json`, that is set and not a string; the message names
   the file and key, never the value, and nothing is coerced. The hint is "Fix or delete the
   file." for `config.toml` and "Delete the file and run `hfox auth login`." for `token.json`.
+- An `OSError` while `save_credentials` or `save_settings` writes its file, or while
+  `clear_credentials` removes `token.json`, raises `ConfigError` naming the file and the OS
+  reason. The hint is "Check the permissions on the config directory, or choose another with
+  --config-dir.". A missing `token.json` is not an error; `clear_credentials` returns False.
+  A read-only directory the user owns is not such a failure, since the write first restricts
+  it to `0700`.
 - `config_dir` raises `ConfigError` when the default needs a home directory that cannot be
   determined, and when the `~` of `--config-dir` or `HFOX_CONFIG_DIR` cannot be expanded.
 
