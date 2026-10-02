@@ -348,6 +348,9 @@ Sourced from `Docs/` unless marked observed. Honor them exactly.
 - **Custom-field encoding:** ticket fields use `t-cf-<id>`; contact fields use `c-cf-<id>`
   on ticket create and contact create/edit, and `ccf-<id>` on staff reply/note; assets use a
   `custom_fields` object keyed by bare id. Each call site allows only its own prefixes.
+  The docs conflict: the staff reply field table lists `ccf-<id>`, which hfox sends, while the
+  example payload at `Docs/1039:693` uses `c-cf-3`. Which one the API accepts is unverified
+  until tested against a live helpdesk.
   Values: text→string, number→int/float, dropdown→choice id, **multiple-option→array of
   option ids** (`--cf ID=[a,b]`), date→`YYYY-MM-DD`. `--cf` makes numbers only from canonical
   decimals, never splits on commas and rejects an all-blank value; `--cf-json` sends values
