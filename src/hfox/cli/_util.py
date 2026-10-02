@@ -9,6 +9,7 @@ import json
 import math
 import os
 import re
+import stat
 import sys
 import unicodedata
 from collections.abc import Iterable
@@ -198,9 +199,14 @@ def open_guarded(
     """
     forbidden = tuple(forbidden)
     p = check_readable_path(path, forbidden)
-    if not p.is_file():
-        if not p.exists():
-            raise ValidationError(f"{what} not found: {p}")
+    # The type is checked before the open, which blocks on a named pipe.
+    try:
+        mode = os.stat(p).st_mode
+    except (FileNotFoundError, NotADirectoryError) as exc:
+        raise ValidationError(f"{what} not found: {p}") from exc
+    except OSError as exc:
+        raise ValidationError(f"Cannot read {p}: {exc.strerror}") from exc
+    if not stat.S_ISREG(mode):
         raise ValidationError(f"{what} is not a regular file: {p}")
     try:
         handle = p.open("rb")

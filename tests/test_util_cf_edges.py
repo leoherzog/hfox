@@ -5,13 +5,16 @@ import errno
 import json
 import os
 import re
+import signal
 import sys
 import types
 from pathlib import Path
 
+import httpx
 import pytest
 
 import hfox.cli._util as util_mod
+import hfox.cli.main as main_mod
 from hfox.cli._util import (
     NOT_IN_GROUP,
     attach,
@@ -33,7 +36,15 @@ SECRET = "edge-api-key-0123456789"
 REFUSED = "inside the hfox config directory"
 LEAKS = "contains HappyFox credentials"
 
+ENV = {"HFOX_SUBDOMAIN": "acme", "HFOX_API_KEY": "k", "HFOX_AUTH_CODE": "c", "HFOX_STAFF_ID": "1"}
+
 needs_links = pytest.mark.skipif(sys.platform == "win32", reason="links need privileges")
+needs_pipes = pytest.mark.skipif(sys.platform == "win32", reason="needs named pipes")
+# Mode bits bind neither Windows nor root.
+needs_modes = pytest.mark.skipif(
+    sys.platform == "win32" or os.geteuid() == 0,
+    reason="POSIX permission modes, enforced for a non-root user",
+)
 
 READERS = {
     "text": read_text_file,
@@ -96,6 +107,54 @@ def _all_closed(handles) -> bool:
 
 def _io_error(*args, **kwargs):
     raise OSError(errno.EIO, "Input/output error")
+
+
+def _cannot_read(path: Path, code: int) -> str:
+    """The message for a file whose status check fails with errno `code`."""
+    return f"Cannot read {path}: {os.strerror(code)}"
+
+
+@pytest.fixture
+def locked(tmp_path):
+    """A file in a directory of mode 000; cleanup sets the directory back to 0700."""
+    folder = tmp_path / "locked"
+    folder.mkdir()
+    f = folder / "body.txt"
+    f.write_bytes(b"hi\n")
+    folder.chmod(0)
+    yield f
+    folder.chmod(0o700)
+
+
+@pytest.fixture
+def alarm():
+    """Fail the test after five seconds, so a blocking open of a named pipe cannot hang it."""
+
+    def expired(signum, frame):
+        pytest.fail("blocked on a named pipe")
+
+    previous = signal.signal(signal.SIGALRM, expired)
+    signal.alarm(5)
+    yield
+    signal.alarm(0)
+    signal.signal(signal.SIGALRM, previous)
+
+
+@pytest.fixture
+def app_error(monkeypatch, capsys):
+    """Run the real app() in process; return the JSON error it printed on stdout."""
+
+    def invoke(*argv):
+        for key, value in ENV.items():
+            monkeypatch.setenv(key, value)
+        monkeypatch.setattr(sys, "argv", ["hfox", *argv])
+        with pytest.raises(SystemExit) as exc:
+            main_mod.app()
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["exit_code"] == exc.value.code
+        return payload
+
+    return invoke
 
 
 # -- validators ---------------------------------------------------------------
@@ -177,6 +236,82 @@ def test_load_json_file_applies_the_guard_and_the_credential_check(tmp_path):
         load_json_file(str(store / "token.json"), forbidden=[store])
     with pytest.raises(ValidationError, match=LEAKS):
         load_json_file(str(copy), secrets=[SECRET])
+
+
+# -- file state ---------------------------------------------------------------
+@needs_modes
+@reader
+def test_file_in_a_directory_that_cannot_be_searched_is_unreadable(locked, read):
+    with pytest.raises(ValidationError) as exc:
+        read(str(locked))
+    assert str(exc.value) == _cannot_read(locked, errno.EACCES)
+    assert exc.value.exit_code is ExitCode.VALIDATION
+
+
+@needs_modes
+@pytest.mark.parametrize(
+    "flags", [["--text-file"], ["--text", "b", "--attachment"]], ids=["--text-file", "--attachment"]
+)
+def test_command_refuses_a_file_it_cannot_reach_and_sends_nothing(
+    locked, app_error, mock_api, flags
+):
+    sent = mock_api(lambda request: httpx.Response(200, json={}))
+    payload = app_error("--dry-run", "tickets", "note", "5", *flags, str(locked))
+    assert payload == {
+        "error": _cannot_read(locked, errno.EACCES),
+        "type": "validation",
+        "exit_code": 3,
+    }
+    assert sent == []
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX errno for an over-long name")
+@reader
+def test_file_name_longer_than_the_filesystem_allows_is_unreadable(tmp_path, read):
+    f = tmp_path / ("n" * 300)
+    with pytest.raises(ValidationError) as exc:
+        read(str(f))
+    assert str(exc.value) == _cannot_read(f, errno.ENAMETOOLONG)
+
+
+@needs_links
+@reader
+def test_symlink_loop_is_unreadable(tmp_path, read):
+    loop = tmp_path / "loop.txt"
+    loop.symlink_to(loop)
+    with pytest.raises(ValidationError) as exc:
+        read(str(loop))
+    # Path.resolve reports the loop on some Python versions and the status check on others.
+    assert str(exc.value).startswith(f"Cannot read {loop}: ")
+
+
+@reader
+@pytest.mark.parametrize("tail", ["absent.txt", "note.txt/child"], ids=["missing", "below a file"])
+def test_missing_file_is_not_found(tmp_path, read, tail):
+    (tmp_path / "note.txt").write_bytes(b"x")
+    path = tmp_path / tail
+    with pytest.raises(ValidationError) as exc:
+        read(str(path))
+    assert str(exc.value).endswith(f" not found: {path}")
+
+
+@reader
+def test_directory_is_not_a_regular_file(tmp_path, read):
+    with pytest.raises(ValidationError) as exc:
+        read(str(tmp_path))
+    assert str(exc.value).endswith(f" is not a regular file: {tmp_path}")
+
+
+@needs_pipes
+@reader
+def test_named_pipe_is_refused_without_being_opened(tmp_path, monkeypatch, alarm, read):
+    pipe = tmp_path / "pipe"
+    os.mkfifo(pipe)
+    handles = _record_opens(monkeypatch)
+    with pytest.raises(ValidationError) as exc:
+        read(str(pipe))
+    assert str(exc.value).endswith(f" is not a regular file: {pipe}")
+    assert handles == []
 
 
 # -- open handles -------------------------------------------------------------
