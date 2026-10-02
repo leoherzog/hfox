@@ -74,9 +74,8 @@ def test_format_flag_resolves(mock_api):
 # ---------------------------------------------------------------------------
 # main.py :: app() entry-point error handling
 #
-# CliRunner invokes the bare `cli`; the structured wrapper lives in app(). We
-# drive app() directly, swapping the constructed command for a stub that raises
-# each exception type, to cover every branch.
+# CliRunner bypasses app(), so these call it with the command swapped for a stub
+# that raises each exception type.
 # ---------------------------------------------------------------------------
 def _install_stub_command(monkeypatch, exc):
     def fake_command(args=None, prog_name=None, standalone_mode=True):
@@ -107,8 +106,8 @@ def test_app_abort_branch(monkeypatch, capsys):
 
 
 def test_app_no_args_help_branch(monkeypatch):
-    # NoArgsIsHelpError (bare group like `hfox tickets`) -> help + SystemExit(0),
-    # matching --help; click's default 2 would collide with ExitCode.AUTH.
+    # A bare group such as `hfox tickets` prints help and exits 0; click's default 2
+    # would collide with ExitCode.AUTH.
     import typer._click as click
 
     command = main_mod.typer.main.get_command(cli)
@@ -120,7 +119,6 @@ def test_app_no_args_help_branch(monkeypatch):
 
 
 def test_app_usage_error_branch(monkeypatch, capsys):
-    # UsageError -> hint on stderr + JSON usage error on stdout + exit 3.
     exc = click_exceptions.UsageError("bad usage")
     _install_stub_command(monkeypatch, exc)
     with pytest.raises(SystemExit) as ei:
@@ -205,7 +203,6 @@ def test_quiet_is_long_only():
 
 
 def test_app_hfox_error_branch_emits_json(monkeypatch, capsys):
-    # HfoxError -> JSON on stdout + SystemExit(exit_code)
     _install_stub_command(monkeypatch, AuthError("no creds"))
     with pytest.raises(SystemExit) as ei:
         app()
@@ -243,7 +240,6 @@ def test_app_base_hfox_error_exit_5(monkeypatch, capsys):
 
 
 def test_app_keyboard_interrupt_branch(monkeypatch):
-    # KeyboardInterrupt -> SystemExit(130)
     _install_stub_command(monkeypatch, KeyboardInterrupt())
     with pytest.raises(SystemExit) as ei:
         app()
@@ -251,7 +247,6 @@ def test_app_keyboard_interrupt_branch(monkeypatch):
 
 
 def test_app_success_path(monkeypatch):
-    # A command that returns cleanly: no exception, app() returns None.
     def fake_command(args=None, prog_name=None, standalone_mode=True):
         return None
 
@@ -300,7 +295,7 @@ def test_fox_only_on_root_usage_line():
 
 # ---------------------------------------------------------------------------
 # system.py :: each read-only reference-data command
-# Endpoints return bare JSON arrays.
+# The documented responses are bare JSON arrays; priorities/ documents none.
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize(
     "command, path, sample",
@@ -320,7 +315,6 @@ def test_system_command_hits_endpoint_and_renders(mock_api, command, path, sampl
     assert len(captured) == 1
     assert captured[0].method == "GET"
     assert captured[0].url.path.endswith(path)
-    # JSON format keeps the bare array intact.
     assert json.loads(result.stdout) == sample
 
 
@@ -341,8 +335,6 @@ def test_system_staff_table_format_unwraps_rows(mock_api):
 
 
 def test_system_dry_run_short_circuits(mock_api):
-    # --dry-run on a read command emits the request preview and never hits the
-    # (mock) transport.
     captured = mock_api(lambda req: httpx.Response(200, json=[]))
     result = run("--dry-run", "system", "statuses")
     assert result.exit_code == 0

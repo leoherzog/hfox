@@ -1,7 +1,5 @@
-"""Structured errors and stable, documented exit codes.
-
-Every failure maps to a documented exit code and a stable `type` slug, and
-serializes to JSON so scripts and AI agents can branch on it.
+"""Structured errors: each carries a stable exit code and `type` slug and serializes to JSON
+for scripts and agents to branch on.
 """
 
 from __future__ import annotations
@@ -11,14 +9,14 @@ from typing import Any
 
 
 class ExitCode(IntEnum):
-    """Stable exit codes. These values are a public contract; do not renumber."""
+    """Exit codes. The values are a public contract; do not renumber."""
 
     SUCCESS = 0
     API = 1          # HappyFox returned an error response
     AUTH = 2         # missing / invalid credentials
     VALIDATION = 3   # bad arguments or input
-    NOT_FOUND = 4    # resource not found
-    OTHER = 5        # unexpected / internal
+    NOT_FOUND = 4    # HTTP 404
+    OTHER = 5        # anything else: network, timeout, config, cancelled, internal
 
 
 class HfoxError(Exception):
@@ -80,7 +78,8 @@ class ValidationError(HfoxError):
 
 
 class UsageError(ValidationError):
-    """A structural command-line error: unknown or misplaced flag, missing argument."""
+    """A structural command-line error: unknown command, unknown or misplaced flag, missing
+    argument, flag-shaped value for a root option."""
 
     type = "usage"
 

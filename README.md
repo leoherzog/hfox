@@ -39,18 +39,17 @@ hfox auth logout
 Login checks the credentials against `staff/` before saving them. It takes each value from
 its flag, then from `HFOX_SUBDOMAIN`, `HFOX_REGION`, `HFOX_API_KEY` or `HFOX_AUTH_CODE`, then
 from a prompt on stderr. Keep the two secrets off the command line, where the shell history
-and the process list expose them. When stdin is not a terminal, a missing subdomain, key or
-code exits 3 instead of prompting, and a missing region means `us`. The error names the
-missing flags and the variable to set for each one.
+and the process list expose them. When stdin is not a terminal, a missing region means `us`,
+and a missing subdomain, key or code exits 3 with an error naming each missing flag and its
+variable.
 
 `--email` saves the id of the one agent with that email as the default staff id. Without
-`--email`, a login to the same subdomain, region and base URL keeps the stored default, and a
-login to a different target removes it. An `--email` that matches nobody, matches several
-agents or matches an agent with an unusable id sets no default and removes a stored one; the
-login still succeeds. `default_staff_id` in the login JSON is the value stored
-after the save.
+`--email`, a login to the same subdomain, region and base URL keeps the stored default, and
+any other login removes it. An `--email` that matches no agent, several agents or an agent
+with an unusable id sets no default and removes a stored one; the login still succeeds.
+`default_staff_id` in the login JSON is the value stored after the save.
 
-Each `auth` command prints one JSON document that never holds a secret. `auth status` masks
+Each `auth` command prints one document that never holds a secret. `auth status` masks
 the API key and exits 2 when credentials are missing, after printing its payload.
 `auth status --check` sends one request and adds `verified`; a failed check adds
 `check_error` and exits with that error's code. A `staff/` answer that is not a list fails
@@ -69,10 +68,10 @@ otherwise `~/.config/hfox`, on every OS. `--config-dir` or `HFOX_CONFIG_DIR` ove
 Every field resolves as environment variable, then file, then default. `config.toml` also
 accepts a hand-written `base_url`, read after `HFOX_BASE_URL` and `token.json`.
 
-A file that cannot be parsed, or that holds a non-string `subdomain`, `region`, `base_url`,
-`api_key` or `auth_code`, exits 5 with an error of type `config` that names the file and the
-key. When no home directory can be determined, set `HFOX_CONFIG_DIR` to an absolute path; a
-config directory whose `~` cannot be expanded also exits 5.
+A file that cannot be read or parsed, or that holds a non-string `subdomain`, `region`,
+`base_url`, `api_key` or `auth_code`, exits 5 with an error of type `config` that names the
+file and the key. So does a home directory that cannot be determined, or a `~` in the config
+directory that cannot be expanded; give the config directory as an absolute path.
 
 | Variable | Sets |
 |----------|------|
@@ -85,14 +84,14 @@ config directory whose `~` cannot be expanded also exits 5.
 | `HFOX_CONFIG_DIR` | the config directory |
 
 `--region eu` targets `*.happyfox.net`; a custom domain goes in `--subdomain` as the full host
-(`support.acme.com`). For proxied accounts, set `HFOX_BASE_URL`; a trailing `/api/1.1/json`
-is stripped and `auth login` stores the value. A stored base URL wins over `--subdomain`, so
-`auth login --subdomain` warns on stderr when one is in effect.
+(`support.acme.com`) and ignores the region. For proxied accounts, set `HFOX_BASE_URL`; a
+trailing `/api/1.1/json` is stripped and `auth login` stores the value. A stored base URL
+wins over `--subdomain`, so `auth login --subdomain` warns on stderr when one is in effect.
 
-A base URL with embedded credentials, a query or a fragment exits 3. The error leaves out any
-value that holds `@`, `?` or `#`, since it may carry a secret. An `http` base URL on a
-non-loopback host sends the credentials in cleartext, so hfox warns on stderr once per
-invocation and proceeds.
+A base URL with another scheme, no host, a bad port, embedded credentials, a query or a
+fragment exits 3. The error leaves out any value that holds `@`, `?` or `#`, since it may
+carry a secret. An `http` base URL on a non-loopback host sends the credentials in cleartext;
+hfox warns on stderr once per invocation and proceeds.
 
 `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` and `NO_PROXY` are honored through httpx. TLS trust
 comes from the certifi bundle unless `SSL_CERT_FILE` or `SSL_CERT_DIR` names another one.
@@ -117,24 +116,24 @@ Global flags go before the resource: `hfox -f table tickets list`, not `hfox tic
 | `--config-dir DIR` | override the config directory |
 | `--no-color` | disable color (also honors `NO_COLOR`) |
 | `-v, --version` | show the release version, or `dev` when run from source |
+| `--install-completion` / `--show-completion` | install or print shell completion |
 
 A global flag after the resource exits 3 with an error of type `usage` that says where the
 flag goes. That also holds when the flag follows an option that takes a value, so
 `tickets note 5 --text --dry-run` is refused. Write `--text=--dry-run` to send such a literal.
-A short flag with its value attached, such as `-ftable`, is sent as the value there.
+In that position a short flag with its value attached, such as `-ftable`, is sent as the
+value.
 
-A global option that takes a value refuses one that starts with `-`, so
-`hfox --staff --dry-run tickets list` exits 3 with type `usage` instead of reading `--dry-run`
-as the staff name. The `--opt=value` form is checked the same way. A numeric option such as
-`--timeout` still takes a negative number, which its range check then rejects.
+A global option that takes a value refuses one that starts with `-`, in the `--opt=value`
+form too, so `hfox --staff --dry-run tickets list` exits 3 with type `usage` instead of
+reading `--dry-run` as the staff name.
 
 An unknown format from `--format`, `HFOX_FORMAT` or `default_format` exits 3. In `config.toml`
 only an empty string means unset, so `default_format = false` is an unknown format.
 
-`--timeout` bounds one attempt, not the whole command. Retries, their backoff and any
-`Retry-After` wait come on top of it. Before each retry hfox prints one stderr line with the
-reason and the wait. GETs retry any network error; writes retry only when no connection was
-made.
+`--timeout` does not bound the whole command: retries, their backoff and any `Retry-After`
+wait come on top. Each retry prints one stderr line with the reason and the wait. GETs retry
+any network error; writes retry only when no connection was made.
 
 ## Listing and search
 
@@ -162,17 +161,16 @@ NDJSON line keeps the server's `page_info`, which counts rows before filtering.
 
 ## Acting staff
 
-Commands that HappyFox records against an agent take `--staff` or `--staff-id`, never both.
-`--staff` is an email or a name and `--staff-id` the numeric id. The pair is on ticket
-`reply`, `note`, `update`, `update-cf`, `tags`, `forward`, `move` and `delete`, and on asset
-`create`, `update` and `delete`. On `tickets subscribe` and `unsubscribe` the pair names the
-agent being added or removed.
+Commands that HappyFox records against an agent take `--staff`, an email or a name, or
+`--staff-id`, never both. The pair is on ticket `reply`, `note`, `update`, `update-cf`,
+`tags`, `forward`, `move` and `delete`, and on asset `create`, `update` and `delete`. On
+`tickets subscribe` and `unsubscribe` the pair names the agent being added or removed.
 
-The identity resolves in this order: the flag on the command, the global flag, then
-`HFOX_STAFF_ID` or the default saved by `auth login --email`. `--staff` reads `staff/` and
-matches the email first, then the name, ignoring case. No match or several matches exit 3,
-and a value made of digits is refused with a pointer to `--staff-id`. The lookup is a read,
-so it is also sent under `--dry-run` and needs credentials.
+The identity resolves in this order: the flag on the command, the global flag,
+`HFOX_STAFF_ID`, then the default saved by `auth login --email`. `--staff` reads `staff/` and
+takes the agent whose whole email, or failing that whole name, equals the text, ignoring
+case. No match, several matches and a value made of digits exit 3. The lookup is a read, so
+it is also sent under `--dry-run` and needs credentials.
 
 `--assignee`, `--assign-to` and `--agents` take staff ids; `--alert` takes `s`, `c` or a
 staff id. None accepts an email or name. Find the ids with `hfox system staff`.
@@ -190,8 +188,7 @@ Files and stdin are read as strict UTF-8, and a leading byte order mark is dropp
 `--attachment` always names a file.
 
 A path must name a regular file. A directory, FIFO, device or process substitution exits 3
-with "is not a regular file", and a missing path exits 3 with "not found". A leading `~` that
-names no known home directory is used as written.
+with "is not a regular file", and a missing path exits 3 with "not found".
 
 hfox refuses to read a file you name when it lies inside the config directory, including
 through a symlink or a hard link to `token.json`. It also refuses to send a file or stdin
@@ -206,9 +203,8 @@ an error of type `cancelled` and exits 5.
 
 ## Output
 
-JSON is the default; `-f table`, `-f csv` and `-f yaml` render the same data. Status lines,
-warnings and prompts go to stderr, so stdout stays parseable. CSV ends every row with one
-CRLF on every platform, and a newline inside a cell stays a bare LF.
+Status lines, warnings and prompts go to stderr, so stdout stays parseable. CSV ends every
+row with one CRLF on every platform, and a newline inside a cell stays a bare LF.
 
 Table and CSV cells drop control, bidi and zero-width characters, so ticket text cannot drive
 the terminal. Newline, tab and the zero-width joiner and non-joiner are kept. A CSV text cell
@@ -217,8 +213,8 @@ not run it as a formula; plain signed decimals such as `-5` and `+15551234567` s
 are.
 
 JSON and NDJSON write C1 controls, bidi controls, line and paragraph separators and tag
-characters as `\uXXXX` escapes. A JSON parser returns the same strings, and YAML carries the
-data unchanged.
+characters as `\uXXXX` escapes, and YAML escapes non-printable characters in a quoted string.
+A parser returns the same strings.
 
 ## Errors and exit codes
 
@@ -260,10 +256,9 @@ A nonzero exit carries that error object except in these cases:
 
 - A partial bulk or group-membership failure prints the response and exits 1. Removing a
   contact that is not in the group does not count.
-- `auth status` without credentials prints its payload and exits 2. A failed
-  `auth status --check` prints the payload with `check_error`.
+- `auth status` prints its payload when it exits 2 and when `--check` fails.
 - With `--page-all` in JSON, the error is the last NDJSON line.
-- Ctrl-C outside a prompt exits 130 with nothing on stdout.
+- Ctrl-C outside a prompt exits 130 and prints no error object.
 
 Usage errors also print the usage hint on stderr, except a misplaced global flag and a global
 option without its value. Bare group invocations (`hfox tickets`) print help and exit `0`.
@@ -277,7 +272,8 @@ and the NDJSON framing of one page per line. Truncation at `--page-limit` keeps 
 the stderr warning.
 
 These are not contract: table layout, the files inside the config directory, the bodies
-HappyFox returns and hfox passes through, and the content of `detail`.
+HappyFox returns and hfox passes through, and the content of `detail` apart from `staff_ids`
+on an ambiguous `--staff`.
 
 Minor releases may add keys, `type` values, flags and environment variables, so ignore the
 ones you do not know. Removing or renaming any of them is a breaking change. The names
@@ -300,8 +296,9 @@ hfox system    categories | priorities | staff | statuses | ticket-custom-fields
 
 Ticket commands take the numeric ticket id, not the display id. `tickets update` changes
 status, priority, assignee, due date, tags, time spent and custom fields without posting a
-message, and `tickets create --unassign` sends an explicit empty assignee. `contacts create`
-also edits the contact with the same email and resets custom fields it does not send.
+message. `--unassign` on `create`, `reply`, `note` and `update` sends a null assignee.
+`contacts create` and `create-bulk` also edit the contact with the same email and reset
+custom fields they do not send.
 
 ## Examples
 

@@ -1,7 +1,7 @@
 """Read-only reference data: the ids other commands take.
 
-These endpoints return bare JSON arrays and take no query params, so each command is a single
-GET and its --name/--email flags filter the whole array locally.
+These endpoints document no query params and return a bare JSON array (the priorities/ response
+is undocumented), so each command is a single GET and its --name/--email flags filter locally.
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ def categories(
 ):
     """List ticket categories with their ids.
 
-    New tickets need a public one; time_spent_mandatory ones need reply/note --time-spent.
+    New tickets need a public one; time_spent_mandatory ones need reply/note/update --time-spent.
     """
     _render_rows(ctx, "categories/", {"name": name})
 

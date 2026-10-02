@@ -58,5 +58,5 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
-# B008: Typer's idiom is `arg: T = typer.Option(...)` — a call in the default is intended.
+# B008: Typer declares an option as a call in the argument default.
 ignore = ["B008"]

@@ -1,9 +1,5 @@
-"""Coverage for `hfox tickets` read paths, rendering, params, and error branches.
-
-These complement the dry-run write-shape tests in test_cli.py and
-test_dry_run_writes.py: here we drive real HTTP through the `mock_api` fixture so
-the response-rendering (`obj.render` / `obj.render_list`) and success branches
-execute, and we exercise the ValidationError / require_staff_id error paths.
+"""`hfox tickets` request params and rendered responses through `mock_api`, plus validation
+errors.
 """
 
 import json
@@ -96,7 +92,6 @@ def test_list_table_format_unwraps_rows(mock_api):
     mock_api(ok_json(body))
     result = run("-f", "table", "tickets", "list")
     assert result.exit_code == 0
-    # Table view shows the row content, not the page_info envelope key.
     assert "subject" in result.stdout or "Hi" in result.stdout
 
 
@@ -109,7 +104,7 @@ def test_list_minify_omitted_when_false(mock_api):
 
 
 def test_list_query_defaults_status_to_all(mock_api):
-    # Search URLs are `?status=_all&q=...` — --query without --status spans all statuses.
+    # The documented search URL is tickets/?status=_all&q=...
     captured = mock_api(ok_json({"page_info": {"page_count": 1, "count": 0}, "data": []}))
     result = run("tickets", "list", "-q", "foo")
     assert result.exit_code == 0
@@ -132,7 +127,6 @@ def test_list_default_size_10_no_status_without_query(mock_api):
     result = run("tickets", "list")
     assert result.exit_code == 0
     qp = dict(captured[0].url.params)
-    # API's documented default page size; no query -> no status injected.
     assert qp["size"] == "10"
     assert "status" not in qp
     assert "q" not in qp
@@ -196,7 +190,6 @@ def test_create_renders_result_and_success(mock_api):
     body = json.loads(captured[0].content)
     assert body["category"] == 3
     assert body["name"] == "Han"
-    # The rendered object is on stdout; the success() line is a stderr side channel.
     assert json.loads(result.stdout)["display_id"] == "T-7"
     assert "Created ticket T-7." in result.stderr
 
@@ -346,7 +339,7 @@ def test_user_reply_posts_and_renders(mock_api):
 
 def test_user_reply_missing_required_user_errors():
     result = run("tickets", "user-reply", "42", "--text", "hi")
-    # Missing required option -> usage error (exit 2).
+    # A missing required option is a click usage error: exit 2 under CliRunner.
     assert result.exit_code == 2
 
 
@@ -423,7 +416,6 @@ def test_unsubscribe_posts_and_renders(mock_api):
 
 
 def test_unsubscribe_missing_staff_id_is_validation_error():
-    # No --staff-id, no HFOX_STAFF_ID env -> require_staff_id raises.
     env = {k: v for k, v in ENV.items() if k != "HFOX_STAFF_ID"}
     proc = run_app(["tickets", "unsubscribe", "42"], base_env=env)
     assert proc.returncode == 3
@@ -495,7 +487,6 @@ def test_delete_with_yes_posts_and_renders(mock_api):
     assert req.url.path.endswith("/ticket/42/delete/")
     body = json.loads(req.content)
     assert body == {"staff_id": 1}
-    # The success line is a stderr side channel; the result object is on stdout.
     assert "Deleted ticket 42" in result.stderr
     assert json.loads(result.stdout)["deleted"] is True
 
@@ -527,7 +518,7 @@ def test_delete_without_terminal_requires_yes(mock_api):
     assert captured == []
 
 
-# -- API error surfaces as exit code 1 --------------------------------------
+# -- an API error fails the command -----------------------------------------
 def test_get_api_error_exit_code(mock_api):
     def handler(request):
         return httpx.Response(404, json={"error": "Ticket not found"})

@@ -89,7 +89,6 @@ def test_contacts_list_default_size_10_no_query(mock_api):
 
     assert result.exit_code == 0, result.stdout
     params = dict(captured[0].url.params)
-    # compact() drops the None query; size defaults to the API's 10, page to 1.
     assert "q" not in params
     assert params["size"] == "10"
     assert params["page"] == "1"
@@ -109,7 +108,7 @@ def test_contacts_list_page_all_walks_pages(mock_api):
     result = run("--page-all", "contacts", "list")
 
     assert result.exit_code == 0, result.stdout
-    # Two pages fetched; JSON + --page-all streams one page envelope per line.
+    # JSON with --page-all streams one page envelope per line.
     assert len(captured) == 2
     out = [json.loads(line) for line in result.stdout.strip().splitlines()]
     assert [page["data"][0]["id"] for page in out] == [1, 2]
@@ -149,11 +148,9 @@ def test_contacts_create_full_body_with_phone_and_cf():
     assert p["url"].endswith("/users/")
     assert p["body"]["name"] == "Jane"
     assert p["body"]["email"] == "j@x.org"
-    # Phone becomes a phones array marked primary.
     assert p["body"]["phones"] == [
         {"type": "o", "number": "5551234", "is_primary": True}
     ]
-    # Contact create custom fields use the c-cf- prefix.
     assert p["body"]["c-cf-4"] == "VIP"
 
 
@@ -184,7 +181,6 @@ def test_contacts_create_bad_phone_type_no_network(mock_api):
     assert result.exit_code != 0
     assert isinstance(result.exception, ValidationError)
     assert int(result.exception.exit_code) == 3
-    # Validation happens before any HTTP request.
     assert captured == []
 
 
@@ -244,7 +240,6 @@ def test_contacts_update_phone_and_cf():
     # No --phone-id adds a phone; type and is_primary are sent only when given.
     assert p["body"]["phones"] == [{"number": "999"}]
     assert p["body"]["c-cf-3"] == "Gold"
-    # set_login untouched -> omitted.
     assert "is_login_enabled" not in p["body"]
 
 
@@ -292,7 +287,6 @@ def test_contacts_create_bulk_over_100_is_validation_error(mock_api, tmp_path):
     assert isinstance(result.exception, ValidationError)
     assert int(result.exception.exit_code) == 3
     assert "between 1 and 100" in str(result.exception)
-    # The cap is enforced before any HTTP request.
     assert captured == []
 
 
@@ -428,7 +422,6 @@ def test_groups_list_renders(mock_api):
 
 
 def test_groups_list_bare_list_body(mock_api):
-    # A bare list body exercises render_list's list branch.
     captured = mock_api(lambda req: httpx.Response(200, json=[{"id": 1}]))
     result = run("contacts", "groups", "list")
     assert result.exit_code == 0, result.stdout
@@ -511,7 +504,6 @@ def test_groups_create_full_body():
 def test_groups_create_minimal_omits_optional():
     p = preview("--dry-run", "contacts", "groups", "create", "--name", "Solo")
     assert p["body"]["name"] == "Solo"
-    # compact drops None description and None tagged_domains.
     assert "description" not in p["body"]
     assert "tagged_domains" not in p["body"]
 
@@ -573,7 +565,6 @@ def test_groups_add_contacts_over_100_is_validation_error(mock_api):
     assert isinstance(result.exception, ValidationError)
     assert int(result.exception.exit_code) == 3
     assert "between 1 and 100" in str(result.exception)
-    # The cap is enforced before any HTTP request.
     assert captured == []
 
 
@@ -591,9 +582,8 @@ def test_groups_add_contacts_rejects_non_int():
     assert isinstance(result.exception, ValidationError)
 
 
-# -- live write paths: cover the obj.render(result) lines after a POST ------
-# --dry-run short-circuits before render(); these exercise the real (mocked)
-# request + render so the trailing render lines are covered too.
+# -- writes through mock_api -------------------------------------------------
+# --dry-run exits before render(), so these send the write and check its output.
 def test_contacts_create_live_renders_result(mock_api):
     created = {"id": 101, "name": "Jane"}
     captured = mock_api(lambda req: httpx.Response(200, json=created))

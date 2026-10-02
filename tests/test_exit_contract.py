@@ -156,7 +156,6 @@ def test_success_message_goes_to_stderr(mock_api):
         env=ENV,
     )
     assert result.exit_code == 0
-    # The "Created ticket ..." status line is a stderr-only side channel.
     assert "Created ticket #D1." in result.stderr
     assert "Created ticket" not in result.stdout
 

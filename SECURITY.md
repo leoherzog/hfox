@@ -16,9 +16,11 @@ you expected to happen.
 ## Credential storage model
 
 `hfox auth login` writes the HappyFox API key and auth code to `token.json` in the config
-directory: `$XDG_CONFIG_HOME/hfox`, else `~/.config/hfox`, unless `HFOX_CONFIG_DIR` names
-another one. The file is plaintext at mode 0600 inside a directory at mode 0700. There is no
-keyring integration, so anyone who can read the file as your user holds the credentials.
+directory: `$XDG_CONFIG_HOME/hfox`, else `~/.config/hfox`, unless `--config-dir` or
+`HFOX_CONFIG_DIR` names another one. The file is plaintext at mode 0600 inside a directory at
+mode 0700. These are POSIX modes; on Windows the file relies on the access control of its
+directory. There is no keyring integration, so anyone who can read the file as your user
+holds the credentials.
 
 `HFOX_API_KEY` and `HFOX_AUTH_CODE` override the stored values and let a script or CI job run
 without a token file. Pass secrets through these variables or the hidden login prompt, not on
@@ -35,14 +37,14 @@ is rejected, and the error never prints a value that holds `@`, `?` or `#`.
 
 An AI agent driving hfox can be told by ticket or contact text to attach or post a file.
 Commands therefore refuse to read a user-named file inside the config directory. The check
-compares both the resolved path and the file identity, so a symlink or a hard link to
-`token.json` is refused as well. Commands also refuse to send a file or stdin whose content
+compares the resolved path and the file identity, so a symlink or a hard link to
+`token.json` is refused too. Commands also refuse to send a file or stdin whose content
 holds the configured credentials.
 
 The guards do not cover the choice of host. hfox sends the credentials to the host named by
-the subdomain or by a base URL from `HFOX_BASE_URL`, `token.json` or `config.toml`.
-`hfox auth login --subdomain <host>` sends the API key and auth code in the environment to
-that host without a prompt when stdin is not a terminal, then stores the host. Never take a
-subdomain, base URL or config directory from ticket or contact text.
+the subdomain and region, or by a base URL from `HFOX_BASE_URL`, `token.json` or
+`config.toml`. `hfox auth login --subdomain <host>` sends the API key and auth code in the
+environment to that host without a prompt when stdin is not a terminal, then stores the host.
+Never take a subdomain, region, base URL or config directory from ticket or contact text.
 
 Ticket and contact text comes from outside your organization. Treat it as untrusted input.

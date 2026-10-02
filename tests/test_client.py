@@ -111,7 +111,7 @@ def test_bool_params_lowercased():
 
 
 def make_client_recording_sleep(handler, **kwargs):
-    """Like make_client, but record every backoff delay the client sleeps for."""
+    """Like make_client, but return (client, slept), where `slept` records every sleep."""
     slept: list[float] = []
     client = HappyFoxClient(
         "https://acme.happyfox.com/api/1.1/json", "key", "code",
@@ -123,7 +123,7 @@ def make_client_recording_sleep(handler, **kwargs):
     return client, slept
 
 
-# -- #37: network errors and 429 exhaustion --------------------------------
+# -- network errors and 429 exhaustion --------------------------------------
 def test_transient_network_error_retried_then_succeeds():
     calls = {"n": 0}
 
@@ -136,7 +136,6 @@ def test_transient_network_error_retried_then_succeeds():
     client, slept = make_client_recording_sleep(handler)
     assert client.get("tickets/") == {"done": True}
     assert calls["n"] == 3
-    # Two failures => two backoff sleeps before the success.
     assert len(slept) == 2
 
 
@@ -173,7 +172,6 @@ def test_numeric_retry_after_header_drives_clamped_sleep():
     def handler(request: httpx.Request) -> httpx.Response:
         calls["n"] += 1
         if calls["n"] == 1:
-            # Hostile/large Retry-After must be clamped to MAX_RETRY_AFTER_DELAY.
             return httpx.Response(429, headers={"Retry-After": "99999"}, json={})
         return httpx.Response(200, json={"ok": True})
 
@@ -210,12 +208,12 @@ def test_always_429_exhausts_retries_and_raises_api_error():
     assert exc.value.status_code == 429
     assert exc.value.retry_after is None
     assert "retry_after" not in exc.value.to_dict()
-    # max_retries (5) backoff sleeps, then a final attempt that raises.
+    # One sleep per retry, then a final attempt that raises.
     assert len(slept) == client.max_retries
     assert calls["n"] == client.max_retries + 1
 
 
-# -- #39: paginate handles all three response envelopes ---------------------
+# -- paginate handles all three response envelopes ---------------------------
 def test_paginate_reports_envelope_page_count_and_rows():
     def handler(request: httpx.Request) -> httpx.Response:
         page = int(request.url.params.get("page", "1"))
@@ -231,7 +229,6 @@ def test_paginate_reports_envelope_page_count_and_rows():
 
 def test_paginate_bare_list_single_page():
     def handler(request: httpx.Request) -> httpx.Response:
-        # A bare list (no envelope) has no page_count -> single page only.
         return httpx.Response(200, json=[{"id": 1}, {"id": 2}])
 
     records = list(make_client(handler).paginate("staff/", page_limit=10))
@@ -249,7 +246,7 @@ def test_paginate_single_page_when_page_count_one():
 
     records = list(make_client(handler).paginate("tickets/", page_limit=10))
     assert [r["id"] for r in records] == [1]
-    assert calls["n"] == 1  # did not fetch a phantom second page
+    assert calls["n"] == 1
 
 
 def test_paginate_clamps_size_to_50():

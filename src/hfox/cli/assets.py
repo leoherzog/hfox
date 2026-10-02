@@ -18,7 +18,7 @@ from ._util import (
 from .cf import CF_HELP, CF_JSON_HELP, parse_asset_cf, parse_cf_json
 from .context import get_ctx
 
-app = typer.Typer(no_args_is_help=True, help="Manage assets, asset types, and asset custom fields.")
+app = typer.Typer(no_args_is_help=True, help="Manage assets; read asset types and custom fields.")
 
 #: Documented limit on an asset name.
 MAX_NAME_LENGTH = 200
@@ -31,7 +31,7 @@ _NEW_CONTACT_HELP = (
 
 
 def _parse_new_contacts(raw: str | None) -> list | None:
-    """Parse --new-contact-json into a list of objects; None when blank."""
+    """Parse --new-contact-json into a list of objects; None when blank or an empty array."""
     if raw is None or raw.strip() == "":
         return None
     parsed = parse_json(raw, "--new-contact-json")
@@ -66,9 +66,6 @@ def _custom_fields(cf: list[str] | None, cf_json: str | None) -> dict | None:
     return fields or None
 
 
-# --------------------------------------------------------------------------- #
-# Top-level asset commands
-# --------------------------------------------------------------------------- #
 @app.command("list")
 def list_assets(
     ctx: typer.Context,
@@ -199,9 +196,6 @@ def delete_asset(
     obj.render(data)
 
 
-# --------------------------------------------------------------------------- #
-# Asset types (read-only)
-# --------------------------------------------------------------------------- #
 types = typer.Typer(no_args_is_help=True, help="Read asset types.")
 
 
@@ -233,9 +227,6 @@ def get_asset_type(
 app.add_typer(types, name="types")
 
 
-# --------------------------------------------------------------------------- #
-# Asset custom fields (read-only)
-# --------------------------------------------------------------------------- #
 custom_fields = typer.Typer(no_args_is_help=True, help="Read asset custom fields.")
 
 

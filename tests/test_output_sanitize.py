@@ -17,7 +17,7 @@ BOM = "﻿"
 ZWNJ = "‌"
 ZWJ = "‍"
 
-# Every character the JSON renderers write as an escape.
+# Every character output._JSON_ESCAPED matches.
 JSON_ESCAPED = [
     *map(chr, range(0x7F, 0xA0)),
     "؜",

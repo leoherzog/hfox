@@ -71,7 +71,7 @@ def test_env_overrides_take_precedence(tmp_path, monkeypatch):
     monkeypatch.setenv("HFOX_CONFIG_DIR", str(cfg_dir))
     monkeypatch.setenv("HFOX_API_KEY", "envkey")
     cfg = load_config()
-    assert cfg.api_key == "envkey"  # env wins
+    assert cfg.api_key == "envkey"
     assert cfg.auth_code == "diskcode"  # falls back to disk
     assert cfg.subdomain == "disk"
 

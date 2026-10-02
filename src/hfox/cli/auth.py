@@ -1,6 +1,6 @@
 """`hfox auth`: login, status and logout.
 
-Login checks credentials against staff/ before saving them. Each command prints one JSON
+Login checks credentials against staff/ before saving them. Each command renders one
 document that never holds a secret.
 """
 

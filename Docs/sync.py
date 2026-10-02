@@ -1,8 +1,9 @@
 """Sync HappyFox's REST API help articles into this directory as Markdown.
 
 Fetches the API index article and every article it links to from the public knowledge-base
-API, converts each HTML body to Markdown, and writes `<id>-<slug>.md`. Run
-`uv run Docs/sync.py`, then review what changed upstream with `git diff Docs/`.
+API, converts each HTML body to Markdown, writes `<id>-<slug>.md` and deletes any other file
+here with a name of that form. Run `uv run Docs/sync.py`, then review what changed upstream
+with `git diff Docs/`.
 """
 
 from __future__ import annotations

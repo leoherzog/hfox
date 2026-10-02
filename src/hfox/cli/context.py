@@ -79,10 +79,7 @@ class AppContext:
         return self._client
 
     def close(self) -> None:
-        """Close the underlying HTTP client if one was created.
-
-        Safe to call when no client was ever built and safe to call twice.
-        """
+        """Close the HTTP client if one was created; safe to call twice."""
         if self._client is not None:
             self._client.close()
             self._client = None
@@ -125,10 +122,11 @@ class AppContext:
         return resolved
 
     def lookup_staff(self, text: str) -> int:
-        """Return the id of the one staff member whose email, else name, equals `text`.
+        """Return the id of the one staff member whose email, else name, equals `text` under `fold`.
 
         Reads GET staff/ once per invocation, also under --dry-run, so it needs credentials.
-        Zero or several matches raise ValidationError; `active` is not consulted.
+        Blank or digits-only text and zero or several matches raise ValidationError; `active`
+        is not consulted.
         """
         if text.strip() == "":
             raise ValidationError("--staff must not be blank.")
@@ -209,10 +207,10 @@ class AppContext:
         return self._guard_secrets
 
     def read_text(self, source: str, flag: str) -> str:
-        """Return the content of a file, or of stdin when `source` is '-', unmodified.
+        """Return the content of a file, or of stdin when `source` is '-', less a leading BOM.
 
         Only one input per invocation may read stdin. Raises ValidationError for a file in
-        the config directory, content holding credentials or bytes that are not UTF-8.
+        a guarded config directory, content holding credentials or bytes that are not UTF-8.
         """
         if source != STDIN:
             return _util.read_text_file(source, forbidden=self._forbidden, secrets=self._secrets)
@@ -250,7 +248,7 @@ class AppContext:
     def attach(
         self, body: dict[str, Any], attachments: list[str] | None, *, field: str = "attachments"
     ) -> dict[str, Any]:
-        """Build `call` kwargs through `_util.attach` with the config guard applied.
+        """Build `call` kwargs through `_util.attach` with the file guard and credential check.
 
         An attachment named '-' is an ordinary file; attachments never read stdin.
         """

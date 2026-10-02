@@ -89,7 +89,7 @@ def _check_root_values(command, args: list[str]) -> None:
 
 
 class _RootGroup(TyperGroup):
-    """Root group: the fox on the usage line and the misplaced global flag checks."""
+    """Root group: the usage-line fox, the root option value check and the misplaced-flag scan."""
 
     def parse_args(self, ctx, args):
         if not ctx.resilient_parsing:

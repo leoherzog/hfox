@@ -1,4 +1,4 @@
-"""`hfox tickets`: list, read, create and act on tickets."""
+"""`hfox tickets`: list, read, create and act on tickets, and replace custom-field choices."""
 
 from __future__ import annotations
 
@@ -757,7 +757,6 @@ def set_cf_choices(
     obj.confirm(summary, yes=yes)
     if yes and not obj.dry_run:
         output.warn(summary)
-    # HappyFox's handling of an id it does not know is unverified until tested against a
-    # live helpdesk.
+    # How HappyFox treats an unknown id is unverified until tested against a live helpdesk.
     result = obj.call("PUT", f"ticket_custom_field/{field_id}/", json={"choices": choices})
     obj.render(result)

@@ -22,7 +22,7 @@ from .context import get_ctx
 
 app = typer.Typer(no_args_is_help=True, help="Manage contacts and contact groups.")
 
-# Documented HappyFox phone types: mobile, work, main, home, other.
+# Documented phone types: mobile, work, main, home, other.
 PHONE_TYPES = ("mo", "w", "m", "h", "o")
 
 
@@ -53,7 +53,6 @@ def _domains(value: str | None) -> str | None:
     return ",".join(split_csv(value) or [])
 
 
-# -- contacts --------------------------------------------------------------
 @app.command("list")
 def list_contacts(
     ctx: typer.Context,
@@ -201,7 +200,6 @@ def create_bulk(
     exit_on_failures(result)
 
 
-# -- contact groups --------------------------------------------------------
 groups = typer.Typer(no_args_is_help=True, help="Manage contact groups.")
 app.add_typer(groups, name="groups")
 

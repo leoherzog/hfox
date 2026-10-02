@@ -1,4 +1,4 @@
-"""`hfox tickets` list parameters and ticket-id validation, checked offline."""
+"""`hfox tickets` list parameters and ticket-id validation under --dry-run."""
 
 import json
 import subprocess

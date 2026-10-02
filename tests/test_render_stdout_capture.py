@@ -28,7 +28,6 @@ def test_rendered_get_is_captured_on_stdout(mock_api):
     result = runner.invoke(cli, ["tickets", "get", "42"], env=ENV)
 
     assert result.exit_code == 0, result.stdout
-    # The default JSON render must land in captured stdout, not the real terminal.
     assert json.loads(result.stdout) == ticket
 
 

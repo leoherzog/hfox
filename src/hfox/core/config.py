@@ -36,14 +36,15 @@ MIN_SECRET_LENGTH = 8
 
 
 class ConfigError(HfoxError):
-    """A config or token file that cannot be read, parsed, written or removed."""
+    """A config or token file that cannot be read, parsed, written or removed, or a config
+    directory that cannot be resolved."""
 
     exit_code = ExitCode.OTHER
     type = "config"
 
 
-# A subdomain or custom host: dot-separated DNS labels (alnum + hyphen), no scheme,
-# credentials, port, or path. Dotted values are supported for custom domains.
+# A subdomain or dotted custom host: DNS labels of letters, digits and hyphens, with no
+# scheme, credentials, port or path.
 _HOST_RE = re.compile(r"^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?:\.(?!-)[A-Za-z0-9-]{1,63})*$")
 
 
@@ -119,7 +120,7 @@ def _toml_value(value: Any) -> str:
 
 
 def _toml_dumps(data: dict[str, Any]) -> str:
-    """Serialize a dict as TOML: each table's scalars first, then its sub-tables as sections."""
+    """Serialize a dict as TOML: a table's non-table values, then its sub-tables as sections."""
     lines: list[str] = []
 
     def emit(table: dict[str, Any], prefix: str) -> None:
@@ -141,8 +142,9 @@ def _toml_dumps(data: dict[str, Any]) -> str:
 def normalize_base_url(url: str, source: str = "HFOX_BASE_URL") -> str:
     """Return a base URL override as an http(s) root without trailing slash or API prefix.
 
-    Raises ValidationError naming `source` for another scheme, a missing host, a bad port, a
-    query, a fragment or credentials. A value holding `@`, `?` or `#` is never echoed.
+    Any other path is kept. Raises ValidationError naming `source` for another scheme, a
+    missing host, a bad port, a query, a fragment or credentials. A value holding `@`, `?`
+    or `#` is never echoed.
     """
     # A valid root has no "@", so any form of userinfo is caught before parsing.
     if "@" in url:

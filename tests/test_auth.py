@@ -1,8 +1,7 @@
 """`hfox auth` login, status and logout.
 
-Offline: the probe and `--check` go through the `mock_api` transport, and all state lives
-under an isolated HFOX_CONFIG_DIR. Exit codes that `main.app()` assigns are tested through
-`run_main`.
+The probe and `--check` go through the `mock_api` transport. Exit codes that `main.app()`
+assigns are tested through `run_main`.
 """
 
 import io

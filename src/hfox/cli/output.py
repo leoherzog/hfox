@@ -231,7 +231,7 @@ def _render_table(data: Any, stream) -> None:
 
 
 def _render_csv(data: Any, stream) -> None:
-    """Write RFC 4180 rows ending in CRLF; newlines inside a cell pass through unchanged."""
+    """Write RFC 4180 rows ending in CRLF; an LF inside a cell stays a bare LF."""
     rows = _as_rows(data)
     if not rows:
         # No header either, so an empty result stays a valid empty CSV.

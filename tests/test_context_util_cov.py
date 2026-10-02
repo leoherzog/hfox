@@ -1,7 +1,7 @@
-"""Coverage for AppContext helpers, _util edge cases, and the error hierarchy.
+"""Unit tests for AppContext helpers, _util and the error hierarchy.
 
-These are mostly direct unit calls against context.py / _util.py / errors.py.
-mock_api is used only where AppContext.paginate/call must reach a real client.
+`_install_client` patches the client factory where AppContext.paginate or call must send
+a request.
 """
 
 import json
@@ -146,7 +146,6 @@ def _page_handler(request):
 
 
 def test_paginate_page_all_json_streams_ndjson_and_exits(capsys, monkeypatch):
-    # page_all=True + JSON -> one compact page envelope per line, then Exit(0).
     captured = _install_client(monkeypatch, _page_handler)
     ctx = make_ctx(page_all=True, page_limit=10, page_delay_ms=0)
     with pytest.raises(typer.Exit) as ei:
@@ -158,12 +157,10 @@ def test_paginate_page_all_json_streams_ndjson_and_exits(capsys, monkeypatch):
 
 
 def test_paginate_page_all_non_json_returns_flat_list(monkeypatch):
-    # page_all=True + table/csv/yaml -> client.paginate, flattened to a list.
     captured = _install_client(monkeypatch, _page_handler)
     ctx = make_ctx(page_all=True, page_limit=10, page_delay_ms=0, fmt=OutputFormat.TABLE)
     result = ctx.paginate("tickets/", params={"size": 2})
     assert result == [{"id": 10}, {"id": 11}, {"id": 20}, {"id": 21}]
-    # Two pages were fetched.
     assert len(captured) == 2
 
 

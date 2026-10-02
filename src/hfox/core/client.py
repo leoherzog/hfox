@@ -41,7 +41,7 @@ _WRITE_RETRYABLE = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
 _NOT_SENT = (*_WRITE_RETRYABLE, httpx.ProxyError, httpx.UnsupportedProtocol)
 OUTCOME_UNKNOWN_HINT = "The write may have been applied. Check the resource before retrying."
 
-# Deterministic-ish jitter without importing random (keeps backoff testable).
+# Fixed jitter values, so backoff is deterministic in tests.
 _JITTER_CYCLE = (0.13, 0.41, 0.77, 0.29, 0.59)
 
 
@@ -59,8 +59,9 @@ class HappyFoxClient:
         sleep=time.sleep,
         on_retry: RetryCallback | None = None,
     ):
-        """`timeout` bounds each attempt, not the whole call. `on_retry(reason, delay_s,
-        attempt, max_retries)` runs before each retry sleep, never for the page delay.
+        """`timeout` limits the connect and each read or write, not an attempt or the whole
+        call. `on_retry(reason, delay_s, attempt, max_retries)` runs before each retry sleep,
+        never for the page delay.
         """
         self.base_url = base_url.rstrip("/")
         self.max_retries = max_retries
@@ -70,8 +71,8 @@ class HappyFoxClient:
             auth=httpx.BasicAuth(api_key, auth_code),
             timeout=timeout,
             headers={"Accept": "application/json", "User-Agent": USER_AGENT},
-            # Do not follow redirects: httpx strips Basic auth on cross-host
-            # redirects, which would silently send unauthenticated requests.
+            # httpx drops Basic auth on a cross-host redirect, so a followed one would go
+            # out unauthenticated.
             follow_redirects=False,
         )
 
@@ -85,7 +86,7 @@ class HappyFoxClient:
     def close(self) -> None:
         self._client.close()
 
-    # -- URL helpers -------------------------------------------------------
+    # -- URL and retry helpers ---------------------------------------------
     def _url(self, path: str) -> str:
         return _join(self.base_url, path)
 
@@ -94,7 +95,7 @@ class HappyFoxClient:
         return delay + _JITTER_CYCLE[attempt % len(_JITTER_CYCLE)]
 
     def _retry_sleep(self, reason: str, delay: float, attempt: int) -> None:
-        """Report the retry through `on_retry`, then sleep. `attempt` is 0-based."""
+        """`attempt` is 0-based here; `on_retry` receives it 1-based."""
         if self._on_retry is not None:
             self._on_retry(reason, delay, attempt + 1, self.max_retries)
         self._sleep(delay)
@@ -110,9 +111,11 @@ class HappyFoxClient:
         data: dict[str, Any] | None = None,
         files: Any = None,
     ) -> Any:
-        """Send a request with retries, returning the parsed JSON body.
+        """Send a request with retries. Returns the parsed JSON body, None for an empty body
+        and the text of one that is not JSON.
 
-        GETs retry any transport error; writes retry only failures to connect.
+        Every method retries HTTP 429. GETs retry any transport error; writes retry only
+        when no connection was made.
         """
         method = method.upper()
         url = self._url(path)
@@ -247,7 +250,7 @@ class HappyFoxClient:
 
 
 def first_page_params(params: dict[str, Any] | None, size: int = MAX_PAGE_SIZE) -> dict[str, Any]:
-    """Return the params of a page walk's first request: page defaults to 1, size is clamped."""
+    """Return a page walk's first params: page defaults to 1, size is capped at MAX_PAGE_SIZE."""
     out = dict(params or {})
     out["size"] = min(_int_param(out, "size", size), MAX_PAGE_SIZE)
     out["page"] = _int_param(out, "page", 1)

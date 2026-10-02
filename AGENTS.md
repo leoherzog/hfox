@@ -38,23 +38,20 @@ the private `typer._click`. Raise the cap only after checking that import.
 
 ### Releases
 
-Publishing a GitHub release runs `.github/workflows/release.yml`. Draft the release in the
-web UI with a tag that is `v` plus a canonical PEP 440 public version (`v1.0.0`,
-`v1.0.0rc1`); any other tag fails the stamping step. Source keeps the placeholders
-`version = "0.0.0"` in `pyproject.toml` and `__version__ = "dev"`, so `hfox --version`
-reports `dev` for any build that is not a release.
+Publishing a GitHub release runs `.github/workflows/release.yml`. The tag must be `v` plus a
+canonical PEP 440 public version (`v1.0.0`, `v1.0.0rc1`); any other tag fails the stamping
+step. Source keeps the placeholders `version = "0.0.0"` in `pyproject.toml` and
+`__version__ = "dev"`, so `hfox --version` reports `dev` for any build that is not a release.
 
-The jobs run in this order:
+`binaries` and `dist` run in parallel, then `assets`, then `pypi`:
 
 1. `binaries` stamps `__version__`, builds a PyInstaller binary per platform and smoke-tests
    `--version`, a dry run and `--show-completion`. It leaves `pyproject.toml` alone, since
    `uv run --locked` rejects a changed project version.
-2. `dist` stamps both `pyproject.toml` and `__version__`, runs `uv build` and checks that the
+2. `dist` stamps `pyproject.toml` and `__version__`, runs `uv build` and checks that the
    wheel reports the tag version.
-3. `assets` attests every binary, the wheel and the sdist, then attaches all of them to the
-   release.
-4. `pypi` publishes the wheel and sdist through trusted publishing in the `pypi` environment,
-   with no token secret.
+3. `assets` attests and attaches the binaries, the wheel and the sdist.
+4. `pypi` publishes the wheel and sdist through trusted publishing in the `pypi` environment.
 
 PyPI accepts each version once, so `pypi` runs last and a failed run can be re-run from the
 Actions tab. The release is public while the jobs run, so GitHub's immutable releases setting
@@ -65,8 +62,7 @@ normal release.
 A manual `workflow_dispatch` run stops after `binaries` and `dist` and only uploads workflow
 artifacts. Actions are pinned by commit SHA with a version comment; look up the current SHA
 with `git ls-remote --tags` before changing one. Whether attestation needs
-`artifact-metadata: write`, and the macOS and Windows completion smoke tests, are unverified
-until the first release.
+`artifact-metadata: write` is unverified until a release runs without it.
 
 Build the same binary locally into `dist/` with:
 
@@ -74,8 +70,8 @@ Build the same binary locally into `dist/` with:
 uv run --isolated --no-dev --group build pyinstaller --onefile --name hfox --hidden-import shellingham.posix --hidden-import shellingham.nt --specpath build src/hfox/__main__.py
 ```
 
-The two hidden imports are required: shellingham picks its platform module with a dynamic
-import that PyInstaller cannot see, and shell completion fails without them.
+Shell completion fails without the two hidden imports: PyInstaller cannot see shellingham's
+dynamic platform import.
 
 ## Architecture
 
@@ -137,10 +133,9 @@ Only `None` and `""` count as unset, so `default_format = false`, `0` or `[]` is
 
 `_RootGroup.parse_args` runs `_check_root_values` before click parses. A root option that
 takes a value raises `UsageError` when that value starts with `-`, in the `--opt value` and
-`--opt=value` forms and for each repeat. A numeric option keeps a negative number for its
-range check. Without it `--staff --dry-run`
-would send `--dry-run` as the staff name. The set of options comes from the callback's
-params, so an added root option is covered.
+`--opt=value` forms and for each repeat, so `--staff --dry-run` cannot send `--dry-run` as
+the staff name. A numeric option keeps a negative number for its range check. The options
+come from the callback's params, so an added root option is covered.
 
 A global flag placed after the resource raises `UsageError` saying where it goes. Two
 detectors produce it. `_RootGroup.resolve_command` scans the tokens up to a `--` terminator
@@ -155,12 +150,12 @@ walks the command tree to enforce it.
 
 ## The AppContext contract (read before adding a command)
 
-Every command's first line is `obj = get_ctx(ctx)`. `AppContext` (in `cli/context.py`) is
+A command gets its context with `obj = get_ctx(ctx)`. `AppContext` (in `cli/context.py`) is
 the only API a command module uses to talk to HappyFox, read input, prompt or emit output:
 
 | Method | Use for |
 |--------|---------|
-| `obj.call(method, path, *, params, json, data, files)` | single GETs and **all writes**; returns parsed JSON; `--dry-run` prints the exact wire request and exits |
+| `obj.call(method, path, *, params, json, data, files)` | single GETs and **all writes**; returns the parsed body, `None` when empty and text when not JSON; `--dry-run` prints the exact wire request and exits |
 | `obj.paginate(path, *, params, root_key="data", filters=None)` | paginated lists; honors `--dry-run`. `--page-all` + JSON **streams NDJSON**, one compact line per page or error, then exits, so `render_list` never runs; other formats get the flat record list. Without `--page-all`, the single page. Warns on stderr when `--page-limit` truncates and still exits 0. `filters={field: text}` applies `filter_rows` to every page, NDJSON lines included; without `--page-all` it raises `ValidationError`, even under `--dry-run`. Filters never reach the request |
 | `obj.render(data)` | render one object/list in the active `--format` |
 | `obj.render_list(body, *, root_key="data")` | render a listing: JSON keeps the `{page_info, data}` envelope; other formats unwrap to rows |
@@ -186,19 +181,19 @@ Helpers:
 
 - `cli/_util.py`: `compact(dict)` drops `None`; `comma_join(list)`→`"a,b"`;
   `split_csv("a,b")`→`["a","b"]`, `None` when blank; `split_csv_ints("1,2")`→`[1,2]`, ASCII
-  digits only, `[]` when blank. `nonblank_or_none` returns `None` for a blank value.
-  `require_nonblank`, `validate_ticket_id` and `validate_contact_ref` raise
+  digits only, `[]` when blank, `None` for `None`. `nonblank_or_none` returns `None` for a
+  blank value. `require_nonblank`, `validate_ticket_id` and `validate_contact_ref` raise
   `ValidationError`. `parse_json` accepts strict JSON (no NaN/Infinity).
 - Shared help text: `STAFF_HELP`, `STAFF_ID_HELP`, `YES_HELP` and `text_file_help(what)`.
   `STDIN` is `"-"`. `stdin_is_tty()` is always called as `_util.stdin_is_tty()`, so tests can
   patch the module attribute. On Windows it also requires `GetConsoleMode` to succeed on the
-  stdin handle, since `isatty()` is true for `NUL`. Unverified until Windows CI runs.
-- Guarded reads, used only through `AppContext`: `check_readable_path(path, forbidden)`
+  stdin handle, since `isatty()` is true for `NUL`.
+- Guarded reads, used only through `AppContext`: `check_readable_path(path, forbidden=())`
   refuses a path that resolves to a guarded directory or below one, comparing by file
-  identity and component-wise, never by string prefix. `open_guarded(path, *, forbidden,
-  what)` adds the missing-file check, refuses a path that is not a regular file and refuses
-  a hard link to a guarded `token.json`; the caller reads from the returned handle.
-  `check_no_secrets(data, source, secrets)` refuses content holding a credential.
+  identity and component-wise, never by string prefix. `open_guarded(path, *, forbidden=(),
+  what="File")` adds the missing-file check, refuses a path that is not a regular file and
+  refuses a hard link to a guarded `token.json`; the caller reads from the returned handle.
+  `check_no_secrets(data, source, secrets=())` refuses content holding a credential.
   `read_text_file` and `load_json_file` combine them and decode strict `utf-8-sig`.
   `_read_all(handle)` is the one read point and the patch point for read-error tests.
   `_expand(path)` expands `~` in a user-named path; one it cannot expand stays as written.
@@ -206,21 +201,21 @@ Helpers:
   list or an envelope whose top-level string `field` contains every non-blank `text`, compared
   through `fold` (strip, NFKC, casefold, NFKC). Other keys such as `page_info` pass through.
   With no active filter it returns `body`. A body without a row list raises `HfoxError`
-  (exit 5) unless `paged`, which reads rows as `client._unwrap_page` does so NDJSON pages match
-  the flat list. `filter_help(field, *, paged=False)` is the flag's help text. `auth login`
-  and `lookup_staff` share `fold` but match exactly.
-- `attach(body, attachments, *, field="attachments", forbidden, secrets)` builds the
-  `obj.call` kwargs; commands reach it through `obj.attach`. JSON bodies go as given, so
-  `compact()` the base body before merging custom fields. Multipart drops `None`, sends every
-  other value as text and caps files at `MAX_ATTACHMENT_BYTES` in total.
+  unless `paged`, which reads rows as `client._unwrap_page` does so NDJSON pages match the
+  flat list. `filter_help(field, *, paged=False)` is the flag's help text. `auth login` and
+  `lookup_staff` share `fold` but match exactly.
+- `attach(body, attachments, *, field="attachments", forbidden=(), secrets=())` keeps a JSON
+  body as given, so `compact()` the base body before merging custom fields. Multipart drops
+  `None`, sends every other value as text and caps files at `MAX_ATTACHMENT_BYTES` in total.
 - `exit_on_failures(result, *, benign=None)`, called after rendering, exits 1 when any entry
   has `success: false`; group removals pass `benign=NOT_IN_GROUP`.
-- `cli/cf.py`: `parse_cf_options(items, *, prefix, allowed, json_flag="--cf-json")` and
-  `parse_cf_json(raw, prefix, allowed, flag="--cf-json")` prefix numeric keys and pass through
-  keys carrying an `allowed` prefix (default: `prefix`); other keys raise. The empty-value
-  error names `json_flag`, and the invalid-JSON and not-an-object errors name `flag`, so a
-  `--contact-cf` call site passes `json_flag="--contact-cf-json"` and a `--contact-cf-json`
-  one `flag="--contact-cf-json"`. `parse_asset_cf` takes bare ids only.
+- `cli/cf.py`: `parse_cf_options(items, *, prefix="t-cf-", allowed=None,
+  json_flag="--cf-json")` and `parse_cf_json(raw, prefix="t-cf-", allowed=None,
+  flag="--cf-json")` prefix numeric keys and pass through keys carrying an `allowed` prefix
+  (default: `prefix`); other keys raise. The empty-value error names `json_flag`, and the
+  invalid-JSON and not-an-object errors name `flag`, so a `--contact-cf` call site passes
+  `json_flag="--contact-cf-json"` and a `--contact-cf-json` one `flag="--contact-cf-json"`.
+  `parse_asset_cf` takes bare ids only.
 - `cli/output.py`: `OutputFormat.parse` raises `ValidationError` for an unknown name.
   `sanitize_text`, also named `sanitize_cell`, drops every `Cc` and `Cf` character except
   newline, tab, U+200C and U+200D. Table and CSV cells and headers pass through it, and so do
@@ -229,9 +224,9 @@ Helpers:
   that starts with `=`, `+`, `-`, `@` or tab unless it is a plain signed decimal. CSV rows end
   in one CRLF; `_render_csv` writes encoded bytes to the stream's `buffer`, since a Windows
   text layer would turn each `\n` into `\r\n`. JSON and NDJSON keep the data and write C1,
-  DEL, bidi, line-separator and tag characters as `\uXXXX`. YAML is untouched. `warn` prints
-  the filtered message as it is; on a color terminal only the `warning:` prefix goes through
-  Rich.
+  DEL, bidi, line-separator and tag characters as `\uXXXX`. YAML keeps the data and escapes
+  non-printable characters inside a double-quoted string. `warn` prints the filtered message
+  as it is; on a color terminal only the `warning:` prefix goes through Rich.
 
 ## Adding a command or resource
 
@@ -261,9 +256,10 @@ Helpers:
 - **Staff pair:** a command that needs or names a staff identity declares both
   `staff: str = typer.Option(None, "--staff", help=STAFF_HELP)` and
   `staff_id: int = typer.Option(None, "--staff-id", min=0, help=STAFF_ID_HELP)` and calls
-  `obj.require_staff_id(staff_id, staff)`. No other flag spelling names the actor. Of the
-  flags that name another agent, `--assignee`, `--assign-to` and `--agents` take staff ids
-  and `--alert` takes `s`, `c` or a staff id. None accepts an email or name.
+  `obj.require_staff_id(staff_id, staff)`. No other flag spelling names the actor. Only
+  `tickets subscribe` and `unsubscribe` write their own help, since their pair is not the
+  actor. Of the flags that name another agent, `--assignee`, `--assign-to` and `--agents`
+  take staff ids and `--alert` takes `s`, `c` or a staff id. None accepts an email or name.
 - **Destructive commands** take `yes: bool = typer.Option(False, "--yes", "-y", help=YES_HELP)`
   and call `obj.confirm(message, yes=yes)`. The order is validate, resolve staff, confirm,
   call. Never call `typer.confirm` or `typer.prompt`; use `obj.confirm` and `obj.prompt`.
@@ -276,9 +272,7 @@ Helpers:
   `ticket_attachments`, asset `contact_ids`/`contact_group_ids`) as JSON int arrays via
   `split_csv_ints`. Multipart sends a list as JSON text in one field. Unverified until tested
   against a live helpdesk.
-- Raise `ValidationError`/`NotFoundError`/`AuthError`/`APIError` from `core.errors`;
-  do not `print()` errors or call `sys.exit()`. Pass `hint=` when the fix is one command or
-  flag away.
+- Raise the `core.errors` classes, with `hint=` when the fix is one command or flag away.
 - Keep stdout pure data: status and warnings go to stderr (`obj.success`, `output.warn`,
   `output.info`). `output.warn` ignores `--quiet`; use it for a message the user must see,
   such as the `set-cf-choices --yes` summary.
@@ -296,11 +290,12 @@ Sourced from `Docs/` unless marked observed. Honor them exactly.
   followed, since httpx would drop the auth on a cross-host redirect.
 - **Base URL is host-templated:** `https://<subdomain>.happyfox.com/api/1.1/json` (US) or
   `…happyfox.net` (EU, `--region eu`). Region is case-insensitive and an unknown value exits
-  3. A dotted `subdomain` (e.g. `support.acme.com`) is a full custom host. `HFOX_BASE_URL` is
-  an `http(s)://host` root for proxied accounts, persisted by `auth login`. A trailing
-  `/api/1.1/json` is stripped; another scheme, a missing host, a query, a fragment or
-  embedded credentials exits 3. `normalize_base_url` raises the credentials error for any
-  value containing `@`, before parsing, and never echoes a value containing `@`, `?` or `#`.
+  3. A dotted `subdomain` (e.g. `support.acme.com`) is a full custom host and ignores the
+  region. `HFOX_BASE_URL` is an `http(s)://host` root for proxied accounts, persisted by
+  `auth login`. A trailing `/api/1.1/json` is stripped; another scheme, a missing host, a bad
+  port, a query, a fragment or embedded credentials exits 3. `normalize_base_url` raises the
+  credentials error for any value containing `@`, before parsing, and never echoes a value
+  containing `@`, `?` or `#`.
 - **Rate limits are global:** 500 GET/min, 300 POST/min, then HTTP 429 for a **10-minute**
   cooldown. Without `Retry-After`, the default five 429 retries stop after about 33s; an
   undocumented numeric `Retry-After` is honored up to 600s per attempt. GETs retry any
@@ -309,8 +304,8 @@ Sourced from `Docs/` unless marked observed. Honor them exactly.
 - **Search sends `status=_all`:** the documented search URL is `tickets/?status=_all&q=...`,
   so `tickets list -q` injects it unless `--status` is given.
   In filters a comma means any-of, and the docs' `+` is an encoded space.
-- **Multi-word `q` is AND (observed):** `q=degree works` returns tickets
-  containing both words in any order; quoting does not force phrase matching.
+- **Multi-word `q` is AND (observed):** it returns tickets containing every word in any
+  order; quoting does not force phrase matching.
 - **Reference lists take no query params:** `categories/`, `priorities/`, `staff/`,
   `statuses/`, `ticket_custom_fields/`, `user_custom_fields/` and `contact_groups/` document
   none; all but `priorities/`, whose response is undocumented, return the whole set as a bare
@@ -337,14 +332,16 @@ Sourced from `Docs/` unless marked observed. Honor them exactly.
   the API **adds** a new phone. Types are `mo/w/m/h/o`, and an omitted type falls back to `o`,
   so `--phone-id` requires `--phone-type`. `update` sends `is_primary` only when given; one
   phone per call. The docs conflict: section 14 posts phone edits to `user/<id>/`, which
-  `update` uses, while `Docs/1092:315` says to use `users/`, which only `create-bulk` reaches.
+  `update` uses, while `Docs/1092:315` says to use `users/`, where only `create-bulk` can
+  send a phone `id`.
 - **Singular vs plural paths:** collections are plural (`tickets/`, `users/`, `assets/`,
   `contact_groups/`, `asset_types/`, `asset_custom_fields/`); single-resource ops are singular
   (`ticket/<id>/`, `user/<id>/`, `asset/<id>/`, `contact_group/<id>/`, `asset_type/<id>/`,
   `asset_custom_field/<id>/`, `ticket_custom_field/<id>/`).
-- **Pagination:** `size` defaults to 10, **max 50**; the client clamps it. Responses wrap
-  rows in `{"page_info": {"page_count", …}, "data": [...]}`. `paginate()` yields flat records
-  and `paginate_pages()` raw bodies; both also read a top-level `page_count`.
+- **Pagination:** `size` defaults to 10, **max 50**; a page walk caps it and sends 50 when
+  the params carry none. Responses wrap rows in
+  `{"page_info": {"page_count", …}, "data": [...]}`. `paginate()` yields flat records and
+  `paginate_pages()` raw bodies; both also read a top-level `page_count`.
 - **Custom-field encoding:** ticket fields use `t-cf-<id>`; contact fields use `c-cf-<id>`
   on ticket create and contact create/edit, and `ccf-<id>` on staff reply/note; assets use a
   `custom_fields` object keyed by bare id. Each call site allows only its own prefixes.
@@ -360,8 +357,7 @@ Sourced from `Docs/` unless marked observed. Honor them exactly.
 - **Acting staff id:** needed only where the docs list a staff field: `staff` (reply, note,
   update, update-cf), `staff_id` (tags, forward, move, delete), `created_by`/`updated_by`
   (asset create and update, in the body) and `deleted_by` (asset delete, a query param).
-  Resolve via `obj.require_staff_id(staff_id, staff)`. On subscribe/unsubscribe, `staff_id`
-  is the agent added or removed, not the actor.
+  On subscribe/unsubscribe, `staff_id` is the agent added or removed, not the actor.
 - **Attachments are multipart/form-data**, 25 MB total per request; use `obj.attach()`.
   `ticket-inline-attachment` takes one image in field `file` and returns a temporary `{url}`.
 - All response timestamps are UTC.
@@ -379,31 +375,28 @@ it. One account, no profiles; `--profile`, `HFOX_PROFILE` and `--columns` are re
 - Both are written atomically through a temp file that is `0600` from creation, then
   `os.replace`. `token.json` ends at `0600` and the directory at `0700`. When the directory
   cannot be restricted, the `warn` callback of `save_credentials`/`save_settings` gets the
-  message; core prints nothing.
-- `save_settings(cfg_dir, settings, *, remove=())` merges into the existing file, keeps
-  tables, arrays and dates it finds there, then deletes the `remove` keys. An incoming string
-  with a control character raises `ValidationError`.
+  message.
+- `save_settings(cfg_dir, settings, *, remove=(), warn=None)` merges into the existing file,
+  keeps tables, arrays and dates it finds there, then deletes the `remove` keys. An incoming
+  string with a control character raises `ValidationError`.
 - `stored_account(cfg_dir)` returns subdomain, region, base URL and default staff id as the
   files hold them, ignoring the environment.
-- A file that cannot be read or parsed raises `ConfigError` (type `config`, exit 5), defined
-  in `core/config.py`. So does a `subdomain`, `region` or `base_url` in either file, or an
-  `api_key` or `auth_code` in `token.json`, that is set and not a string; the message names
-  the file and key, never the value, and nothing is coerced. The hint is "Fix or delete the
-  file." for `config.toml` and "Delete the file and run `hfox auth login`." for `token.json`.
+- A file that cannot be read or parsed raises `ConfigError`. So does a `subdomain`, `region`
+  or `base_url` in either file, or an `api_key` or `auth_code` in `token.json`, that is set
+  and not a string; the message names the file and key, never the value, and nothing is
+  coerced. The hint is `_CONFIG_HINT` for `config.toml` and `_TOKEN_HINT` for `token.json`.
 - An `OSError` while `save_credentials` or `save_settings` writes its file, or while
   `clear_credentials` removes `token.json`, raises `ConfigError` naming the file and the OS
-  reason. The hint is "Check the permissions on the config directory, or choose another with
-  --config-dir.". A missing `token.json` is not an error; `clear_credentials` returns False.
-  A read-only directory the user owns is not such a failure, since the write first restricts
-  it to `0700`.
+  reason, with `_WRITE_HINT`. A missing `token.json` is not an error; `clear_credentials`
+  returns False. A read-only directory the user owns is not such a failure, since the write
+  first restricts it to `0700`.
 - `config_dir` raises `ConfigError` when the default needs a home directory that cannot be
   determined, and when the `~` of `--config-dir` or `HFOX_CONFIG_DIR` cannot be expanded.
 
 Every field resolves as **env var > token.json/config.toml > default**.
 Env overrides: `HFOX_SUBDOMAIN`, `HFOX_REGION`, `HFOX_API_KEY`, `HFOX_AUTH_CODE`,
 `HFOX_BASE_URL`, `HFOX_STAFF_ID`, `HFOX_FORMAT`, `HFOX_CONFIG_DIR`. An empty value counts as
-unset. `HFOX_TIMEOUT` and `HFOX_MAX_RETRIES` feed the global flags instead. A configured
-staff id that is not a whole number exits 3 in commands that need one.
+unset. A configured staff id that is not a whole number exits 3 in commands that need one.
 
 Never log or echo `api_key`/`auth_code`. `auth status` masks the key, and no `auth` payload
 holds a secret. hfox-authored auth JSON names `config_dir`, never a file path, and
@@ -436,9 +429,9 @@ When the base URL override comes from a file and `--subdomain` was passed on the
 line, `login` warns that the stored base URL overrides it, also under `--dry-run`. The
 warning names `hfox auth logout` for a `token.json` value and the `config.toml` key otherwise.
 
-`status` exits 2 without credentials after rendering, and `--check` adds `verified`, plus
-`check_error` on failure. A 2xx `staff/` body that is not a list is a failed check with
-`HfoxError`, exit 5. `logout --dry-run` renders `{dry_run, removed, config_dir}`.
+`status --check` adds `verified`, plus `check_error` on failure. A 2xx `staff/` body that is
+not a list is a failed check with `HfoxError`, exit 5. `logout --dry-run` renders
+`{dry_run, removed, config_dir}`.
 
 ## Exit codes and errors (stable public contract; do not renumber)
 
@@ -464,10 +457,9 @@ Defined in `core/errors.py` (`ExitCode`); each `HfoxError` subclass carries its 
 `to_dict()` emits `error`, `type`, `exit_code`, then only when set `status_code`, `detail`,
 `hint`, `retry_after`, `outcome_unknown`. `usage` is structural (unknown or misplaced flag,
 unknown command, missing argument, flag-shaped root option value); a value that fails a
-range, type or content check is
-`validation`, whichever layer rejects it. A failed `--staff` lookup is exit 3, since exit 4
-means HTTP 404. `detail` content is diagnostic and not contract, apart from `staff_ids` on an
-ambiguous `--staff`.
+range, type or content check is `validation`, whichever layer rejects it. A failed `--staff`
+lookup is exit 3, since exit 4 means HTTP 404. `detail` content is diagnostic and not
+contract, apart from `staff_ids` on an ambiguous `--staff`.
 
 `outcome_unknown` is true for a write that failed after the request may have left, and for a
 write answered with HTTP 500 or above; both carry `OUTCOME_UNKNOWN_HINT` from
@@ -483,12 +475,12 @@ unclamped `Retry-After` of a 429 that outlasted the retries.
   API error. Any other exception becomes an `InternalError` naming its type, without a
   traceback.
 - **Cancelled prompts** exit **5** with type `cancelled`. Ctrl-C outside a prompt exits 130
-  with empty stdout.
+  and prints no error object.
 - **Bare group invocations** (`hfox`, `hfox tickets`) print help and exit **0**.
 - **Partial bulk failure:** bulk and group-membership commands print the response unchanged,
   warn the failed count on stderr and exit **1**; "not part of the group" on remove is benign.
-- **`auth status`** prints its payload, not an error object, when it exits 2 or when
-  `--check` fails.
+- **`auth status`** prints its payload, not an error object, when it exits 2 for missing
+  credentials or when `--check` fails.
 
 The stability policy in `README.md` is the public statement of this contract. Adding a key,
 a `type` slug, a flag or an env var is compatible; removing or renaming one is breaking.

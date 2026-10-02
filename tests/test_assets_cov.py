@@ -86,7 +86,6 @@ def test_assets_list_default_size_10_no_asset_type(mock_api):
     result = run("assets", "list")
     assert result.exit_code == 0, result.stdout
     params = dict(captured[0].url.params)
-    # asset_type omitted -> compact drops it; size defaults to the API default 10, page to 1.
     assert "asset_type" not in params
     assert params["size"] == "10"
     assert params["page"] == "1"
@@ -237,7 +236,6 @@ def test_assets_delete_with_yes_renders_and_succeeds(mock_api):
     assert req.method == "DELETE"
     assert req.url.path.endswith("/asset/10/")
     assert dict(req.url.params)["deleted_by"] == "1"
-    # success() message is a stderr-only side channel; body renders to stdout.
     assert "Deleted asset 10." in result.stderr
     assert "Deleted asset" not in result.stdout
     assert json.loads(result.stdout) == {"deleted": True}
@@ -398,11 +396,10 @@ def test_asset_custom_fields_get(mock_api):
 
 
 # --------------------------------------------------------------------------- #
-# require_staff_id failure path (no staff id configured) -> ValidationError
+# no staff id configured
 # --------------------------------------------------------------------------- #
 def test_assets_create_requires_staff_id(mock_api):
     captured = mock_api(lambda r: httpx.Response(200, json={}))
-    # Drop HFOX_STAFF_ID so resolution fails before any request.
     env = {k: v for k, v in ENV.items() if k != "HFOX_STAFF_ID"}
     result = runner.invoke(
         cli, ["assets", "create", "--name", "X", "--display-id", "D"], env=env

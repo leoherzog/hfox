@@ -44,7 +44,7 @@ def test_dry_run_ticket_move_body():
     assert p["body"]["staff_id"] == 1
 
 
-# -- tickets note (ccf- prefix + staff_pvtnote path) -------------
+# -- tickets note ------------------------------------------------------
 def test_dry_run_ticket_note_uses_ccf_prefix_and_pvtnote_path():
     p = preview(
         "--dry-run", "tickets", "note", "42",
@@ -58,7 +58,7 @@ def test_dry_run_ticket_note_uses_ccf_prefix_and_pvtnote_path():
     assert "c-cf-4" not in p["body"]
 
 
-# -- tickets reply --contact-cf uses ccf- ------------------------------
+# -- tickets reply -----------------------------------------------------
 def test_dry_run_ticket_reply_contact_cf_uses_ccf_prefix():
     p = preview(
         "--dry-run", "tickets", "reply", "42",
@@ -69,7 +69,7 @@ def test_dry_run_ticket_reply_contact_cf_uses_ccf_prefix():
     assert "c-cf-4" not in p["body"]
 
 
-# -- tickets subscribe (int-array data body) ---------------------------
+# -- tickets subscribe -------------------------------------------------
 def test_dry_run_ticket_subscribe_int_array_data():
     p = preview(
         "--dry-run", "tickets", "subscribe", "42", "--agents", "3,4,5",
@@ -81,7 +81,7 @@ def test_dry_run_ticket_subscribe_int_array_data():
     assert p["body"]["staff_id"] == 1
 
 
-# -- assets update (PUT) -----------------------------------------------
+# -- assets update -----------------------------------------------------
 def test_dry_run_asset_update_is_put():
     p = preview(
         "--dry-run", "assets", "update", "10",
@@ -94,7 +94,7 @@ def test_dry_run_asset_update_is_put():
     assert p["body"]["updated_by"] == 1
 
 
-# -- assets delete (DELETE + deleted_by) -------------------------------
+# -- assets delete -----------------------------------------------------
 def test_dry_run_asset_delete_is_delete_with_deleted_by():
     p = preview(
         "--dry-run", "assets", "delete", "10", "--yes",
@@ -131,7 +131,7 @@ def test_dry_run_group_add_contacts_array_body():
     ]
 
 
-# -- --cf-json on tickets create keeps a comma value as a string -------
+# -- tickets create ----------------------------------------------------
 def test_dry_run_ticket_create_cf_json_keeps_string_unsplit():
     p = preview(
         "--dry-run", "tickets", "create",
@@ -143,7 +143,7 @@ def test_dry_run_ticket_create_cf_json_keeps_string_unsplit():
     assert not isinstance(p["body"]["t-cf-1"], list)
 
 
-# -- multipart attachment dry-run encodes a bool as 'true'/'false' -----
+# -- multipart ---------------------------------------------------------
 def test_dry_run_multipart_attachment_bool_serialized(tmp_path):
     f = tmp_path / "log.txt"
     f.write_text("hello")
