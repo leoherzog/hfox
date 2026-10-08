@@ -9,7 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-import httpx
+import httpx2
 import pytest
 from conftest import subprocess_env
 from typer.testing import CliRunner
@@ -64,7 +64,7 @@ def run_app(argv, stdin=None):
 # -- contacts list ---------------------------------------------------------
 def test_contacts_list_get_params_and_renders(mock_api):
     body = {"page_info": {"page_count": 1, "count": 1}, "data": [{"id": 7, "name": "Ada"}]}
-    captured = mock_api(lambda req: httpx.Response(200, json=body))
+    captured = mock_api(lambda req: httpx2.Response(200, json=body))
 
     result = run("contacts", "list", "--query", "name:ada", "--page", "2", "--size", "25")
 
@@ -83,7 +83,7 @@ def test_contacts_list_get_params_and_renders(mock_api):
 
 def test_contacts_list_default_size_10_no_query(mock_api):
     body = {"page_info": {"page_count": 1, "count": 0}, "data": []}
-    captured = mock_api(lambda req: httpx.Response(200, json=body))
+    captured = mock_api(lambda req: httpx2.Response(200, json=body))
 
     result = run("contacts", "list")
 
@@ -98,7 +98,7 @@ def test_contacts_list_default_size_10_no_query(mock_api):
 def test_contacts_list_page_all_walks_pages(mock_api):
     def handler(req):
         page = dict(req.url.params).get("page", "1")
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={"page_info": {"page_count": 2, "count": 2}, "data": [{"id": int(page)}]},
         )
@@ -117,7 +117,7 @@ def test_contacts_list_page_all_walks_pages(mock_api):
 # -- contacts get ----------------------------------------------------------
 def test_contacts_get_by_id(mock_api):
     contact = {"id": 55, "name": "Jane", "email": "j@x.org"}
-    captured = mock_api(lambda req: httpx.Response(200, json=contact))
+    captured = mock_api(lambda req: httpx2.Response(200, json=contact))
 
     result = run("contacts", "get", "55")
 
@@ -129,7 +129,7 @@ def test_contacts_get_by_id(mock_api):
 
 def test_contacts_get_by_email(mock_api):
     contact = {"id": 9, "email": "a@x.com"}
-    captured = mock_api(lambda req: httpx.Response(200, json=contact))
+    captured = mock_api(lambda req: httpx2.Response(200, json=contact))
 
     result = run("contacts", "get", "a@x.com")
 
@@ -174,7 +174,7 @@ def test_contacts_create_bad_phone_type_exits_3():
 
 
 def test_contacts_create_bad_phone_type_no_network(mock_api):
-    captured = mock_api(lambda req: httpx.Response(200, json={}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={}))
     result = run(
         "contacts", "create", "--name", "J", "--phone", "5551234", "--phone-type", "zz",
     )
@@ -279,7 +279,7 @@ def test_contacts_create_bulk_rejects_non_array(tmp_path):
 
 
 def test_contacts_create_bulk_over_100_is_validation_error(mock_api, tmp_path):
-    captured = mock_api(lambda req: httpx.Response(200, json=[]))
+    captured = mock_api(lambda req: httpx2.Response(200, json=[]))
     f = tmp_path / "contacts.json"
     f.write_text(json.dumps([{"name": f"C{i}"} for i in range(101)]))
     result = run("contacts", "create-bulk", "--file", str(f))
@@ -332,7 +332,7 @@ def test_contacts_create_bulk_stdin_through_app():
 
 def test_contacts_create_bulk_stdin_posts_array(mock_api):
     created = [{"email": "a@x.org", "success": True, "id": 1}]
-    captured = mock_api(lambda req: httpx.Response(200, json=created))
+    captured = mock_api(lambda req: httpx2.Response(200, json=created))
     result = run("contacts", "create-bulk", "--file", "-", input='[{"email": "a@x.org"}]')
     assert result.exit_code == 0, result.output
     assert captured[0].method == "POST"
@@ -350,7 +350,7 @@ def test_contacts_create_bulk_empty_stdin_exits_3():
 
 
 def test_contacts_create_bulk_invalid_stdin_names_stdin(mock_api):
-    captured = mock_api(lambda req: httpx.Response(200, json=[]))
+    captured = mock_api(lambda req: httpx2.Response(200, json=[]))
     result = run("contacts", "create-bulk", "--file", "-", input="{not json")
     assert isinstance(result.exception, ValidationError), result.output
     assert "Invalid JSON in stdin" in str(result.exception)
@@ -358,7 +358,7 @@ def test_contacts_create_bulk_invalid_stdin_names_stdin(mock_api):
 
 
 def test_contacts_create_bulk_stdin_must_be_utf8(mock_api):
-    captured = mock_api(lambda req: httpx.Response(200, json=[]))
+    captured = mock_api(lambda req: httpx2.Response(200, json=[]))
     result = run("contacts", "create-bulk", "--file", "-", input=b'["caf\xe9"]')
     assert isinstance(result.exception, ValidationError), result.output
     assert "--file: stdin is not UTF-8" in str(result.exception)
@@ -367,7 +367,7 @@ def test_contacts_create_bulk_stdin_must_be_utf8(mock_api):
 
 @pytest.mark.parametrize("dry_run", [True, False])
 def test_contacts_create_bulk_file_inside_config_dir_is_refused(mock_api, dry_run):
-    captured = mock_api(lambda req: httpx.Response(200, json=[]))
+    captured = mock_api(lambda req: httpx2.Response(200, json=[]))
     cfg = Path(os.environ["HFOX_CONFIG_DIR"])
     cfg.mkdir(parents=True)
     for name, content in (("token.json", "{}"), ("contacts.json", '[{"name": "A"}]')):
@@ -392,7 +392,7 @@ def test_contacts_create_bulk_file_inside_config_dir_exits_3():
 
 
 def test_contacts_create_bulk_refuses_a_file_holding_credentials(mock_api, tmp_path):
-    captured = mock_api(lambda req: httpx.Response(200, json=[]))
+    captured = mock_api(lambda req: httpx2.Response(200, json=[]))
     secret = "s3cret-api-key-value"
     f = tmp_path / "contacts.json"
     f.write_text(json.dumps([{"name": secret}]), encoding="utf-8")
@@ -411,7 +411,7 @@ def test_contacts_create_bulk_help_mentions_stdin():
 # -- groups list -----------------------------------------------------------
 def test_groups_list_renders(mock_api):
     body = {"data": [{"id": 1, "name": "VIPs"}, {"id": 2, "name": "Beta"}]}
-    captured = mock_api(lambda req: httpx.Response(200, json=body))
+    captured = mock_api(lambda req: httpx2.Response(200, json=body))
 
     result = run("contacts", "groups", "list")
 
@@ -422,7 +422,7 @@ def test_groups_list_renders(mock_api):
 
 
 def test_groups_list_bare_list_body(mock_api):
-    captured = mock_api(lambda req: httpx.Response(200, json=[{"id": 1}]))
+    captured = mock_api(lambda req: httpx2.Response(200, json=[{"id": 1}]))
     result = run("contacts", "groups", "list")
     assert result.exit_code == 0, result.stdout
     assert json.loads(result.stdout) == [{"id": 1}]
@@ -442,7 +442,7 @@ _DOC_GROUPS = [
 
 
 def test_groups_list_name_filter_is_local(mock_api):
-    captured = mock_api(lambda req: httpx.Response(200, json=_DOC_GROUPS))
+    captured = mock_api(lambda req: httpx2.Response(200, json=_DOC_GROUPS))
 
     result = run("contacts", "groups", "list", "--name", "TEST1")
     assert result.exit_code == 0, result.stdout
@@ -455,19 +455,19 @@ def test_groups_list_name_filter_is_local(mock_api):
 
 def test_groups_list_name_filter_inside_envelope(mock_api):
     body = {"data": [{"id": 1, "name": "VIPs"}, {"id": 2, "name": "Beta"}]}
-    mock_api(lambda req: httpx.Response(200, json=body))
+    mock_api(lambda req: httpx2.Response(200, json=body))
     result = run("contacts", "groups", "list", "--name", "vip")
     assert result.exit_code == 0, result.stdout
     assert json.loads(result.stdout) == {"data": [{"id": 1, "name": "VIPs"}]}
 
 
 def test_groups_list_name_filter_zero_matches(mock_api):
-    mock_api(lambda req: httpx.Response(200, json=_DOC_GROUPS))
+    mock_api(lambda req: httpx2.Response(200, json=_DOC_GROUPS))
     result = run("contacts", "groups", "list", "--name", "zzz")
     assert result.exit_code == 0, result.stdout
     assert json.loads(result.stdout) == []
 
-    mock_api(lambda req: httpx.Response(200, json={"data": _DOC_GROUPS}))
+    mock_api(lambda req: httpx2.Response(200, json={"data": _DOC_GROUPS}))
     result = run("contacts", "groups", "list", "--name", "zzz")
     assert result.exit_code == 0, result.stdout
     assert json.loads(result.stdout) == {"data": []}
@@ -476,7 +476,7 @@ def test_groups_list_name_filter_zero_matches(mock_api):
 # -- groups get ------------------------------------------------------------
 def test_groups_get(mock_api):
     group = {"id": 3, "name": "VIPs", "tagged_domains": "acme.com,foo.com"}
-    captured = mock_api(lambda req: httpx.Response(200, json=group))
+    captured = mock_api(lambda req: httpx2.Response(200, json=group))
 
     result = run("contacts", "groups", "get", "3")
 
@@ -558,7 +558,7 @@ def test_groups_add_contacts_no_access_tickets_applies_to_every_contact():
 
 
 def test_groups_add_contacts_over_100_is_validation_error(mock_api):
-    captured = mock_api(lambda req: httpx.Response(200, json={}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={}))
     ids = ",".join(str(i) for i in range(1, 102))
     result = run("contacts", "groups", "add-contacts", "3", "--contact-ids", ids)
     assert result.exit_code != 0
@@ -586,7 +586,7 @@ def test_groups_add_contacts_rejects_non_int():
 # --dry-run exits before render(), so these send the write and check its output.
 def test_contacts_create_live_renders_result(mock_api):
     created = {"id": 101, "name": "Jane"}
-    captured = mock_api(lambda req: httpx.Response(200, json=created))
+    captured = mock_api(lambda req: httpx2.Response(200, json=created))
     result = run("contacts", "create", "--name", "Jane", "--email", "j@x.org")
     assert result.exit_code == 0, result.stdout
     assert captured[0].method == "POST"
@@ -596,7 +596,7 @@ def test_contacts_create_live_renders_result(mock_api):
 
 def test_contacts_update_live_renders_result(mock_api):
     updated = {"id": 55, "name": "Jane2"}
-    captured = mock_api(lambda req: httpx.Response(200, json=updated))
+    captured = mock_api(lambda req: httpx2.Response(200, json=updated))
     result = run("contacts", "update", "55", "--name", "Jane2")
     assert result.exit_code == 0, result.stdout
     assert captured[0].url.path.endswith("/user/55/")
@@ -607,7 +607,7 @@ def test_contacts_create_bulk_live_renders_result(mock_api, tmp_path):
     f = tmp_path / "c.json"
     f.write_text(json.dumps([{"name": "A"}]))
     created = [{"email": "a@x.org", "success": True, "id": 1}]
-    captured = mock_api(lambda req: httpx.Response(200, json=created))
+    captured = mock_api(lambda req: httpx2.Response(200, json=created))
     result = run("contacts", "create-bulk", "--file", str(f))
     assert result.exit_code == 0, result.stdout
     assert captured[0].method == "POST"
@@ -616,7 +616,7 @@ def test_contacts_create_bulk_live_renders_result(mock_api, tmp_path):
 
 def test_groups_create_live_renders_result(mock_api):
     created = {"id": 9, "name": "VIPs"}
-    captured = mock_api(lambda req: httpx.Response(200, json=created))
+    captured = mock_api(lambda req: httpx2.Response(200, json=created))
     result = run("contacts", "groups", "create", "--name", "VIPs")
     assert result.exit_code == 0, result.stdout
     assert captured[0].url.path.endswith("/contact_groups/")
@@ -625,7 +625,7 @@ def test_groups_create_live_renders_result(mock_api):
 
 def test_groups_update_live_renders_result(mock_api):
     updated = {"id": 9, "description": "d"}
-    captured = mock_api(lambda req: httpx.Response(200, json=updated))
+    captured = mock_api(lambda req: httpx2.Response(200, json=updated))
     result = run("contacts", "groups", "update", "9", "--description", "d")
     assert result.exit_code == 0, result.stdout
     assert captured[0].url.path.endswith("/contact_group/9/")
@@ -634,7 +634,7 @@ def test_groups_update_live_renders_result(mock_api):
 
 def test_groups_add_contacts_live_renders_result(mock_api):
     resp = [{"data": {"access_tickets": False, "contact": 11}, "success": True}]
-    captured = mock_api(lambda req: httpx.Response(200, json=resp))
+    captured = mock_api(lambda req: httpx2.Response(200, json=resp))
     result = run("contacts", "groups", "add-contacts", "3", "--contact-ids", "11")
     assert result.exit_code == 0, result.stdout
     assert captured[0].url.path.endswith("/contact_group/3/update_contacts/")
@@ -648,7 +648,7 @@ def test_groups_remove_contacts_live_renders_result(mock_api):
         {"data": {"message": "Contact not part of the contact group", "contact": 12},
          "success": False},
     ]
-    captured = mock_api(lambda req: httpx.Response(200, json=resp))
+    captured = mock_api(lambda req: httpx2.Response(200, json=resp))
     result = run("contacts", "groups", "remove-contacts", "3", "--contact-ids", "11,12")
     assert result.exit_code == 0, result.stdout
     assert captured[0].url.path.endswith("/contact_group/3/delete_contacts/")
@@ -669,7 +669,7 @@ def test_groups_remove_contacts_body():
 # -- validation and request shapes ------------------------------------------
 def _fails_offline(mock_api, *args, match):
     """Assert a ValidationError (exit 3) is raised before any request."""
-    captured = mock_api(lambda req: httpx.Response(200, json={}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={}))
     result = run(*args)
     assert isinstance(result.exception, ValidationError), result.stdout
     assert int(result.exception.exit_code) == 3
@@ -862,7 +862,7 @@ def test_contacts_create_bulk_failure_exits_1(mock_api, tmp_path):
         {"email": "a@x.org", "success": True, "id": 14},
         {"email": "b@x.org", "success": False},
     ]
-    mock_api(lambda req: httpx.Response(200, json=resp))
+    mock_api(lambda req: httpx2.Response(200, json=resp))
     result = run("contacts", "create-bulk", "--file", str(f))
     assert result.exit_code == 1
     assert json.loads(result.stdout) == resp
@@ -874,7 +874,7 @@ def test_groups_add_contacts_failure_exits_1(mock_api):
         {"data": {"access_tickets": True, "contact": 1}, "success": True},
         {"errors": [{"field": "contact", "errors": ["Select a valid choice."]}], "success": False},
     ]
-    mock_api(lambda req: httpx.Response(200, json=resp))
+    mock_api(lambda req: httpx2.Response(200, json=resp))
     result = run("contacts", "groups", "add-contacts", "3", "--contact-ids", "1,200")
     assert result.exit_code == 1
     assert json.loads(result.stdout) == resp
@@ -887,7 +887,7 @@ def test_groups_remove_contacts_missing_contact_exits_1(mock_api):
          "success": False},
         {"data": {"message": "Contact does not exist", "contact": 100}, "success": False},
     ]
-    mock_api(lambda req: httpx.Response(200, json=resp))
+    mock_api(lambda req: httpx2.Response(200, json=resp))
     result = run("contacts", "groups", "remove-contacts", "3", "--contact-ids", "3,100")
     assert result.exit_code == 1
     assert json.loads(result.stdout) == resp
@@ -899,7 +899,7 @@ def test_groups_remove_contacts_not_in_group_is_benign(mock_api):
         {"data": {"message": "Contact not part of the contact group", "contact": 3},
          "success": False},
     ]
-    mock_api(lambda req: httpx.Response(200, json=resp))
+    mock_api(lambda req: httpx2.Response(200, json=resp))
     result = run("contacts", "groups", "remove-contacts", "3", "--contact-ids", "3")
     assert result.exit_code == 0, result.stderr
     assert result.stderr == ""

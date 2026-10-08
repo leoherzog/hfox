@@ -336,7 +336,7 @@ def attach(
     if not attachments:
         return {"json": body}
     forbidden, secrets = tuple(forbidden), tuple(secrets)
-    # httpx sets each part's content type from the filename extension.
+    # httpx2 sets each part's content type from the filename extension.
     files = []
     with contextlib.ExitStack() as stack:
         opened = []

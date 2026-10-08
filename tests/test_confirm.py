@@ -5,7 +5,7 @@ import json
 import subprocess
 import sys
 
-import httpx
+import httpx2
 import pytest
 import typer
 from conftest import subprocess_env
@@ -142,7 +142,7 @@ def test_prompt_eof_raises_cancelled(monkeypatch, capsys):
     "argv", [("tickets", "delete", "42"), ("assets", "delete", "10")]
 )
 def test_delete_without_terminal_needs_yes(mock_api, argv):
-    captured = mock_api(lambda req: httpx.Response(200, json={"deleted": True}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={"deleted": True}))
     result = runner.invoke(cli, list(argv), input="y\n", env=ENV)
     assert isinstance(result.exception, ValidationError)
     assert "--yes" in str(result.exception)
@@ -154,7 +154,7 @@ def test_delete_without_terminal_needs_yes(mock_api, argv):
     "argv", [("tickets", "delete", "42"), ("assets", "delete", "10")]
 )
 def test_delete_decline_sends_nothing(mock_api, tty, argv):
-    captured = mock_api(lambda req: httpx.Response(200, json={"deleted": True}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={"deleted": True}))
     result = runner.invoke(cli, list(argv), input="n\n", env=ENV)
     assert isinstance(result.exception, CancelledError)
     assert result.stdout == ""
@@ -169,7 +169,7 @@ def test_delete_decline_sends_nothing(mock_api, tty, argv):
     ],
 )
 def test_delete_confirmed_at_the_prompt(mock_api, tty, argv, path):
-    captured = mock_api(lambda req: httpx.Response(200, json={"deleted": True}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={"deleted": True}))
     result = runner.invoke(cli, list(argv), input="y\n", env=ENV)
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout) == {"deleted": True}
@@ -189,7 +189,7 @@ def test_delete_dry_run_never_prompts(monkeypatch, argv):
 
 # -- app() --------------------------------------------------------------------
 def test_app_decline_prints_cancelled_json_and_exits_5(monkeypatch, mock_api, tty, capsys):
-    captured = mock_api(lambda req: httpx.Response(200, json={"deleted": True}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={"deleted": True}))
     for key, value in ENV.items():
         monkeypatch.setenv(key, value)
     monkeypatch.setattr(sys, "argv", ["hfox", "tickets", "delete", "42"])

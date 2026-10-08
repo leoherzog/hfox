@@ -4,7 +4,7 @@ import json
 import re
 import sys
 
-import httpx
+import httpx2
 import pytest
 from typer.testing import CliRunner
 
@@ -37,7 +37,7 @@ def dry(*args):
 
 def refused(mock_api, *args, match):
     """Assert a ValidationError containing `match` is raised before any request; return its text."""
-    captured = mock_api(lambda req: httpx.Response(200, json={}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={}))
     result = run(*args)
     assert isinstance(result.exception, ValidationError), result.output
     message = str(result.exception)
@@ -313,7 +313,7 @@ _ASSET = ("assets", "create", "--name", "X", "--display-id", "D")
     ],
 )
 def test_out_of_range_value_exits_3_as_validation(app_error, mock_api, argv, name):
-    captured = mock_api(lambda req: httpx.Response(200, json={}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={}))
     payload = app_error(*argv)
     assert (payload["type"], payload["exit_code"]) == ("validation", 3)
     assert name in payload["error"].lower()
@@ -333,7 +333,7 @@ def test_out_of_range_value_exits_3_as_validation(app_error, mock_api, argv, nam
     ],
 )
 def test_missing_required_option_is_a_usage_error(app_error, mock_api, argv, flag):
-    captured = mock_api(lambda req: httpx.Response(200, json={}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={}))
     payload = app_error(*argv)
     assert (payload["type"], payload["exit_code"]) == ("usage", 3)
     assert flag in payload["error"]
@@ -354,7 +354,7 @@ def test_single_page_listing_renders_its_rows_as_csv(mock_api, argv):
         "page_info": {"page_count": 1, "count": 2},
         "data": [{"id": 1, "name": "A"}, {"id": 2, "name": "B"}],
     }
-    mock_api(lambda req: httpx.Response(200, json=body))
+    mock_api(lambda req: httpx2.Response(200, json=body))
     result = run("-f", "csv", *argv)
     assert result.exit_code == 0, result.output
     assert result.stdout.splitlines() == ["id,name", "1,A", "2,B"]
@@ -471,7 +471,7 @@ def test_assets_custom_field_id_is_sent_without_leading_zeros(argv, options, fie
     ],
 )
 def test_assets_invalid_input_is_refused_before_the_staff_lookup(mock_api, argv):
-    captured = mock_api(lambda req: httpx.Response(200, json=STAFF))
+    captured = mock_api(lambda req: httpx2.Response(200, json=STAFF))
     result = run("assets", *argv, "--staff", "ada@x.org")
     assert isinstance(result.exception, ValidationError), result.output
     assert captured == []
@@ -497,7 +497,7 @@ def test_assets_delete_staff_id_zero_is_sent_in_the_query_only():
 
 
 def test_assets_delete_quiet_suppresses_the_status_line(mock_api):
-    captured = mock_api(lambda req: httpx.Response(200, json={"deleted": True}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={"deleted": True}))
     result = run("--quiet", "assets", "delete", "10", "--yes")
     assert result.exit_code == 0, result.output
     assert [req.method for req in captured] == ["DELETE"]

@@ -148,7 +148,7 @@ def test_color_disabled_on_non_tty(monkeypatch):
 
 # -- status/success goes to stderr, not stdout ------------------------------
 def test_success_message_goes_to_stderr(mock_api):
-    mock_api(lambda req: __import__("httpx").Response(200, json={"display_id": "#D1"}))
+    mock_api(lambda req: __import__("httpx2").Response(200, json={"display_id": "#D1"}))
     result = runner.invoke(
         cli,
         ["tickets", "create", "--subject", "S", "--category", "3",
@@ -161,7 +161,7 @@ def test_success_message_goes_to_stderr(mock_api):
 
 
 def test_quiet_suppresses_success_message(mock_api):
-    mock_api(lambda req: __import__("httpx").Response(200, json={"display_id": "#D1"}))
+    mock_api(lambda req: __import__("httpx2").Response(200, json={"display_id": "#D1"}))
     result = runner.invoke(
         cli,
         ["--quiet", "tickets", "create", "--subject", "S", "--category", "3",

@@ -6,7 +6,7 @@ import os
 import stat
 import sys
 
-import httpx
+import httpx2
 import pytest
 from typer.testing import CliRunner
 
@@ -62,7 +62,7 @@ def read_only():
 
 
 def staff_ok(staff=STAFF):
-    return lambda request: httpx.Response(200, json=staff)
+    return lambda request: httpx2.Response(200, json=staff)
 
 
 def no_client(monkeypatch):
@@ -400,8 +400,8 @@ def test_login_reports_the_host_and_agent_count_on_stderr(mock_api, cfg_dir, sec
 @pytest.mark.parametrize(
     "response",
     [
-        lambda r: httpx.Response(200, html="<html><title>Sign in</title></html>"),
-        lambda r: httpx.Response(204),
+        lambda r: httpx2.Response(200, html="<html><title>Sign in</title></html>"),
+        lambda r: httpx2.Response(204),
     ],
     ids=["html", "no content"],
 )
@@ -700,7 +700,7 @@ def test_quiet_status_still_warns_when_not_authenticated(cfg_dir):
 
 def test_quiet_status_still_warns_on_a_failed_check(mock_api, cfg_dir):
     saved(cfg_dir)
-    mock_api(lambda r: httpx.Response(500, json={"error": "boom"}))
+    mock_api(lambda r: httpx2.Response(500, json={"error": "boom"}))
     result = runner.invoke(cli, ["--quiet", "auth", "status"])
     assert result.exit_code == 1
     error = json.loads(result.stdout)["check_error"]["error"]

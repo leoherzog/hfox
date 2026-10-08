@@ -7,7 +7,7 @@ import json
 import subprocess
 import sys
 
-import httpx
+import httpx2
 import pytest
 import typer
 import yaml
@@ -84,18 +84,18 @@ def paged_api(monkeypatch):
     """
 
     def install(total):
-        requests: list[httpx.Request] = []
+        requests: list[httpx2.Request] = []
         sleeps: list[float] = []
 
         def handler(request):
             requests.append(request)
             page = int(request.url.params["page"])
             body = {"page_info": {"page_count": total}, "data": [{"id": page}]}
-            return httpx.Response(200, json=body)
+            return httpx2.Response(200, json=body)
 
         def factory(base_url, api_key, auth_code, **kwargs):
             client = HappyFoxClient(base_url, api_key, auth_code, sleep=sleeps.append)
-            client._client = httpx.Client(transport=httpx.MockTransport(handler))
+            client._client = httpx2.Client(transport=httpx2.MockTransport(handler))
             return client
 
         monkeypatch.setattr(context_mod, "HappyFoxClient", factory)
@@ -106,14 +106,14 @@ def paged_api(monkeypatch):
 
 # -- stream setup -------------------------------------------------------------
 def test_unencodable_data_on_stdout_is_escaped(run_app, mock_api):
-    mock_api(lambda req: httpx.Response(200, json=[{"id": 1, "name": "Zoë"}]))
+    mock_api(lambda req: httpx2.Response(200, json=[{"id": 1, "name": "Zoë"}]))
     code, out, _ = run_app("-f", "yaml", "system", "staff", stdout=layer("ascii"))
     assert code == 0
     assert "name: Zo\\xeb" in out
 
 
 def test_unencodable_status_line_does_not_fail_a_finished_write(run_app, mock_api):
-    captured = mock_api(lambda req: httpx.Response(200, json={"display_id": "#É1"}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={"display_id": "#É1"}))
     code, out, err = run_app(
         "tickets", "create", "--subject", "S", "--category", "3", "--name", "H",
         "--email", "h@x.org", "--text", "b", stderr=layer("ascii"),
@@ -227,12 +227,12 @@ def test_page_limit_and_page_delay_flags_bound_the_walk(paged_api, flags, pages,
 
 @pytest.mark.parametrize("status", [200, 500])
 def test_http_client_is_closed_when_the_command_ends(monkeypatch, status):
-    built: list[httpx.Client] = []
+    built: list[httpx2.Client] = []
 
     def factory(base_url, api_key, auth_code, **kwargs):
         client = HappyFoxClient(base_url, api_key, auth_code, sleep=lambda _s: None)
-        transport = httpx.MockTransport(lambda req: httpx.Response(status, json=[]))
-        client._client = httpx.Client(transport=transport)
+        transport = httpx2.MockTransport(lambda req: httpx2.Response(status, json=[]))
+        client._client = httpx2.Client(transport=transport)
         built.append(client._client)
         return client
 
@@ -267,7 +267,7 @@ def test_ctrl_c_after_the_first_page_exits_130_and_prints_no_error_object(
         page = int(request.url.params["page"])
         if page > 1:
             raise KeyboardInterrupt
-        return httpx.Response(200, json={"page_info": {"page_count": 3}, "data": [{"id": page}]})
+        return httpx2.Response(200, json={"page_info": {"page_count": 3}, "data": [{"id": page}]})
 
     requests = mock_api(handler)
     code, out, err = run_app("--page-all", *flags, "tickets", "list")
@@ -302,7 +302,7 @@ def test_every_bare_group_prints_its_help_and_exits_0(run_app):
     ids=" ".join,
 )
 def test_short_global_flag_swallowed_as_an_option_value_sends_nothing(run_app, mock_api, argv):
-    captured = mock_api(lambda req: httpx.Response(200, json={}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={}))
     code, out, err = run_app(*argv)
     flag = argv[-1]
     assert code == 3
@@ -373,7 +373,7 @@ DEEP_NULL = "[" * DEEP + "null" + "]" * DEEP
 
 
 def _json_response(text):
-    return httpx.Response(200, content=text.encode(), headers={"content-type": "application/json"})
+    return httpx2.Response(200, content=text.encode(), headers={"content-type": "application/json"})
 
 
 def test_dry_run_preview_of_a_deeply_nested_file(run_app, tmp_path):
@@ -410,7 +410,7 @@ def test_custom_field_choices_flattened_in_yaml(mock_api):
         {"id": 61, "choices": [{"text": "No", "id": 2}, {"text": "Yes", "id": 1}]},
         {"id": 4, "choices": None},
     ]
-    mock_api(lambda req: httpx.Response(200, json=fields))
+    mock_api(lambda req: httpx2.Response(200, json=fields))
     result = run("-f", "yaml", "system", "ticket-custom-fields")
     assert result.exit_code == 0, result.output
     assert yaml.safe_load(result.stdout) == [
@@ -420,7 +420,7 @@ def test_custom_field_choices_flattened_in_yaml(mock_api):
 
 
 def test_custom_fields_body_that_is_not_a_list_renders_unchanged(mock_api):
-    mock_api(lambda req: httpx.Response(200, json={"detail": "x"}))
+    mock_api(lambda req: httpx2.Response(200, json={"detail": "x"}))
     result = run("-f", "csv", "system", "ticket-custom-fields")
     assert result.exit_code == 0, result.output
     assert result.stdout.splitlines() == ["detail", "x"]
@@ -432,7 +432,7 @@ def test_custom_field_rows_and_choices_of_unexpected_shape_pass_through(mock_api
         {"id": 2, "choices": "n/a"},
         "odd",
     ]
-    mock_api(lambda req: httpx.Response(200, json=body))
+    mock_api(lambda req: httpx2.Response(200, json=body))
     result = run("-f", "csv", "system", "contact-custom-fields")
     assert result.exit_code == 0, result.output
     assert result.stdout.splitlines() == [

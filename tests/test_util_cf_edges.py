@@ -10,7 +10,7 @@ import sys
 import types
 from pathlib import Path
 
-import httpx
+import httpx2
 import pytest
 
 import hfox.cli._util as util_mod
@@ -366,7 +366,7 @@ def test_file_in_a_directory_that_cannot_be_searched_is_unreadable(locked, read)
 def test_command_refuses_a_file_it_cannot_reach_and_sends_nothing(
     locked, app_error, mock_api, flags
 ):
-    sent = mock_api(lambda request: httpx.Response(200, json={}))
+    sent = mock_api(lambda request: httpx2.Response(200, json={}))
     payload = app_error("--dry-run", "tickets", "note", "5", *flags, str(locked))
     assert payload == {
         "error": _cannot_read(locked, errno.EACCES),

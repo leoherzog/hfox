@@ -36,6 +36,10 @@ Linux, macOS and Windows with Python 3.11 to 3.14.
 Typer is capped below the next minor (`typer>=0.27.2,<0.28`) because `cli/main.py` imports
 the private `typer._click`. Raise the cap only after checking that import.
 
+HTTP goes through `httpx2`, Pydantic's fork of httpx, capped below 3. It verifies TLS against
+the OS trust store through truststore, so nothing in `src/` passes `verify=` or uses certifi.
+`idna` is a direct dependency because `normalize_base_url` decodes `xn--` labels with it.
+
 ### Releases
 
 Publishing a GitHub release runs `.github/workflows/release.yml`. The tag must be `v` plus a
@@ -46,12 +50,15 @@ step. Source keeps the placeholders `version = "0.0.0"` in `pyproject.toml` and
 `binaries` and `dist` run in parallel, then `assets`, then `pypi`:
 
 1. `binaries` stamps `__version__`, builds a PyInstaller binary per platform and smoke-tests
-   `--version`, a dry run and `--show-completion`. It leaves `pyproject.toml` alone, since
-   `uv run --locked` rejects a changed project version.
+   `--version`, a dry run, a TLS request and `--show-completion`. It leaves `pyproject.toml`
+   alone, since `uv run --locked` rejects a changed project version.
 2. `dist` stamps `pyproject.toml` and `__version__`, runs `uv build` and checks that the
-   wheel reports the tag version.
+   wheel reports the tag version and passes the same TLS request.
 3. `assets` attests and attaches the binaries, the wheel and the sdist.
 4. `pypi` publishes the wheel and sdist through trusted publishing in the `pypi` environment.
+
+The TLS request runs `tickets get 1` against `HFOX_BASE_URL=https://example.com` and requires
+exit 4, the 404 that follows a verified handshake. Exit 5 means TLS or the network failed.
 
 PyPI accepts each version once, so `pypi` runs last and a failed run can be re-run from the
 Actions tab. The release is public while the jobs run, so GitHub's immutable releases setting
@@ -82,7 +89,7 @@ src/hfox/
 ├── __init__.py           # __version__ ("dev" in source, stamped by the release workflow)
 ├── __main__.py           # `python -m hfox`; the script PyInstaller freezes
 ├── core/                 # UI-agnostic: no Typer, no printing, no sys.exit
-│   ├── client.py         # HappyFoxClient: httpx, Basic auth, retries, on_retry, paginate()
+│   ├── client.py         # HappyFoxClient: httpx2, Basic auth, retries, on_retry, paginate()
 │   ├── config.py         # config directory resolution, Config, token.json + config.toml I/O,
 │   │                     #   ConfigError, the guard lists, cleartext_host
 │   └── errors.py         # HfoxError hierarchy, type slugs + ExitCode (stable, public contract)
@@ -102,7 +109,7 @@ src/hfox/
 
 **Rule:** `core/` must never import from `cli/`, never prints and never exits. Anything core
 must surface goes through a return value, an exception or a callback (`on_retry`, `warn`).
-A command module never builds `httpx` requests, constructs a client, prompts or touches the
+A command module never builds `httpx2` requests, constructs a client, prompts or touches the
 filesystem or stdin directly; it goes through `AppContext` and the `_util`/`cf` helpers.
 
 ### Request flow
@@ -333,7 +340,7 @@ Helpers:
 Sourced from `Docs/` unless marked observed. Honor them exactly.
 
 - **Auth is HTTP Basic only:** API key = username, auth code = password. Redirects are not
-  followed, since httpx would drop the auth on a cross-host redirect.
+  followed, since httpx2 would drop the auth on a cross-host redirect.
 - **Base URL is host-templated:** `https://<subdomain>.happyfox.com/api/1.1/json` (US) or
   `…happyfox.net` (EU, `--region eu`). Subdomain and region are case-insensitive and resolve
   to lowercase; an unknown region exits
@@ -346,8 +353,9 @@ Sourced from `Docs/` unless marked observed. Honor them exactly.
   holding whitespace, exits 3. `normalize_base_url` raises the
   credentials error for any value containing `@`, before parsing, and never echoes a value
   containing `@`, `?` or `#`. It matches the host and port against `_AUTHORITY_RE` and then
-  reads `httpx.URL(root).host`, so `core/config.py` imports httpx and a host the client
-  could not build exits 3 before any request.
+  builds `httpx2.URL(root)`, so `core/config.py` imports httpx2 and a host the client could
+  not build exits 3 before any request. httpx2 passes a malformed `xn--` label through, so
+  `idna.decode` checks every host holding `xn--` and a label that is not Punycode exits 3.
 - **Rate limits are global:** 500 GET/min, 300 POST/min, then HTTP 429 for a **10-minute**
   cooldown. Without `Retry-After`, the default five 429 retries stop after about 33s; an
   undocumented numeric `Retry-After` is honored up to 600s per attempt. GETs retry any
@@ -587,7 +595,7 @@ a `type` slug, a flag or an env var is compatible; removing or renaming one is b
 ## Testing
 
 - `tests/` uses `pytest` + `typer.testing.CliRunner` and never hits the real API: the HTTP
-  layer uses `httpx.MockTransport` with an injected `sleep`, so backoff is instant.
+  layer uses `httpx2.MockTransport` with an injected `sleep`, so backoff is instant.
 - The autouse `_isolated_config` fixture clears every `HFOX_*` variable and
   `XDG_CONFIG_HOME`, and points `HFOX_CONFIG_DIR`, `HOME` and `USERPROFILE` into `tmp_path`.
   No test may read or write the real home or config directory.

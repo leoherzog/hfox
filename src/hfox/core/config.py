@@ -24,7 +24,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import httpx
+import httpx2
+import idna
 
 from .errors import AuthError, ExitCode, HfoxError, ValidationError
 
@@ -158,7 +159,7 @@ _ORIGIN_RE = re.compile(r"https?://[^/]*", re.IGNORECASE)
 
 # The host and optional port of a base URL: a bracketed address, or dot-separated labels with
 # an optional root dot. A label holds ASCII letters, digits, hyphens and underscores, and
-# non-ASCII characters, which httpx checks as IDNA.
+# non-ASCII characters, which httpx2 checks as IDNA.
 _LABEL = r"[A-Za-z0-9_\-\x80-\U0010FFFF]+"
 _AUTHORITY_RE = re.compile(rf"(?:\[[^\[\]]+\]|{_LABEL}(?:\.{_LABEL})*\.?)(?::[0-9]*)?")
 
@@ -199,14 +200,16 @@ def normalize_base_url(url: str, source: str = "HFOX_BASE_URL") -> str:
     bad_scheme = parts.scheme.lower() not in ("http", "https")
     if bad_scheme or not parts.hostname or "?" in root or "#" in root:
         raise ValidationError(error)
-    # httpx percent-encodes whitespace, which in the host fails only when the request is sent.
+    # httpx2 percent-encodes whitespace, which in the host fails only when the request is sent.
     if any(ch.isspace() for ch in parts.netloc) or not _AUTHORITY_RE.fullmatch(parts.netloc):
         raise ValidationError(error)
-    # httpx builds the request, so a host it refuses is refused here. Reading `host` decodes
-    # an `xn--` label, which fails with a UnicodeError when the label is not Punycode.
+    # httpx2 builds the request, so a host it refuses is refused here. httpx2 passes an
+    # `xn--` label that is not Punycode through, so idna decodes the host strictly.
     try:
-        _ = httpx.URL(root).host
-    except (httpx.InvalidURL, UnicodeError) as exc:
+        raw_host = httpx2.URL(root).raw_host
+        if b"xn--" in raw_host:
+            idna.decode(raw_host)
+    except (httpx2.InvalidURL, UnicodeError) as exc:
         raise ValidationError(error) from exc
     origin = _ORIGIN_RE.match(root)
     return root if origin is None else _lower(origin[0]) + root[origin.end() :]

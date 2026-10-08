@@ -6,7 +6,7 @@ import io
 import json
 import sys
 
-import httpx
+import httpx2
 import pytest
 from typer.testing import CliRunner
 
@@ -27,7 +27,7 @@ ENV = {
 
 def test_rendered_get_is_captured_on_stdout(mock_api):
     ticket = {"id": 42, "subject": "Printer down", "display_id": "#DC00000042"}
-    mock_api(lambda req: httpx.Response(200, json=ticket))
+    mock_api(lambda req: httpx2.Response(200, json=ticket))
 
     result = runner.invoke(cli, ["tickets", "get", "42"], env=ENV)
 
@@ -62,8 +62,8 @@ def _strict_loads(text: str):
     return json.loads(text, parse_constant=refuse)
 
 
-def _raw(status: int, content: bytes) -> httpx.Response:
-    return httpx.Response(status, content=content, headers={"content-type": "application/json"})
+def _raw(status: int, content: bytes) -> httpx2.Response:
+    return httpx2.Response(status, content=content, headers={"content-type": "application/json"})
 
 
 # 1e999 is valid JSON that Python reads as infinity.

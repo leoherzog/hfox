@@ -8,7 +8,7 @@ import io
 import json
 import sys
 
-import httpx
+import httpx2
 import pytest
 from typer.testing import CliRunner
 
@@ -44,7 +44,7 @@ def secrets(monkeypatch):
 
 
 def staff_ok(staff=STAFF):
-    return lambda request: httpx.Response(200, json=staff)
+    return lambda request: httpx2.Response(200, json=staff)
 
 
 def no_client(monkeypatch):
@@ -415,7 +415,7 @@ def test_login_reads_both_secrets_from_the_environment(mock_api, cfg_dir, secret
     requests = mock_api(staff_ok())
     result = runner.invoke(cli, ["auth", "login", "--subdomain", "acme"])
     assert result.exit_code == 0, result.stderr
-    assert requests[0].headers["authorization"] == httpx.BasicAuth(
+    assert requests[0].headers["authorization"] == httpx2.BasicAuth(
         API_KEY, AUTH_CODE
     )._auth_header
     token = json.loads((cfg_dir / "token.json").read_text())
@@ -510,7 +510,7 @@ def test_login_prompt_eof_is_cancelled(monkeypatch, capsys, cfg_dir, tty):
 
 # -- login errors ----------------------------------------------------------------
 def test_login_401_exits_2_as_auth(mock_api, monkeypatch, capsys, cfg_dir, secrets):
-    mock_api(lambda r: httpx.Response(401, json={"error": "bad key"}))
+    mock_api(lambda r: httpx2.Response(401, json={"error": "bad key"}))
     code, out, _ = run_main(monkeypatch, capsys, LOGIN)
     assert code == 2
     payload = json.loads(out)
@@ -522,7 +522,7 @@ def test_login_401_exits_2_as_auth(mock_api, monkeypatch, capsys, cfg_dir, secre
 
 
 def test_login_403_is_wrapped_as_auth(mock_api, monkeypatch, capsys, cfg_dir, secrets):
-    mock_api(lambda r: httpx.Response(403, json={"error": "forbidden"}))
+    mock_api(lambda r: httpx2.Response(403, json={"error": "forbidden"}))
     code, out, _ = run_main(monkeypatch, capsys, LOGIN)
     assert code == 2
     assert json.loads(out)["error"].startswith("Could not validate credentials: ")
@@ -530,7 +530,7 @@ def test_login_403_is_wrapped_as_auth(mock_api, monkeypatch, capsys, cfg_dir, se
 
 def test_login_transport_error_exits_5_as_network(mock_api, monkeypatch, capsys, cfg_dir, secrets):
     def handler(request):
-        raise httpx.ConnectError("boom", request=request)
+        raise httpx2.ConnectError("boom", request=request)
 
     mock_api(handler)
     code, out, _ = run_main(monkeypatch, capsys, ["--max-retries", "0", *LOGIN])
@@ -543,7 +543,7 @@ def test_login_transport_error_exits_5_as_network(mock_api, monkeypatch, capsys,
 
 def test_login_timeout_keeps_its_type(mock_api, monkeypatch, capsys, cfg_dir, secrets):
     def handler(request):
-        raise httpx.ReadTimeout("slow", request=request)
+        raise httpx2.ReadTimeout("slow", request=request)
 
     mock_api(handler)
     code, out, _ = run_main(monkeypatch, capsys, ["--max-retries", "0", *LOGIN])
@@ -552,7 +552,7 @@ def test_login_timeout_keeps_its_type(mock_api, monkeypatch, capsys, cfg_dir, se
 
 
 def test_login_429_exits_1_as_rate_limited(mock_api, monkeypatch, capsys, cfg_dir, secrets):
-    requests = mock_api(lambda r: httpx.Response(429, headers={"Retry-After": "600"}, json={}))
+    requests = mock_api(lambda r: httpx2.Response(429, headers={"Retry-After": "600"}, json={}))
     code, out, _ = run_main(monkeypatch, capsys, ["--max-retries", "0", *LOGIN])
     assert code == 1
     payload = json.loads(out)
@@ -566,7 +566,7 @@ def test_login_429_exits_1_as_rate_limited(mock_api, monkeypatch, capsys, cfg_di
 def test_login_other_api_errors_propagate(
     mock_api, monkeypatch, capsys, cfg_dir, secrets, status, error_type, code
 ):
-    mock_api(lambda r: httpx.Response(status, json={"error": "x"}))
+    mock_api(lambda r: httpx2.Response(status, json={"error": "x"}))
     got, out, _ = run_main(monkeypatch, capsys, LOGIN)
     assert got == code
     payload = json.loads(out)
@@ -577,7 +577,7 @@ def test_login_other_api_errors_propagate(
 def test_login_non_list_body_exits_5_and_saves_nothing(
     mock_api, monkeypatch, capsys, cfg_dir, secrets
 ):
-    mock_api(lambda r: httpx.Response(200, json={"unexpected": True}))
+    mock_api(lambda r: httpx2.Response(200, json={"unexpected": True}))
     code, out, _ = run_main(monkeypatch, capsys, LOGIN)
     assert code == 5
     payload = json.loads(out)
@@ -716,7 +716,7 @@ def test_status_rejected_credentials_exit_2_as_unauthenticated(
     mock_api, monkeypatch, capsys, cfg_dir, status
 ):
     saved(cfg_dir)
-    mock_api(lambda r: httpx.Response(status, json={"error": "bad key"}))
+    mock_api(lambda r: httpx2.Response(status, json={"error": "bad key"}))
     code, out, err = run_main(monkeypatch, capsys, ["auth", "status"])
     assert code == 2
     payload = json.loads(out)
@@ -732,7 +732,7 @@ def test_status_network_error_leaves_authenticated_unknown(mock_api, monkeypatch
     saved(cfg_dir)
 
     def handler(request):
-        raise httpx.ConnectError("boom", request=request)
+        raise httpx2.ConnectError("boom", request=request)
 
     mock_api(handler)
     code, out, err = run_main(monkeypatch, capsys, ["--max-retries", "0", "auth", "status"])
@@ -746,9 +746,9 @@ def test_status_network_error_leaves_authenticated_unknown(mock_api, monkeypatch
 @pytest.mark.parametrize(
     ("response", "slug", "code"),
     [
-        (lambda r: httpx.Response(500, json={"error": "boom"}), "api", 1),
-        (lambda r: httpx.Response(429, json={}), "rate_limited", 1),
-        (lambda r: httpx.Response(404, json={"error": "gone"}), "not_found", 4),
+        (lambda r: httpx2.Response(500, json={"error": "boom"}), "api", 1),
+        (lambda r: httpx2.Response(429, json={}), "rate_limited", 1),
+        (lambda r: httpx2.Response(404, json={"error": "gone"}), "not_found", 4),
     ],
     ids=["500", "429", "404"],
 )
@@ -767,8 +767,8 @@ def test_status_failed_check_exits_with_that_errors_code(
 @pytest.mark.parametrize(
     "response",
     [
-        lambda r: httpx.Response(200, html="<html><title>Sign in</title></html>"),
-        lambda r: httpx.Response(200, json={"x": 1}),
+        lambda r: httpx2.Response(200, html="<html><title>Sign in</title></html>"),
+        lambda r: httpx2.Response(200, json={"x": 1}),
     ],
     ids=["html", "object"],
 )

@@ -89,6 +89,21 @@ jobs:
         env:
           HFOX_SUBDOMAIN: example
 
+      # Exit 4 is the 404 example.com answers after a TLS handshake verified against the OS
+      # trust store; a TLS or network failure exits 5.
+      - name: Smoke test TLS
+        run: |
+          status=0
+          "$BIN" tickets get 1 || status=$?
+          if [[ $status -ne 4 ]]; then
+            echo "::error::A TLS request exited $status, expected 4."
+            exit 1
+          fi
+        env:
+          HFOX_BASE_URL: https://example.com
+          HFOX_API_KEY: probe-key
+          HFOX_AUTH_CODE: probe-code
+
       # A missing shellingham module fails with its own error. BSD ps lists only processes
       # with a controlling terminal, which a runner lacks, so on macOS the module loads and
       # then finds no shell; that answer passes.
@@ -167,6 +182,17 @@ jobs:
             echo "::error::Wheel reports '$version', expected '$expected'."
             exit 1
           fi
+          # Exit 4 is the 404 example.com answers after a verified TLS handshake.
+          status=0
+          uv run --isolated --no-project --with "$wheel" hfox tickets get 1 || status=$?
+          if [[ $status -ne 4 ]]; then
+            echo "::error::A TLS request exited $status, expected 4."
+            exit 1
+          fi
+        env:
+          HFOX_BASE_URL: https://example.com
+          HFOX_API_KEY: probe-key
+          HFOX_AUTH_CODE: probe-code
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

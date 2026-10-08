@@ -7,7 +7,7 @@ import re
 import subprocess
 import sys
 
-import httpx
+import httpx2
 import pytest
 from conftest import subprocess_env
 from typer.testing import CliRunner
@@ -56,7 +56,7 @@ def ok_json(payload):
     """Build a handler returning a 200 JSON body."""
 
     def handler(request):
-        return httpx.Response(200, json=payload)
+        return httpx2.Response(200, json=payload)
 
     return handler
 
@@ -144,10 +144,10 @@ def test_list_page_all_walks_pages(mock_api):
         page = dict(request.url.params).get("page", "1")
         pages[page] = pages.get(page, 0) + 1
         if page == "1":
-            return httpx.Response(
+            return httpx2.Response(
                 200, json={"page_info": {"page_count": 2, "count": 2}, "data": [{"id": 1}]}
             )
-        return httpx.Response(
+        return httpx2.Response(
             200, json={"page_info": {"page_count": 2, "count": 2}, "data": [{"id": 2}]}
         )
 
@@ -507,7 +507,7 @@ def test_delete_confirm_yes_via_prompt(mock_api, tty):
 
 
 def test_delete_abort_when_declined(mock_api, tty):
-    captured = mock_api(lambda r: httpx.Response(200, json={}))
+    captured = mock_api(lambda r: httpx2.Response(200, json={}))
     result = runner.invoke(cli, ["tickets", "delete", "42"], input="n\n", env=dict(ENV))
     assert isinstance(result.exception, CancelledError), result.exception
     assert result.stdout == ""
@@ -515,7 +515,7 @@ def test_delete_abort_when_declined(mock_api, tty):
 
 
 def test_delete_without_terminal_requires_yes(mock_api):
-    captured = mock_api(lambda r: httpx.Response(200, json={}))
+    captured = mock_api(lambda r: httpx2.Response(200, json={}))
     result = runner.invoke(cli, ["tickets", "delete", "42"], input="y\n", env=dict(ENV))
     assert isinstance(result.exception, ValidationError), result.exception
     assert "--yes" in str(result.exception)
@@ -528,7 +528,7 @@ def test_delete_without_terminal_requires_yes(mock_api):
     ("status", "slug", "code"), [(404, "not_found", 4), (400, "api", 1)], ids=["404", "400"]
 )
 def test_get_api_error_exit_code(mock_api, monkeypatch, capsys, status, slug, code):
-    captured = mock_api(lambda request: httpx.Response(status, json={"error": "No such ticket"}))
+    captured = mock_api(lambda request: httpx2.Response(status, json={"error": "No such ticket"}))
     for key, value in ENV.items():
         monkeypatch.setenv(key, value)
     # CliRunner reports 1 for any exception; main.app() maps the error to its exit code.

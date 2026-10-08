@@ -676,6 +676,15 @@ def test_normalize_base_url_rejects_a_host_no_request_can_reach(url):
 
 
 @pytest.mark.parametrize(
+    "url",
+    ["https://gw.xn--a.example.com", "https://gw.XN--A.example.com", "https://gw.xn--.example"],
+    ids=["bad", "upper", "empty"],
+)
+def test_normalize_base_url_rejects_bad_punycode_in_any_label(url):
+    assert_base_url_rejected(url)
+
+
+@pytest.mark.parametrize(
     ("url", "root"),
     [
         ("https://10.0.0.5", "https://10.0.0.5"),

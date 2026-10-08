@@ -7,7 +7,7 @@ import os
 import subprocess
 import sys
 
-import httpx
+import httpx2
 import pytest
 import typer
 from conftest import subprocess_env
@@ -65,7 +65,7 @@ def test_any_no_color_value_is_accepted():
 # main.py :: --format global flag resolves OutputFormat
 # ---------------------------------------------------------------------------
 def test_format_flag_resolves(mock_api):
-    captured = mock_api(lambda req: httpx.Response(200, json=[{"id": 1, "name": "Sales"}]))
+    captured = mock_api(lambda req: httpx2.Response(200, json=[{"id": 1, "name": "Sales"}]))
     result = run("-f", "json", "system", "categories")
     assert result.exit_code == 0
     assert captured[0].method == "GET"
@@ -309,7 +309,7 @@ def test_fox_only_on_root_usage_line():
     ],
 )
 def test_system_command_hits_endpoint_and_renders(mock_api, command, path, sample):
-    captured = mock_api(lambda req: httpx.Response(200, json=sample))
+    captured = mock_api(lambda req: httpx2.Response(200, json=sample))
     result = run("system", command)
     assert result.exit_code == 0
     assert len(captured) == 1
@@ -319,7 +319,7 @@ def test_system_command_hits_endpoint_and_renders(mock_api, command, path, sampl
 
 
 def test_system_categories_empty_array(mock_api):
-    captured = mock_api(lambda req: httpx.Response(200, json=[]))
+    captured = mock_api(lambda req: httpx2.Response(200, json=[]))
     result = run("system", "categories")
     assert result.exit_code == 0
     assert json.loads(result.stdout) == []
@@ -327,7 +327,7 @@ def test_system_categories_empty_array(mock_api):
 
 
 def test_system_staff_table_format_unwraps_rows(mock_api):
-    mock_api(lambda req: httpx.Response(200, json=[{"id": 2, "name": "Alice"}]))
+    mock_api(lambda req: httpx2.Response(200, json=[{"id": 2, "name": "Alice"}]))
     result = run("-f", "table", "system", "staff")
     assert result.exit_code == 0
     assert "Alice" in result.stdout
@@ -335,7 +335,7 @@ def test_system_staff_table_format_unwraps_rows(mock_api):
 
 
 def test_system_dry_run_short_circuits(mock_api):
-    captured = mock_api(lambda req: httpx.Response(200, json=[]))
+    captured = mock_api(lambda req: httpx2.Response(200, json=[]))
     result = run("--dry-run", "system", "statuses")
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
@@ -369,7 +369,7 @@ _FIELDS = [
 
 @pytest.mark.parametrize("command", ["ticket-custom-fields", "contact-custom-fields"])
 def test_custom_field_choices_flattened_in_csv(mock_api, command):
-    mock_api(lambda req: httpx.Response(200, json=_FIELDS))
+    mock_api(lambda req: httpx2.Response(200, json=_FIELDS))
     result = run("-f", "csv", "system", command)
     assert result.exit_code == 0
     lines = result.stdout.splitlines()
@@ -380,7 +380,7 @@ def test_custom_field_choices_flattened_in_csv(mock_api, command):
 
 def test_custom_field_choices_flattened_in_table(mock_api):
     many = [{"text": f"Option {i}", "id": 100 + i} for i in range(10)]
-    mock_api(lambda req: httpx.Response(200, json=[{"id": 5, "choices": many}]))
+    mock_api(lambda req: httpx2.Response(200, json=[{"id": 5, "choices": many}]))
     result = run(
         "-f", "table", "system", "ticket-custom-fields", env_extra={"COLUMNS": "400"}
     )
@@ -390,7 +390,7 @@ def test_custom_field_choices_flattened_in_table(mock_api):
 
 
 def test_custom_field_choices_kept_nested_in_json(mock_api):
-    mock_api(lambda req: httpx.Response(200, json=_FIELDS))
+    mock_api(lambda req: httpx2.Response(200, json=_FIELDS))
     result = run("system", "contact-custom-fields")
     assert json.loads(result.stdout) == _FIELDS
 
@@ -401,7 +401,7 @@ def test_system_staff_filters_client_side(mock_api):
         {"id": 2, "name": "Bob Jones", "email": "BOB@x.org"},
         {"id": 3, "name": "Alicia Bob", "email": None},
     ]
-    captured = mock_api(lambda req: httpx.Response(200, json=staff))
+    captured = mock_api(lambda req: httpx2.Response(200, json=staff))
     result = run("system", "staff", "--name", "ALI")
     assert result.exit_code == 0
     assert [a["id"] for a in json.loads(result.stdout)] == [1, 3]
@@ -428,7 +428,7 @@ _LEVELS = [{"id": 1, "name": "High"}, {"id": 2, "name": "Low"}]
 
 @pytest.mark.parametrize("command, path", SYSTEM_COMMANDS)
 def test_system_name_filter_is_local(mock_api, command, path):
-    captured = mock_api(lambda req: httpx.Response(200, json=_LEVELS))
+    captured = mock_api(lambda req: httpx2.Response(200, json=_LEVELS))
     result = run("system", command, "--name", "hi")
     assert result.exit_code == 0
     assert json.loads(result.stdout) == [{"id": 1, "name": "High"}]
@@ -437,7 +437,7 @@ def test_system_name_filter_is_local(mock_api, command, path):
 
 
 def test_system_staff_email_filter_skips_null_email(mock_api):
-    mock_api(lambda req: httpx.Response(200, json=[{"id": 3, "name": "Alicia", "email": None}]))
+    mock_api(lambda req: httpx2.Response(200, json=[{"id": 3, "name": "Alicia", "email": None}]))
     result = run("system", "staff", "--email", "none")
     assert result.exit_code == 0
     assert json.loads(result.stdout) == []
@@ -445,7 +445,7 @@ def test_system_staff_email_filter_skips_null_email(mock_api):
 
 @pytest.mark.parametrize("command", ["ticket-custom-fields", "contact-custom-fields"])
 def test_custom_fields_name_filter_runs_before_flattening(mock_api, command):
-    mock_api(lambda req: httpx.Response(200, json=_FIELDS))
+    mock_api(lambda req: httpx2.Response(200, json=_FIELDS))
     result = run("-f", "csv", "system", command, "--name", "survey")
     assert result.exit_code == 0
     assert result.stdout.splitlines() == [
@@ -460,7 +460,7 @@ def test_custom_fields_name_filter_runs_before_flattening(mock_api, command):
 @pytest.mark.parametrize("command", [command for command, _ in SYSTEM_COMMANDS])
 def test_system_filter_zero_matches(mock_api, command, fmt):
     body = _FIELDS if command.endswith("custom-fields") else _LEVELS
-    mock_api(lambda req: httpx.Response(200, json=body))
+    mock_api(lambda req: httpx2.Response(200, json=body))
     result = run("-f", fmt, "system", command, "--name", "urgent")
     assert result.exit_code == 0
     if fmt == "json":
@@ -476,14 +476,14 @@ def test_system_filter_zero_matches(mock_api, command, fmt):
 
 @pytest.mark.parametrize("value", ["", "  "])
 def test_system_filter_blank_is_ignored(mock_api, value):
-    mock_api(lambda req: httpx.Response(200, json=_LEVELS))
+    mock_api(lambda req: httpx2.Response(200, json=_LEVELS))
     result = run("system", "priorities", "--name", value)
     assert result.exit_code == 0
     assert json.loads(result.stdout) == _LEVELS
 
 
 def test_system_filter_unexpected_body_raises(mock_api):
-    mock_api(lambda req: httpx.Response(200, json={"error": "x"}))
+    mock_api(lambda req: httpx2.Response(200, json={"error": "x"}))
     result = run("system", "priorities", "--name", "x")
     assert isinstance(result.exception, HfoxError)
     assert result.exception.exit_code is ExitCode.OTHER

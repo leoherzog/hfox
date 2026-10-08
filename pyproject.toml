@@ -19,7 +19,8 @@ classifiers = [
 dependencies = [
     # main.py imports the private typer._click, so the next minor is excluded.
     "typer>=0.27.2,<0.28",
-    "httpx>=0.28.1",
+    "httpx2>=2.13.1,<3",
+    "idna>=3.20",
     "rich>=15.0.0",
 ]
 

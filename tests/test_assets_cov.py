@@ -4,7 +4,7 @@ import json
 import subprocess
 import sys
 
-import httpx
+import httpx2
 import pytest
 from conftest import subprocess_env
 from typer.testing import CliRunner
@@ -60,7 +60,7 @@ def _collection(rows):
 # --------------------------------------------------------------------------- #
 def test_assets_list_get_request_and_params(mock_api):
     def handler(request):
-        return httpx.Response(200, json=_collection([{"id": 7, "name": "MBP"}]))
+        return httpx2.Response(200, json=_collection([{"id": 7, "name": "MBP"}]))
 
     captured = mock_api(handler)
     result = run("assets", "list", "--asset-type", "3", "--page", "2", "--size", "10")
@@ -81,7 +81,7 @@ def test_assets_list_get_request_and_params(mock_api):
 
 def test_assets_list_default_size_10_no_asset_type(mock_api):
     def handler(request):
-        return httpx.Response(200, json=_collection([]))
+        return httpx2.Response(200, json=_collection([]))
 
     captured = mock_api(handler)
     result = run("assets", "list")
@@ -97,7 +97,7 @@ def test_assets_list_default_size_10_no_asset_type(mock_api):
 
 def test_assets_get_single_resource(mock_api):
     def handler(request):
-        return httpx.Response(200, json={"id": 42, "name": "Laptop"})
+        return httpx2.Response(200, json={"id": 42, "name": "Laptop"})
 
     captured = mock_api(handler)
     result = run("assets", "get", "42")
@@ -116,7 +116,7 @@ def test_assets_get_single_resource(mock_api):
 def test_assets_create_posts_and_renders(mock_api):
     def handler(request):
         assert request.method == "POST"
-        return httpx.Response(200, json={"id": 99})
+        return httpx2.Response(200, json={"id": 99})
 
     captured = mock_api(handler)
     result = run(
@@ -142,7 +142,7 @@ def test_assets_create_posts_and_renders(mock_api):
 
 def test_assets_create_new_contact_json_sent_as_contacts(mock_api):
     def handler(request):
-        return httpx.Response(200, json={"id": 1})
+        return httpx2.Response(200, json={"id": 1})
 
     captured = mock_api(handler)
     result = run(
@@ -159,7 +159,7 @@ def test_assets_create_new_contact_json_sent_as_contacts(mock_api):
 # _parse_new_contacts validation branches
 # --------------------------------------------------------------------------- #
 def test_create_new_contact_json_invalid_json(mock_api):
-    captured = mock_api(lambda r: httpx.Response(200, json={}))
+    captured = mock_api(lambda r: httpx2.Response(200, json={}))
     result = run(
         "assets", "create",
         "--name", "X", "--display-id", "D",
@@ -172,7 +172,7 @@ def test_create_new_contact_json_invalid_json(mock_api):
 
 
 def test_create_new_contact_json_not_a_list(mock_api):
-    captured = mock_api(lambda r: httpx.Response(200, json={}))
+    captured = mock_api(lambda r: httpx2.Response(200, json={}))
     result = run(
         "assets", "create",
         "--name", "X", "--display-id", "D",
@@ -184,7 +184,7 @@ def test_create_new_contact_json_not_a_list(mock_api):
 
 
 def test_create_new_contact_json_element_not_object(mock_api):
-    captured = mock_api(lambda r: httpx.Response(200, json={}))
+    captured = mock_api(lambda r: httpx2.Response(200, json={}))
     result = run(
         "assets", "create",
         "--name", "X", "--display-id", "D",
@@ -201,7 +201,7 @@ def test_create_new_contact_json_element_not_object(mock_api):
 def test_assets_update_puts_and_renders(mock_api):
     def handler(request):
         assert request.method == "PUT"
-        return httpx.Response(200, json={"id": 10, "name": "New"})
+        return httpx2.Response(200, json={"id": 10, "name": "New"})
 
     captured = mock_api(handler)
     result = run(
@@ -227,7 +227,7 @@ def test_assets_update_puts_and_renders(mock_api):
 def test_assets_delete_with_yes_renders_and_succeeds(mock_api):
     def handler(request):
         assert request.method == "DELETE"
-        return httpx.Response(200, json={"deleted": True})
+        return httpx2.Response(200, json={"deleted": True})
 
     captured = mock_api(handler)
     result = run("assets", "delete", "10", "--yes")
@@ -245,7 +245,7 @@ def test_assets_delete_with_yes_renders_and_succeeds(mock_api):
 @pytest.mark.parametrize("answer", ["n\n", "\n", ""])
 def test_assets_delete_confirm_abort_no_network(mock_api, tty, answer):
     # A decline, the default answer and EOF all cancel before any request.
-    captured = mock_api(lambda r: httpx.Response(200, json={}))
+    captured = mock_api(lambda r: httpx2.Response(200, json={}))
     result = run("assets", "delete", "10", input=answer)
     assert isinstance(result.exception, CancelledError), result.output
     assert int(result.exception.exit_code) == 5
@@ -254,7 +254,7 @@ def test_assets_delete_confirm_abort_no_network(mock_api, tty, answer):
 
 
 def test_assets_delete_without_yes_needs_a_terminal(mock_api):
-    captured = mock_api(lambda r: httpx.Response(200, json={}))
+    captured = mock_api(lambda r: httpx2.Response(200, json={}))
     result = run("assets", "delete", "10", input="y\n")
     assert isinstance(result.exception, ValidationError), result.output
     assert "Delete asset 10?" in str(result.exception)
@@ -273,7 +273,7 @@ def test_assets_delete_dry_run_never_prompts():
 
 
 def test_assets_delete_resolves_staff_before_the_prompt(mock_api, tty):
-    captured = mock_api(lambda r: httpx.Response(200, json={}))
+    captured = mock_api(lambda r: httpx2.Response(200, json={}))
     env = {k: v for k, v in ENV.items() if k != "HFOX_STAFF_ID"}
     result = runner.invoke(cli, ["assets", "delete", "10"], env=env, input="y\n")
     assert isinstance(result.exception, ValidationError), result.output
@@ -283,7 +283,7 @@ def test_assets_delete_resolves_staff_before_the_prompt(mock_api, tty):
 
 
 def test_assets_delete_confirm_yes_prompt(mock_api, tty):
-    captured = mock_api(lambda r: httpx.Response(200, json={"ok": 1}))
+    captured = mock_api(lambda r: httpx2.Response(200, json={"ok": 1}))
     result = run("assets", "delete", "10", input="y\n")
     assert result.exit_code == 0, result.stdout
     assert len(captured) == 1
@@ -297,7 +297,7 @@ def test_assets_delete_confirm_yes_prompt(mock_api, tty):
 # --------------------------------------------------------------------------- #
 def test_asset_types_list(mock_api):
     def handler(request):
-        return httpx.Response(200, json=_collection([{"id": 1, "name": "Laptops"}]))
+        return httpx2.Response(200, json=_collection([{"id": 1, "name": "Laptops"}]))
 
     captured = mock_api(handler)
     result = run("assets", "types", "list")
@@ -311,7 +311,7 @@ def test_asset_types_list(mock_api):
 
 
 def test_asset_types_list_sends_default_size_and_page(mock_api):
-    captured = mock_api(lambda request: httpx.Response(200, json=_collection([])))
+    captured = mock_api(lambda request: httpx2.Response(200, json=_collection([])))
     result = run("assets", "types", "list")
     assert result.exit_code == 0, result.stdout
     assert dict(captured[0].url.params) == {"size": "10", "page": "1"}
@@ -338,7 +338,7 @@ def test_dry_run_page_all_previews_the_first_wire_request(mock_api):
     preview = json.loads(result.stdout)
     assert preview["url"].endswith("/asset_types/?size=10&page=1")
 
-    captured = mock_api(lambda request: httpx.Response(200, json=_collection([])))
+    captured = mock_api(lambda request: httpx2.Response(200, json=_collection([])))
     result = run("--page-all", "assets", "types", "list")
     assert result.exit_code == 0, result.stdout
     assert str(captured[0].url) == preview["url"]
@@ -346,7 +346,7 @@ def test_dry_run_page_all_previews_the_first_wire_request(mock_api):
 
 def test_asset_types_get(mock_api):
     def handler(request):
-        return httpx.Response(200, json={"id": 4, "name": "Phones"})
+        return httpx2.Response(200, json={"id": 4, "name": "Phones"})
 
     captured = mock_api(handler)
     result = run("assets", "types", "get", "4")
@@ -363,7 +363,7 @@ def test_asset_types_get(mock_api):
 # --------------------------------------------------------------------------- #
 def test_asset_custom_fields_list(mock_api):
     def handler(request):
-        return httpx.Response(200, json=_collection([{"id": 5, "name": "RAM"}]))
+        return httpx2.Response(200, json=_collection([{"id": 5, "name": "RAM"}]))
 
     captured = mock_api(handler)
     result = run(
@@ -384,7 +384,7 @@ def test_asset_custom_fields_list(mock_api):
 
 def test_asset_custom_fields_get(mock_api):
     def handler(request):
-        return httpx.Response(200, json={"id": 5, "name": "RAM"})
+        return httpx2.Response(200, json={"id": 5, "name": "RAM"})
 
     captured = mock_api(handler)
     result = run("assets", "custom-fields", "get", "5")
@@ -400,7 +400,7 @@ def test_asset_custom_fields_get(mock_api):
 # no staff id configured
 # --------------------------------------------------------------------------- #
 def test_assets_create_requires_staff_id(mock_api):
-    captured = mock_api(lambda r: httpx.Response(200, json={}))
+    captured = mock_api(lambda r: httpx2.Response(200, json={}))
     env = {k: v for k, v in ENV.items() if k != "HFOX_STAFF_ID"}
     result = runner.invoke(
         cli, ["assets", "create", "--name", "X", "--display-id", "D"], env=env
@@ -430,8 +430,8 @@ _STAFF_IDS = [verb for verb, _ in STAFF_VERBS]
 def _staff_api(mock_api):
     def handler(request):
         if request.url.path.endswith("/staff/"):
-            return httpx.Response(200, json=STAFF)
-        return httpx.Response(200, json={"ok": True})
+            return httpx2.Response(200, json=STAFF)
+        return httpx2.Response(200, json={"ok": True})
 
     return mock_api(handler)
 
@@ -603,7 +603,7 @@ def test_dry_run_list_sends_size_and_page():
     ],
 )
 def test_out_of_range_ids_and_paging_are_validation_errors(mock_api, monkeypatch, capsys, args):
-    captured = mock_api(lambda r: httpx.Response(200, json={}))
+    captured = mock_api(lambda r: httpx2.Response(200, json={}))
     for key, value in ENV.items():
         monkeypatch.setenv(key, value)
     monkeypatch.setattr(sys, "argv", ["hfox", *args])
@@ -634,7 +634,7 @@ def test_out_of_range_ids_and_paging_are_validation_errors(mock_api, monkeypatch
     ],
 )
 def test_invalid_input_raises_before_request(mock_api, args, message):
-    captured = mock_api(lambda r: httpx.Response(200, json={}))
+    captured = mock_api(lambda r: httpx2.Response(200, json={}))
     result = run("assets", *args)
     assert isinstance(result.exception, ValidationError), result.output
     assert message in str(result.exception)
@@ -681,7 +681,7 @@ def _named_pages(request):
         if page == "1"
         else [{"id": 3, "name": "dell optiplex"}]
     )
-    return httpx.Response(200, json={"page_info": _NAMED_PAGE_INFO, "data": rows})
+    return httpx2.Response(200, json={"page_info": _NAMED_PAGE_INFO, "data": rows})
 
 
 @pytest.mark.parametrize("dry_run", [True, False])

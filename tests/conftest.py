@@ -8,7 +8,7 @@ import os
 for _key in ("GITHUB_ACTIONS", "FORCE_COLOR", "PY_COLORS"):
     os.environ.pop(_key, None)
 
-import httpx  # noqa: E402
+import httpx2  # noqa: E402
 import pytest  # noqa: E402
 
 import hfox.cli._util as util_mod  # noqa: E402
@@ -50,16 +50,16 @@ def _isolated_config(monkeypatch, tmp_path):
 
 @pytest.fixture
 def mock_api(monkeypatch):
-    """Return a factory: install(handler) -> list of captured httpx.Request.
+    """Return a factory: install(handler) -> list of captured httpx2.Request.
 
     The client keeps the caller's `max_retries` and `on_retry`; `timeout` is ignored and
     sleeps are instant.
     """
 
     def install(handler):
-        captured: list[httpx.Request] = []
+        captured: list[httpx2.Request] = []
 
-        def wrapped(request: httpx.Request) -> httpx.Response:
+        def wrapped(request: httpx2.Request) -> httpx2.Response:
             captured.append(request)
             return handler(request)
 
@@ -68,9 +68,9 @@ def mock_api(monkeypatch):
             client = HappyFoxClient(
                 base_url, api_key, auth_code, sleep=lambda _s: None, **passed
             )
-            client._client = httpx.Client(
-                transport=httpx.MockTransport(wrapped),
-                auth=httpx.BasicAuth(api_key, auth_code),
+            client._client = httpx2.Client(
+                transport=httpx2.MockTransport(wrapped),
+                auth=httpx2.BasicAuth(api_key, auth_code),
             )
             return client
 

@@ -10,7 +10,7 @@ import urllib.parse
 from collections.abc import Callable, Iterator
 from typing import Any
 
-import httpx
+import httpx2
 
 from .. import __version__
 from .errors import (
@@ -37,9 +37,9 @@ MAX_RETRIES = 5
 MAX_PAGE_SIZE = 50
 
 # A write that failed with any other transport error may already have been applied.
-_WRITE_RETRYABLE = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
+_WRITE_RETRYABLE = (httpx2.ConnectError, httpx2.ConnectTimeout, httpx2.PoolTimeout)
 # Transport errors raised before any byte of the request left.
-_NOT_SENT = (*_WRITE_RETRYABLE, httpx.ProxyError, httpx.UnsupportedProtocol)
+_NOT_SENT = (*_WRITE_RETRYABLE, httpx2.ProxyError, httpx2.UnsupportedProtocol)
 OUTCOME_UNKNOWN_HINT = "The write may have been applied. Check the resource before retrying."
 
 # Fixed jitter values, so backoff is deterministic in tests.
@@ -47,7 +47,7 @@ _JITTER_CYCLE = (0.13, 0.41, 0.77, 0.29, 0.59)
 
 
 class HappyFoxClient:
-    """A thin, retrying wrapper over httpx for the HappyFox JSON API."""
+    """A thin, retrying wrapper over httpx2 for the HappyFox JSON API."""
 
     def __init__(
         self,
@@ -68,11 +68,11 @@ class HappyFoxClient:
         self.max_retries = max_retries
         self._sleep = sleep
         self._on_retry = on_retry
-        self._client = httpx.Client(
-            auth=httpx.BasicAuth(api_key, auth_code),
+        self._client = httpx2.Client(
+            auth=httpx2.BasicAuth(api_key, auth_code),
             timeout=timeout,
             headers={"Accept": "application/json", "User-Agent": USER_AGENT},
-            # httpx drops Basic auth on a cross-host redirect, so a followed one would go
+            # httpx2 drops Basic auth on a cross-host redirect, so a followed one would go
             # out unauthenticated.
             follow_redirects=False,
         )
@@ -121,14 +121,14 @@ class HappyFoxClient:
         method = method.upper()
         url = self._url(path)
         params = _clean_params(params)
-        retryable = httpx.RequestError if method == "GET" else _WRITE_RETRYABLE
+        retryable = httpx2.RequestError if method == "GET" else _WRITE_RETRYABLE
 
         for attempt in range(self.max_retries + 1):
             try:
                 response = self._client.request(
                     method, url, params=params, json=json, data=data, files=files
                 )
-            except httpx.RequestError as exc:
+            except httpx2.RequestError as exc:
                 if isinstance(exc, retryable) and attempt < self.max_retries:
                     reason = f"network error: {type(exc).__name__}"
                     self._retry_sleep(reason, self._backoff(attempt), attempt)
@@ -145,7 +145,7 @@ class HappyFoxClient:
             return self._handle_response(response, method)
         raise AssertionError("unreachable")  # pragma: no cover
 
-    def _handle_response(self, response: httpx.Response, method: str = "GET") -> Any:
+    def _handle_response(self, response: httpx2.Response, method: str = "GET") -> Any:
         if response.is_success:
             if not response.content:
                 return None
@@ -286,7 +286,7 @@ def first_page_params(params: dict[str, Any] | None, size: int = MAX_PAGE_SIZE) 
 
 def request_url(base_url: str, path: str, params: dict[str, Any] | None = None) -> str:
     """Return the exact URL the client sends for this path and params."""
-    return str(httpx.Request("GET", _join(base_url, path), params=_clean_params(params)).url)
+    return str(httpx2.Request("GET", _join(base_url, path), params=_clean_params(params)).url)
 
 
 def _join(base_url: str, path: str) -> str:
@@ -298,7 +298,7 @@ def _join(base_url: str, path: str) -> str:
     return f"{base_url.rstrip('/')}/{urllib.parse.quote(path, safe='/@')}"
 
 
-def _transport_error(exc: httpx.RequestError, method: str) -> NetworkError:
+def _transport_error(exc: httpx2.RequestError, method: str) -> NetworkError:
     """Map a transport failure to its error; a write that may have left is outcome-unknown."""
     name = type(exc).__name__
     unknown = method != "GET" and not isinstance(exc, _NOT_SENT)
@@ -307,7 +307,7 @@ def _transport_error(exc: httpx.RequestError, method: str) -> NetworkError:
         "hint": OUTCOME_UNKNOWN_HINT if unknown else None,
         "outcome_unknown": unknown,
     }
-    if isinstance(exc, httpx.TimeoutException):
+    if isinstance(exc, httpx2.TimeoutException):
         return RequestTimeoutError(f"Request to HappyFox timed out ({name}).", **extra)
     return NetworkError(f"Network error contacting HappyFox: {exc}", **extra)
 
@@ -429,7 +429,7 @@ def _where(path: str | None) -> str:
     return f"the {path} response" if path else "the response"
 
 
-def _extract_error(response: httpx.Response) -> Any:
+def _extract_error(response: httpx2.Response) -> Any:
     try:
         body = response.json()
     except ValueError:

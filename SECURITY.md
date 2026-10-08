@@ -29,10 +29,12 @@ expose one.
 
 ## Transport
 
-Requests use HTTP Basic auth over TLS. Redirects are not followed, so credentials stay on the
-configured host. An `http` base URL on a non-loopback host sends them in cleartext; hfox
-warns on stderr and proceeds. A base URL with embedded credentials (`https://user:pass@host`)
-is rejected, and the error never prints a value that holds `@`, `?` or `#`.
+Requests use HTTP Basic auth over TLS. Certificates are verified against the operating
+system's trust store unless `SSL_CERT_FILE` or `SSL_CERT_DIR` names a CA bundle. Redirects
+are not followed, so credentials stay on the configured host. An `http` base URL on a
+non-loopback host sends them in cleartext; hfox warns on stderr and proceeds. A base URL with
+embedded credentials (`https://user:pass@host`) is rejected, and the error never prints a
+value that holds `@`, `?` or `#`.
 
 ## Guard against credential exfiltration
 

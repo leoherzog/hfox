@@ -4,7 +4,7 @@ import json
 import os
 import sys
 
-import httpx
+import httpx2
 import pytest
 from typer.testing import CliRunner
 
@@ -240,7 +240,7 @@ def test_create_new_contact_is_sent_without_outer_whitespace():
 def test_create_bulk_partial_failure_exits_1(mock_api, tmp_path):
     f = tmp_path / "bulk.json"
     f.write_text(json.dumps([{"subject": "a"}, {"subject": "b"}]))
-    mock_api(lambda req: httpx.Response(200, json=BULK_PARTIAL))
+    mock_api(lambda req: httpx2.Response(200, json=BULK_PARTIAL))
     result = run("tickets", "create-bulk", "--file", str(f))
     assert result.exit_code == 1
     assert json.loads(result.stdout) == BULK_PARTIAL
@@ -250,7 +250,7 @@ def test_create_bulk_partial_failure_exits_1(mock_api, tmp_path):
 def test_create_bulk_partial_failure_exits_1_through_app(mock_api, tmp_path, monkeypatch, capsys):
     f = tmp_path / "bulk.json"
     f.write_text(json.dumps([{"subject": "a"}, {"subject": "b"}]))
-    mock_api(lambda req: httpx.Response(200, json=BULK_PARTIAL))
+    mock_api(lambda req: httpx2.Response(200, json=BULK_PARTIAL))
     monkeypatch.setattr(sys, "argv", ["hfox", "tickets", "create-bulk", "--file", str(f)])
     for key, value in ENV.items():
         monkeypatch.setenv(key, value)
@@ -263,7 +263,7 @@ def test_create_bulk_partial_failure_exits_1_through_app(mock_api, tmp_path, mon
 def test_create_bulk_all_success_exits_0(mock_api, tmp_path):
     f = tmp_path / "bulk.json"
     f.write_text(json.dumps([{"subject": "a"}]))
-    mock_api(lambda req: httpx.Response(200, json=BULK_PARTIAL[:1]))
+    mock_api(lambda req: httpx2.Response(200, json=BULK_PARTIAL[:1]))
     result = run("tickets", "create-bulk", "--file", str(f))
     assert result.exit_code == 0
     assert result.stderr == ""
@@ -336,7 +336,7 @@ def test_inline_attachment_returns_url(mock_api, tmp_path):
     f = tmp_path / "shot.png"
     f.write_bytes(b"\x89PNG\r\n")
     url = "https://acme.happyfox.com/get_hdp_temporarily_attachment/2091/"
-    captured = mock_api(lambda req: httpx.Response(200, json={"url": url}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={"url": url}))
     result = run("tickets", "inline-attachment", str(f))
     assert result.exit_code == 0
     req = captured[0]
@@ -452,7 +452,7 @@ def test_inline_and_file_body_are_mutually_exclusive(argv, flag, inline, key, tm
 @pytest.mark.parametrize(("argv", "flag"), EMPTY_BODY, ids=EMPTY_IDS)
 @pytest.mark.parametrize("content", ["", " \n\t\n"])
 def test_empty_body_file_sends_nothing(mock_api, argv, flag, content, tmp_path):
-    captured = mock_api(lambda req: httpx.Response(200, json={}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={}))
     f = tmp_path / "body.txt"
     f.write_text(content)
     assert rejected(*argv, flag, str(f)) == f"{flag} is empty; nothing to send."
@@ -461,7 +461,7 @@ def test_empty_body_file_sends_nothing(mock_api, argv, flag, content, tmp_path):
 
 @pytest.mark.parametrize(("argv", "flag"), EMPTY_BODY, ids=EMPTY_IDS)
 def test_empty_stdin_body_sends_nothing(mock_api, argv, flag):
-    captured = mock_api(lambda req: httpx.Response(200, json={}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={}))
     result = runner.invoke(cli, [*argv, flag, "-"], input="", env=ENV)
     assert isinstance(result.exception, ValidationError), result.exception
     assert str(result.exception) == f"{flag} is empty; nothing to send."
@@ -479,7 +479,7 @@ def test_empty_file_is_rejected_even_with_a_property(tmp_path):
 
 @pytest.mark.parametrize("verb", ["reply", "note"])
 def test_two_stdin_inputs_are_rejected(mock_api, verb):
-    captured = mock_api(lambda req: httpx.Response(200, json={}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={}))
     result = runner.invoke(
         cli,
         ["tickets", verb, "5", "--html-file", "-", "--text-file", "-"],
@@ -495,7 +495,7 @@ def test_two_stdin_inputs_are_rejected(mock_api, verb):
 def test_body_file_is_sent_on_the_wire(mock_api, tmp_path):
     f = tmp_path / "body.html"
     f.write_bytes(b"<p>hi</p>\n")
-    captured = mock_api(lambda req: httpx.Response(200, json={"id": 1}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={"id": 1}))
     result = run("tickets", "reply", "5", "--html-file", str(f))
     assert result.exit_code == 0, result.output
     assert json.loads(captured[0].content) == {"staff": 1, "html": "<p>hi</p>\n"}
@@ -572,7 +572,7 @@ def test_create_bulk_file_in_config_dir_is_rejected(tmp_path):
     ids=["create", "reply", "note", "user-reply", "forward"],
 )
 def test_attachment_in_config_dir_is_rejected(mock_api, argv, tmp_path):
-    captured = mock_api(lambda req: httpx.Response(200, json={}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={}))
     cfg = tmp_path / "cfg"
     cfg.mkdir()
     (cfg / "token.json").write_text('{"api_key": "k"}')

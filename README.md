@@ -108,8 +108,9 @@ address or a bracketed IPv6 address. The error leaves out any value that holds `
 or `#`, since it may carry a secret. An `http` base URL on a non-loopback host sends the
 credentials in cleartext; hfox warns on stderr once per invocation and proceeds.
 
-`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` and `NO_PROXY` are honored through httpx. TLS trust
-comes from the certifi bundle unless `SSL_CERT_FILE` or `SSL_CERT_DIR` names another one.
+`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` and `NO_PROXY` are honored through httpx2. TLS trust
+comes from the operating system's trust store unless `SSL_CERT_FILE` or `SSL_CERT_DIR` names a
+CA bundle file or directory.
 Redirects are never followed.
 [SECURITY.md](https://github.com/leoherzog/hfox/blob/main/SECURITY.md) describes the
 credential model.

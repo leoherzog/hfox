@@ -3,7 +3,7 @@
 import json
 import sys
 
-import httpx
+import httpx2
 import pytest
 import typer
 from typer.testing import CliRunner
@@ -74,8 +74,8 @@ def rejected(*args, **kw):
 def staff_api(mock_api, body=None):
     def handler(request):
         if request.url.path.endswith("/staff/"):
-            return httpx.Response(200, json=STAFF)
-        return httpx.Response(200, json=body if body is not None else {"ok": True})
+            return httpx2.Response(200, json=STAFF)
+        return httpx2.Response(200, json=body if body is not None else {"ok": True})
 
     return mock_api(handler)
 
@@ -132,7 +132,7 @@ def test_update_documented_payload():
 
 
 def test_update_posts_and_renders(mock_api):
-    captured = mock_api(lambda req: httpx.Response(200, json={"id": 42, "status": 3}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={"id": 42, "status": 3}))
     result = run("tickets", "update", "42", "--status", "3", "--staff-id", "9")
     assert result.exit_code == 0, result.output
     assert captured[0].method == "POST"
@@ -326,7 +326,7 @@ def test_set_cf_choices_needs_no_staff_identity():
     ],
 )
 def test_set_cf_choices_rejects_bad_payloads(mock_api, choices, word):
-    captured = mock_api(lambda req: httpx.Response(200, json={}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={}))
     exc = rejected("tickets", "set-cf-choices", "7", "--yes", "--choices-json", json.dumps(choices))
     assert word in str(exc)
     assert captured == []
@@ -386,7 +386,7 @@ def test_set_cf_choices_field_id_zero_exits_3(monkeypatch, capsys):
 
 
 def test_set_cf_choices_yes_warns_the_counts_and_puts(mock_api):
-    captured = mock_api(lambda req: httpx.Response(200, json={"id": 7, "choices": CHOICES}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={"id": 7, "choices": CHOICES}))
     result = run("tickets", "set-cf-choices", "7", "-y", "--choices-json", json.dumps(CHOICES))
     assert result.exit_code == 0, result.output
     assert SUMMARY in result.stderr.replace("\n", " ")
@@ -398,7 +398,7 @@ def test_set_cf_choices_yes_warns_the_counts_and_puts(mock_api):
 
 
 def test_set_cf_choices_prompt_shows_the_counts(mock_api, tty):
-    captured = mock_api(lambda req: httpx.Response(200, json={"id": 7}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={"id": 7}))
     result = run(
         "tickets", "set-cf-choices", "7", "--choices-json", json.dumps(CHOICES), input="y\n"
     )
@@ -410,7 +410,7 @@ def test_set_cf_choices_prompt_shows_the_counts(mock_api, tty):
 
 
 def test_set_cf_choices_decline_sends_nothing(mock_api, tty):
-    captured = mock_api(lambda req: httpx.Response(200, json={}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={}))
     result = run(
         "tickets", "set-cf-choices", "7", "--choices-json", json.dumps(CHOICES), input="n\n"
     )
@@ -420,7 +420,7 @@ def test_set_cf_choices_decline_sends_nothing(mock_api, tty):
 
 
 def test_set_cf_choices_without_terminal_exits_3(mock_api, monkeypatch, capsys):
-    captured = mock_api(lambda req: httpx.Response(200, json={}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={}))
     code, payload, _err = run_main(
         monkeypatch, capsys, "tickets", "set-cf-choices", "7", "--choices-json", json.dumps(CHOICES)
     )
@@ -444,7 +444,7 @@ def test_set_cf_choices_dry_run_never_prompts_or_warns(monkeypatch, extra):
 
 
 def test_set_cf_choices_from_stdin_with_yes_puts(mock_api):
-    captured = mock_api(lambda req: httpx.Response(200, json={"id": 7}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={"id": 7}))
     result = run(
         "tickets", "set-cf-choices", "7", "--yes", "--file", "-", input=json.dumps(CHOICES)
     )

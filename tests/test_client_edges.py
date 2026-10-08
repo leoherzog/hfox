@@ -4,7 +4,7 @@ import base64
 import json
 import sys
 
-import httpx
+import httpx2
 import pytest
 import typer
 
@@ -33,7 +33,7 @@ def make_client(handler, **kwargs):
     The mock client takes the real one's auth, headers and redirect policy. Its explicit
     transport also keeps a proxy configured on the machine from being used.
     """
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
     sleeps: list[float] = []
 
     def wrapped(request):
@@ -42,8 +42,8 @@ def make_client(handler, **kwargs):
 
     client = HappyFoxClient(BASE, "the-key", "the-code", sleep=sleeps.append, **kwargs)
     real = client._client
-    client._client = httpx.Client(
-        transport=httpx.MockTransport(wrapped),
+    client._client = httpx2.Client(
+        transport=httpx2.MockTransport(wrapped),
         auth=real.auth,
         headers=real.headers,
         follow_redirects=real.follow_redirects,
@@ -53,11 +53,11 @@ def make_client(handler, **kwargs):
 
 
 def ok(_request):
-    return httpx.Response(200, json={"ok": True})
+    return httpx2.Response(200, json={"ok": True})
 
 
 def always(status, **kwargs):
-    return lambda _request: httpx.Response(status, **kwargs)
+    return lambda _request: httpx2.Response(status, **kwargs)
 
 
 def raising(exc_type):
@@ -75,7 +75,7 @@ def payload_text(exc):
 def pages(count, key="data"):
     def handler(request):
         page = int(request.url.params["page"])
-        return httpx.Response(200, json={"page_info": {"page_count": count}, key: [page]})
+        return httpx2.Response(200, json={"page_info": {"page_count": count}, key: [page]})
 
     return handler
 
@@ -84,13 +84,13 @@ def envelope(**extra):
     """Return a handler serving one-row pages whose envelope also holds `extra`."""
 
     def handler(request):
-        return httpx.Response(200, json={"data": [int(request.url.params["page"])], **extra})
+        return httpx2.Response(200, json={"data": [int(request.url.params["page"])], **extra})
 
     return handler
 
 
 def raw_page_count(literal):
-    """Return a handler whose page_count is a JSON literal that httpx will not encode."""
+    """Return a handler whose page_count is a JSON literal that httpx2 will not encode."""
     content = b'{"page_info": {"page_count": ' + literal + b'}, "data": [1]}'
     return always(200, content=content, headers={"content-type": "application/json"})
 
@@ -132,8 +132,8 @@ def test_requests_ask_for_json():
 def test_redirect_is_reported_not_followed(status):
     def handler(request):
         if request.url.host == "acme.happyfox.com":
-            return httpx.Response(status, headers={"Location": "https://elsewhere.example/staff/"})
-        return httpx.Response(200, json=[])
+            return httpx2.Response(status, headers={"Location": "https://elsewhere.example/staff/"})
+        return httpx2.Response(200, json=[])
 
     client, requests, _ = make_client(handler)
     with pytest.raises(APIError) as exc:
@@ -177,8 +177,8 @@ def test_server_error_on_a_get_is_not_retried(status):
 def test_write_answered_429_is_resent_with_the_same_body():
     def handler(request):
         if len(requests) == 1:
-            return httpx.Response(429, json={})
-        return httpx.Response(200, json={"id": 7})
+            return httpx2.Response(429, json={})
+        return httpx2.Response(200, json={"id": 7})
 
     client, requests, sleeps = make_client(handler)
     assert client.request("POST", "tickets/", json={"subject": "x"}) == {"id": 7}
@@ -191,8 +191,8 @@ def test_write_answered_429_is_resent_with_the_same_body():
 def test_get_is_retried_when_the_response_cannot_be_decoded():
     def handler(request):
         if len(requests) == 1:
-            raise httpx.DecodingError("bad gzip", request=request)
-        return httpx.Response(200, json={"ok": True})
+            raise httpx2.DecodingError("bad gzip", request=request)
+        return httpx2.Response(200, json={"ok": True})
 
     client, requests, sleeps = make_client(handler)
     assert client.get("tickets/") == {"ok": True}
@@ -201,7 +201,7 @@ def test_get_is_retried_when_the_response_cannot_be_decoded():
 
 
 def test_lowercase_method_is_classified_like_uppercase():
-    client, requests, _ = make_client(raising(httpx.ReadTimeout), max_retries=2)
+    client, requests, _ = make_client(raising(httpx2.ReadTimeout), max_retries=2)
     with pytest.raises(RequestTimeoutError) as exc:
         client.request("get", "tickets/")
     assert [request.method for request in requests] == ["GET"] * 3
@@ -276,7 +276,7 @@ def test_auth_failure_points_at_auth_login(status):
 
 def test_network_error_message_keeps_the_transport_reason():
     def handler(request):
-        raise httpx.ConnectError("Name or service not known", request=request)
+        raise httpx2.ConnectError("Name or service not known", request=request)
 
     client, _, _ = make_client(handler, max_retries=0)
     with pytest.raises(NetworkError) as exc:
@@ -315,7 +315,7 @@ def test_write_answered_exactly_500_has_unknown_outcome():
 
 
 @pytest.mark.parametrize(
-    "exc_type", [httpx.LocalProtocolError, httpx.WriteError, httpx.DecodingError]
+    "exc_type", [httpx2.LocalProtocolError, httpx2.WriteError, httpx2.DecodingError]
 )
 def test_write_cut_off_mid_exchange_has_unknown_outcome(exc_type):
     client, requests, sleeps = make_client(raising(exc_type))
@@ -329,7 +329,7 @@ def test_write_cut_off_mid_exchange_has_unknown_outcome(exc_type):
     assert payload.get("hint") == OUTCOME_UNKNOWN_HINT
 
 
-@pytest.mark.parametrize("exc_type", [httpx.ConnectTimeout, httpx.PoolTimeout])
+@pytest.mark.parametrize("exc_type", [httpx2.ConnectTimeout, httpx2.PoolTimeout])
 def test_timeout_before_connecting_is_a_timeout_error(exc_type):
     client, _, _ = make_client(raising(exc_type), max_retries=0)
     with pytest.raises(RequestTimeoutError) as exc:
@@ -395,7 +395,7 @@ def test_custom_root_key_is_walked_and_unwrapped():
 def test_null_page_info_falls_back_to_top_level_page_count():
     def handler(request):
         page = int(request.url.params["page"])
-        return httpx.Response(200, json={"page_info": None, "page_count": 2, "data": [page]})
+        return httpx2.Response(200, json={"page_info": None, "page_count": 2, "data": [page]})
 
     client, _, _ = make_client(handler)
     assert list(client.paginate("tickets/")) == [1, 2]

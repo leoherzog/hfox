@@ -7,7 +7,7 @@ a request.
 import json
 import os
 
-import httpx
+import httpx2
 import pytest
 import typer
 
@@ -113,7 +113,7 @@ def test_require_staff_id_raises_validation_when_missing():
 # context.py: paginate wiring
 # ----------------------------------------------------------------------------
 def _install_client(monkeypatch, handler):
-    captured: list[httpx.Request] = []
+    captured: list[httpx2.Request] = []
 
     def wrapped(request):
         captured.append(request)
@@ -123,9 +123,9 @@ def _install_client(monkeypatch, handler):
         from hfox.core.client import HappyFoxClient
 
         client = HappyFoxClient(base_url, api_key, auth_code, sleep=lambda _s: None)
-        client._client = httpx.Client(
-            transport=httpx.MockTransport(wrapped),
-            auth=httpx.BasicAuth(api_key, auth_code),
+        client._client = httpx2.Client(
+            transport=httpx2.MockTransport(wrapped),
+            auth=httpx2.BasicAuth(api_key, auth_code),
         )
         return client
 
@@ -134,8 +134,8 @@ def _install_client(monkeypatch, handler):
 
 
 def _page_handler(request):
-    page = int(httpx.QueryParams(request.url.query).get("page", "1"))
-    return httpx.Response(
+    page = int(httpx2.QueryParams(request.url.query).get("page", "1"))
+    return httpx2.Response(
         200,
         json={
             "page_info": {"page_count": 2, "count": 4},
@@ -165,7 +165,7 @@ def test_paginate_page_all_non_json_returns_flat_list(monkeypatch):
 
 def test_paginate_single_page_returns_envelope(monkeypatch):
     body = {"page_info": {"page_count": 3, "count": 9}, "data": [{"id": 1}]}
-    captured = _install_client(monkeypatch, lambda r: httpx.Response(200, json=body))
+    captured = _install_client(monkeypatch, lambda r: httpx2.Response(200, json=body))
     ctx = make_ctx(page_all=False)
     result = ctx.paginate("tickets/")
     assert result == body
@@ -210,7 +210,7 @@ def test_paginate_filters_require_page_all(capsys, monkeypatch, dry_run):
 
 def test_paginate_blank_filters_behave_as_none(monkeypatch):
     body = {"page_info": {"page_count": 3, "count": 9}, "data": [{"id": 1, "name": "x"}]}
-    _install_client(monkeypatch, lambda r: httpx.Response(200, json=body))
+    _install_client(monkeypatch, lambda r: httpx2.Response(200, json=body))
     ctx = make_ctx(page_all=False)
     assert ctx.paginate("assets/", filters={"name": "  "}) == body
 
@@ -219,13 +219,13 @@ _NAMED_PAGE_INFO = {"page_count": 2, "count": 2}
 
 
 def _named_page_handler(request):
-    page = int(httpx.QueryParams(request.url.query).get("page", "1"))
+    page = int(httpx2.QueryParams(request.url.query).get("page", "1"))
     rows = (
         [{"id": 10, "name": "Laptop"}, {"id": 11, "name": "Phone"}]
         if page == 1
         else [{"id": 20, "name": "Phone"}]
     )
-    return httpx.Response(200, json={"page_info": _NAMED_PAGE_INFO, "data": rows})
+    return httpx2.Response(200, json={"page_info": _NAMED_PAGE_INFO, "data": rows})
 
 
 def test_paginate_page_all_json_filters_each_ndjson_page(capsys, monkeypatch):
@@ -282,7 +282,7 @@ _EMPTY_INFO = {"page_count": 1, "count": 0}
     ],
 )
 def test_paginate_filter_odd_pages_agree_across_formats(capsys, monkeypatch, page, rows):
-    _install_client(monkeypatch, lambda r: httpx.Response(200, json=page))
+    _install_client(monkeypatch, lambda r: httpx2.Response(200, json=page))
     table = make_ctx(page_all=True, page_delay_ms=0, fmt=OutputFormat.TABLE)
     assert table.paginate("assets/", filters={"name": "x"}) == rows
 
@@ -301,7 +301,7 @@ def test_paginate_filter_odd_pages_agree_across_formats(capsys, monkeypatch, pag
 
 
 def test_paginate_filtered_walk_api_error_becomes_ndjson_line(capsys, monkeypatch):
-    _install_client(monkeypatch, lambda r: httpx.Response(500, json={"error": "boom"}))
+    _install_client(monkeypatch, lambda r: httpx2.Response(500, json={"error": "boom"}))
     ctx = make_ctx(page_all=True, page_delay_ms=0)
     with pytest.raises(typer.Exit) as ei:
         ctx.paginate("assets/", filters={"name": "x"})
@@ -315,7 +315,7 @@ def test_paginate_filtered_walk_api_error_becomes_ndjson_line(capsys, monkeypatc
 
 def test_call_executes_request(monkeypatch):
     captured = _install_client(
-        monkeypatch, lambda r: httpx.Response(200, json={"id": 7})
+        monkeypatch, lambda r: httpx2.Response(200, json={"id": 7})
     )
     ctx = make_ctx()
     assert ctx.call("GET", "ticket/7/") == {"id": 7}

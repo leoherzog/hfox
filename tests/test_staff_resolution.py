@@ -2,7 +2,7 @@
 
 import json
 
-import httpx
+import httpx2
 import pytest
 from typer.testing import CliRunner
 
@@ -35,8 +35,8 @@ STAFF = [
 def staff_api(mock_api, rows=STAFF):
     def handler(request):
         if request.url.path.endswith("/staff/"):
-            return httpx.Response(200, json=rows)
-        return httpx.Response(200, json={"ok": True})
+            return httpx2.Response(200, json=rows)
+        return httpx2.Response(200, json={"ok": True})
 
     return mock_api(handler)
 

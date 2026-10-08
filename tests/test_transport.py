@@ -4,7 +4,7 @@ import json
 import subprocess
 import sys
 
-import httpx
+import httpx2
 import pytest
 import typer
 from conftest import subprocess_env
@@ -32,7 +32,7 @@ runner = CliRunner()
 
 def make_client(handler):
     """Return (client, requests, sleeps) backed by a mock transport."""
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
     sleeps: list[float] = []
 
     def wrapped(request):
@@ -40,18 +40,18 @@ def make_client(handler):
         return handler(request)
 
     client = HappyFoxClient(BASE, "k", "c", sleep=sleeps.append)
-    client._client = httpx.Client(transport=httpx.MockTransport(wrapped))
+    client._client = httpx2.Client(transport=httpx2.MockTransport(wrapped))
     return client, requests, sleeps
 
 
 def ok(_request):
-    return httpx.Response(200, json={"ok": True})
+    return httpx2.Response(200, json={"ok": True})
 
 
 def pages(count):
     def handler(request):
         page = int(request.url.params["page"])
-        return httpx.Response(200, json={"page_info": {"page_count": count}, "data": [page]})
+        return httpx2.Response(200, json={"page_info": {"page_count": count}, "data": [page]})
 
     return handler
 
@@ -100,10 +100,10 @@ def raising(exc_type, then=ok, times=1):
 @pytest.mark.parametrize(
     ("exc_type", "error_type", "message"),
     [
-        (httpx.ReadTimeout, RequestTimeoutError, r"timed out \(ReadTimeout\)"),
-        (httpx.WriteTimeout, RequestTimeoutError, r"timed out \(WriteTimeout\)"),
-        (httpx.RemoteProtocolError, NetworkError, "Network error"),
-        (httpx.ReadError, NetworkError, "Network error"),
+        (httpx2.ReadTimeout, RequestTimeoutError, r"timed out \(ReadTimeout\)"),
+        (httpx2.WriteTimeout, RequestTimeoutError, r"timed out \(WriteTimeout\)"),
+        (httpx2.RemoteProtocolError, NetworkError, "Network error"),
+        (httpx2.ReadError, NetworkError, "Network error"),
     ],
 )
 def test_write_not_replayed_after_ambiguous_error(exc_type, error_type, message):
@@ -121,11 +121,11 @@ def test_write_not_replayed_after_ambiguous_error(exc_type, error_type, message)
 @pytest.mark.parametrize(
     ("exc_type", "attempts"),
     [
-        (httpx.ConnectError, 6),
-        (httpx.ConnectTimeout, 6),
-        (httpx.PoolTimeout, 6),
-        (httpx.ProxyError, 1),
-        (httpx.UnsupportedProtocol, 1),
+        (httpx2.ConnectError, 6),
+        (httpx2.ConnectTimeout, 6),
+        (httpx2.PoolTimeout, 6),
+        (httpx2.ProxyError, 1),
+        (httpx2.UnsupportedProtocol, 1),
     ],
 )
 def test_write_that_never_left_has_known_outcome(exc_type, attempts):
@@ -138,7 +138,7 @@ def test_write_that_never_left_has_known_outcome(exc_type, attempts):
     assert "outcome_unknown" not in exc.value.to_dict()
 
 
-@pytest.mark.parametrize("exc_type", [httpx.ReadTimeout, httpx.RemoteProtocolError])
+@pytest.mark.parametrize("exc_type", [httpx2.ReadTimeout, httpx2.RemoteProtocolError])
 def test_get_exhausting_retries_has_known_outcome(exc_type):
     client, requests, sleeps = make_client(raising(exc_type, times=99))
     with pytest.raises(NetworkError) as exc:
@@ -150,7 +150,9 @@ def test_get_exhausting_retries_has_known_outcome(exc_type):
     assert exc.value.detail == exc_type.__name__
 
 
-@pytest.mark.parametrize("exc_type", [httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout])
+@pytest.mark.parametrize(
+    "exc_type", [httpx2.ConnectError, httpx2.ConnectTimeout, httpx2.PoolTimeout]
+)
 def test_write_retried_when_connection_never_made(exc_type):
     client, requests, _ = make_client(raising(exc_type))
     assert client.request("POST", "tickets/", json={}) == {"ok": True}
@@ -158,7 +160,7 @@ def test_write_retried_when_connection_never_made(exc_type):
 
 
 def test_get_retried_after_read_timeout():
-    client, requests, _ = make_client(raising(httpx.ReadTimeout))
+    client, requests, _ = make_client(raising(httpx2.ReadTimeout))
     assert client.get("tickets/") == {"ok": True}
     assert len(requests) == 2
 
@@ -170,8 +172,8 @@ def test_invalid_retry_after_falls_back_to_backoff(header):
     def handler(request):
         state["n"] += 1
         if state["n"] == 1:
-            return httpx.Response(429, headers={"Retry-After": header}, json={})
-        return httpx.Response(200, json={"ok": True})
+            return httpx2.Response(429, headers={"Retry-After": header}, json={})
+        return httpx2.Response(200, json={"ok": True})
 
     client, _, sleeps = make_client(handler)
     assert client.get("tickets/") == {"ok": True}
@@ -317,7 +319,7 @@ def test_saved_base_url_error_names_its_file(tmp_path, monkeypatch, filename, te
 def test_status_reports_malformed_staff_id(tmp_path, monkeypatch, mock_api):
     monkeypatch.setenv("HFOX_CONFIG_DIR", str(tmp_path))
     (tmp_path / "config.toml").write_text("default_staff_id = 1.5\n")
-    mock_api(lambda r: httpx.Response(200, json=[]))
+    mock_api(lambda r: httpx2.Response(200, json=[]))
     result = runner.invoke(cli, ["auth", "status"], env=ENV | {"HFOX_STAFF_ID": ""})
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
@@ -331,8 +333,8 @@ def test_login_persists_normalized_base_url(monkeypatch, tmp_path):
     def factory(base_url, api_key, auth_code, **kwargs):
         seen["base_url"] = base_url
         client = HappyFoxClient(base_url, api_key, auth_code, sleep=lambda _s: None)
-        client._client = httpx.Client(
-            transport=httpx.MockTransport(lambda r: httpx.Response(200, json=[]))
+        client._client = httpx2.Client(
+            transport=httpx2.MockTransport(lambda r: httpx2.Response(200, json=[]))
         )
         return client
 
@@ -362,8 +364,8 @@ def make_ctx(monkeypatch, handler, **kw):
 def test_ndjson_error_is_one_compact_line(monkeypatch, capsys):
     def handler(request):
         if request.url.params["page"] == "2":
-            return httpx.Response(500, json={"error": "boom"})
-        return httpx.Response(200, json={"page_info": {"page_count": 3}, "data": [1]})
+            return httpx2.Response(500, json={"error": "boom"})
+        return httpx2.Response(200, json={"page_info": {"page_count": 3}, "data": [1]})
 
     ctx = make_ctx(monkeypatch, handler, page_all=True)
     with pytest.raises(typer.Exit) as exc:
@@ -472,7 +474,7 @@ def test_app_propagates_typer_exit_code_from_streaming_error(monkeypatch, capsys
     monkeypatch.setattr(
         context_mod,
         "HappyFoxClient",
-        lambda *a, **k: make_client(lambda r: httpx.Response(503, json={}))[0],
+        lambda *a, **k: make_client(lambda r: httpx2.Response(503, json={}))[0],
     )
     monkeypatch.setattr(sys, "argv", ["hfox", "--page-all", "tickets", "list"])
     with pytest.raises(SystemExit) as exc:

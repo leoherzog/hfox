@@ -5,7 +5,7 @@ and the cleartext warning.
 import json
 import sys
 
-import httpx
+import httpx2
 import pytest
 import typer
 from typer.testing import CliRunner
@@ -66,8 +66,8 @@ def client_kwargs(monkeypatch):
     def factory(base_url, api_key, auth_code, **kwargs):
         seen.append(kwargs)
         client = HappyFoxClient(base_url, api_key, auth_code, sleep=lambda _s: None)
-        client._client = httpx.Client(
-            transport=httpx.MockTransport(lambda r: httpx.Response(200, json=[]))
+        client._client = httpx2.Client(
+            transport=httpx2.MockTransport(lambda r: httpx2.Response(200, json=[]))
         )
         return client
 
@@ -90,7 +90,7 @@ def test_list_q_still_means_query():
 
 
 def test_quiet_and_query_combine(mock_api):
-    captured = mock_api(lambda req: httpx.Response(200, json={"data": []}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={"data": []}))
     result = run("--quiet", "tickets", "list", "-q", "x")
     assert result.exit_code == 0, result.output
     assert captured[0].url.params["q"] == "x"
@@ -122,7 +122,7 @@ def test_quiet_and_query_combine(mock_api):
     ],
 )
 def test_misplaced_global_flag_exits_3_with_placement_message(run_app, mock_api, argv, name):
-    captured = mock_api(lambda req: httpx.Response(200, json={}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={}))
     code, payload, err = run_app(*argv)
     assert code == 3
     assert payload == {
@@ -136,7 +136,7 @@ def test_misplaced_global_flag_exits_3_with_placement_message(run_app, mock_api,
 
 
 def test_global_flag_swallowed_as_an_option_value_sends_nothing(run_app, mock_api):
-    captured = mock_api(lambda req: httpx.Response(200, json={}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={}))
     code, payload, _ = run_app("tickets", "note", "5", "--text", "--dry-run")
     assert code == 3
     assert (payload["type"], payload["error"]) == ("usage", placement("--dry-run"))
@@ -171,7 +171,7 @@ SWALLOWED = [
 
 @pytest.mark.parametrize("root", SWALLOWED, ids=" ".join)
 def test_root_option_cannot_swallow_a_flag(run_app, mock_api, root):
-    captured = mock_api(lambda req: httpx.Response(200, json={}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={}))
     code, payload, err = run_app(*root, "tickets", "delete", "5", "--staff-id", "1", "--yes")
     name = root[-2] if root[0] == "--dry-run" else root[0].partition("=")[0]
     value = "--quiet" if root[0] == "--dry-run" else root[0].partition("=")[2] or root[1]
@@ -475,7 +475,7 @@ def test_blank_format_flag_falls_back_to_json(run_app, flag):
 
 @blank_format
 def test_blank_format_flag_falls_through_to_the_environment(mock_api, flag):
-    mock_api(lambda req: httpx.Response(200, json=[{"id": 1, "name": "Open"}]))
+    mock_api(lambda req: httpx2.Response(200, json=[{"id": 1, "name": "Open"}]))
     result = run(*flag, "system", "statuses", env_extra={"HFOX_FORMAT": "csv"})
     assert result.exit_code == 0, result.output
     assert result.stdout.splitlines() == ["id,name", "1,Open"]
@@ -486,7 +486,7 @@ def test_blank_format_flag_falls_through_to_the_config_file(mock_api, tmp_path, 
     cfg = tmp_path / "cfg"
     cfg.mkdir()
     (cfg / "config.toml").write_text('default_format = "csv"\n', encoding="utf-8")
-    mock_api(lambda req: httpx.Response(200, json=[{"id": 1, "name": "Open"}]))
+    mock_api(lambda req: httpx2.Response(200, json=[{"id": 1, "name": "Open"}]))
     result = run(*flag, "system", "statuses")
     assert result.exit_code == 0, result.output
     assert result.stdout.splitlines() == ["id,name", "1,Open"]
@@ -600,7 +600,7 @@ def test_empty_env_values_count_as_unset(client_kwargs):
 
 
 def test_max_retries_zero_sends_one_attempt(mock_api):
-    captured = mock_api(lambda req: httpx.Response(429, json={}))
+    captured = mock_api(lambda req: httpx2.Response(429, json={}))
     result = run("--max-retries", "0", "system", "statuses")
     assert result.exception.to_dict()["type"] == "rate_limited"
     assert len(captured) == 1
@@ -614,8 +614,8 @@ def _flaky(failures):
     def handler(request):
         state["n"] += 1
         if state["n"] <= failures:
-            return httpx.Response(429, headers={"Retry-After": "2"}, json={})
-        return httpx.Response(200, json=[{"id": 1}])
+            return httpx2.Response(429, headers={"Retry-After": "2"}, json={})
+        return httpx2.Response(200, json=[{"id": 1}])
 
     return handler
 
@@ -644,8 +644,8 @@ def test_retry_notice_names_a_network_error(mock_api):
     def handler(request):
         state["n"] += 1
         if state["n"] == 1:
-            raise httpx.ReadTimeout("slow", request=request)
-        return httpx.Response(200, json=[])
+            raise httpx2.ReadTimeout("slow", request=request)
+        return httpx2.Response(200, json=[])
 
     mock_api(handler)
     result = run("system", "statuses")
@@ -670,7 +670,7 @@ WARNING = "Sending credentials in cleartext to http://gw.example.com; use https.
 
 @pytest.mark.parametrize("quiet", [(), ("--quiet",)])
 def test_cleartext_warning_for_a_remote_http_base_url(mock_api, quiet):
-    captured = mock_api(lambda req: httpx.Response(200, json=[]))
+    captured = mock_api(lambda req: httpx2.Response(200, json=[]))
     result = run(
         *quiet, "system", "statuses", env_extra={"HFOX_BASE_URL": "http://GW.example.com:8080"}
     )
@@ -684,14 +684,14 @@ def test_cleartext_warning_for_a_remote_http_base_url(mock_api, quiet):
     ["http://localhost:8080", "http://127.0.0.1:9", "http://[::1]:9", "https://gw.example.com"],
 )
 def test_no_cleartext_warning_for_loopback_or_https(mock_api, base_url):
-    mock_api(lambda req: httpx.Response(200, json=[]))
+    mock_api(lambda req: httpx2.Response(200, json=[]))
     result = run("system", "statuses", env_extra={"HFOX_BASE_URL": base_url})
     assert result.exit_code == 0, result.output
     assert "cleartext" not in result.stderr
 
 
 def test_cleartext_warning_printed_once_per_invocation(mock_api, capsys):
-    mock_api(lambda req: httpx.Response(200, json=[]))
+    mock_api(lambda req: httpx2.Response(200, json=[]))
     ctx = AppContext(config=Config(subdomain="acme", api_key="k", auth_code="c"))
     ctx.make_client("http://gw.example.com/api/1.1/json", "k", "c").close()
     ctx.make_client("http://gw.example.com/api/1.1/json", "k", "c").close()

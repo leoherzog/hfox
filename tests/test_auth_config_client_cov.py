@@ -1,14 +1,14 @@
 """Tests for auth.py, config.py and client.py.
 
 CLI paths use CliRunner with `hfox.cli.context.HappyFoxClient` patched to an
-httpx.MockTransport; core units are exercised directly.
+httpx2.MockTransport; core units are exercised directly.
 """
 
 import json
 import stat
 import sys
 
-import httpx
+import httpx2
 import pytest
 from typer.testing import CliRunner
 
@@ -46,9 +46,9 @@ def _patch_staff_client(monkeypatch, *, response_factory):
 
     def factory(base_url, api_key, auth_code, **kwargs):
         client = HappyFoxClient(base_url, api_key, auth_code, sleep=lambda _s: None)
-        client._client = httpx.Client(
-            transport=httpx.MockTransport(response_factory),
-            auth=httpx.BasicAuth(api_key, auth_code),
+        client._client = httpx2.Client(
+            transport=httpx2.MockTransport(response_factory),
+            auth=httpx2.BasicAuth(api_key, auth_code),
         )
         return client
 
@@ -71,9 +71,9 @@ def make_client(handler) -> HappyFoxClient:
     client = HappyFoxClient(
         "https://acme.happyfox.com/api/1.1/json", "key", "code", sleep=lambda _s: None
     )
-    client._client = httpx.Client(
-        transport=httpx.MockTransport(handler),
-        auth=httpx.BasicAuth("key", "code"),
+    client._client = httpx2.Client(
+        transport=httpx2.MockTransport(handler),
+        auth=httpx2.BasicAuth("key", "code"),
     )
     return client
 
@@ -160,7 +160,7 @@ def test_resolve_staff_id_accepts_whole_numbers(raw, expected):
 # =========================================================================
 def test_login_invalid_region_rejected(monkeypatch, tmp_path):
     _patch_staff_client(
-        monkeypatch, response_factory=lambda r: httpx.Response(200, json=[])
+        monkeypatch, response_factory=lambda r: httpx2.Response(200, json=[])
     )
     result = runner.invoke(
         cli,
@@ -174,7 +174,7 @@ def test_login_invalid_region_rejected(monkeypatch, tmp_path):
 def test_login_region_prompt_default_us(monkeypatch, tmp_path, tty):
     _patch_staff_client(
         monkeypatch,
-        response_factory=lambda r: httpx.Response(200, json=[{"id": 1, "email": "a@x.org"}]),
+        response_factory=lambda r: httpx2.Response(200, json=[{"id": 1, "email": "a@x.org"}]),
     )
     cfg_dir = tmp_path / "hfox"
     result = runner.invoke(
@@ -192,7 +192,7 @@ def test_login_region_prompt_default_us(monkeypatch, tmp_path, tty):
 
 def test_login_no_region_without_tty_defaults_to_us(monkeypatch, tmp_path):
     _patch_staff_client(
-        monkeypatch, response_factory=lambda r: httpx.Response(200, json=[])
+        monkeypatch, response_factory=lambda r: httpx2.Response(200, json=[])
     )
     cfg_dir = tmp_path / "hfox"
     result = runner.invoke(
@@ -221,7 +221,7 @@ def test_login_missing_secret_without_tty_builds_no_client(monkeypatch, tmp_path
 def test_login_validation_failure_maps_to_auth_error(monkeypatch, tmp_path):
     _patch_staff_client(
         monkeypatch,
-        response_factory=lambda r: httpx.Response(401, text="nope"),
+        response_factory=lambda r: httpx2.Response(401, text="nope"),
     )
     result = runner.invoke(
         cli,
@@ -237,9 +237,9 @@ def test_login_validation_failure_maps_to_auth_error(monkeypatch, tmp_path):
 @pytest.mark.parametrize(
     ("response", "error_type", "slug", "exit_code"),
     [
-        (httpx.Response(404, text="missing"), NotFoundError, "not_found", 4),
-        (httpx.Response(500, json={"error": "boom"}), APIError, "api", 1),
-        (httpx.Response(429, json={}), RateLimitError, "rate_limited", 1),
+        (httpx2.Response(404, text="missing"), NotFoundError, "not_found", 4),
+        (httpx2.Response(500, json={"error": "boom"}), APIError, "api", 1),
+        (httpx2.Response(429, json={}), RateLimitError, "rate_limited", 1),
     ],
 )
 def test_login_other_probe_errors_are_not_wrapped(
@@ -261,7 +261,7 @@ def test_login_other_probe_errors_are_not_wrapped(
 
 def test_login_transport_error_is_network_error(monkeypatch, tmp_path):
     def handler(request):
-        raise httpx.ConnectError("boom", request=request)
+        raise httpx2.ConnectError("boom", request=request)
 
     _patch_staff_client(monkeypatch, response_factory=handler)
     result = runner.invoke(
@@ -277,7 +277,7 @@ def test_login_transport_error_is_network_error(monkeypatch, tmp_path):
 def test_login_non_list_staff_response_rejected(monkeypatch, tmp_path):
     _patch_staff_client(
         monkeypatch,
-        response_factory=lambda r: httpx.Response(200, json={"unexpected": True}),
+        response_factory=lambda r: httpx2.Response(200, json={"unexpected": True}),
     )
     cfg_dir = tmp_path / "hfox"
     result = runner.invoke(
@@ -296,7 +296,7 @@ def test_login_non_list_staff_response_rejected(monkeypatch, tmp_path):
 def test_login_non_numeric_staff_id_warns_and_skips_default(monkeypatch, tmp_path):
     _patch_staff_client(
         monkeypatch,
-        response_factory=lambda r: httpx.Response(
+        response_factory=lambda r: httpx2.Response(
             200, json=[{"id": "not-a-number", "email": "a@x.org"}]
         ),
     )
@@ -315,7 +315,7 @@ def test_login_non_numeric_staff_id_warns_and_skips_default(monkeypatch, tmp_pat
 def test_login_email_no_match_warns(monkeypatch, tmp_path):
     _patch_staff_client(
         monkeypatch,
-        response_factory=lambda r: httpx.Response(
+        response_factory=lambda r: httpx2.Response(
             200, json=[{"id": 1, "email": "someone@x.org"}]
         ),
     )
@@ -336,11 +336,11 @@ def test_login_persists_base_url_override(monkeypatch, tmp_path):
     def factory(base_url, api_key, auth_code, **kwargs):
         captured["base_url"] = base_url
         client = HappyFoxClient(base_url, api_key, auth_code, sleep=lambda _s: None)
-        client._client = httpx.Client(
-            transport=httpx.MockTransport(
-                lambda r: httpx.Response(200, json=[{"id": 3, "email": "a@x.org"}])
+        client._client = httpx2.Client(
+            transport=httpx2.MockTransport(
+                lambda r: httpx2.Response(200, json=[{"id": 3, "email": "a@x.org"}])
             ),
-            auth=httpx.BasicAuth(api_key, auth_code),
+            auth=httpx2.BasicAuth(api_key, auth_code),
         )
         return client
 
@@ -579,7 +579,7 @@ def test_save_settings_control_char_rejected(tmp_path):
 # client.py: context manager
 # =========================================================================
 def test_client_context_manager_closes():
-    client = make_client(lambda r: httpx.Response(200, json={"ok": True}))
+    client = make_client(lambda r: httpx2.Response(200, json={"ok": True}))
     closed = {"n": 0}
     orig = client._client.close
     client._client.close = lambda: (closed.__setitem__("n", closed["n"] + 1), orig())[1]
@@ -604,13 +604,13 @@ def test_non_numeric_retry_after_falls_back_to_backoff():
         calls["n"] += 1
         if calls["n"] == 1:
             # An HTTP-date Retry-After is not numeric.
-            return httpx.Response(
+            return httpx2.Response(
                 429, headers={"Retry-After": "Wed, 21 Oct 2025 07:28:00 GMT"}, json={}
             )
-        return httpx.Response(200, json={"ok": True})
+        return httpx2.Response(200, json={"ok": True})
 
-    client._client = httpx.Client(
-        transport=httpx.MockTransport(handler), auth=httpx.BasicAuth("key", "code")
+    client._client = httpx2.Client(
+        transport=httpx2.MockTransport(handler), auth=httpx2.BasicAuth("key", "code")
     )
     assert client.get("tickets/") == {"ok": True}
     # Backoff for attempt 0: min(1*2^0, 60) + jitter[0] = 1 + 0.13.
@@ -621,13 +621,13 @@ def test_non_numeric_retry_after_falls_back_to_backoff():
 # client.py: success body shapes
 # =========================================================================
 def test_empty_success_body_returns_none():
-    client = make_client(lambda r: httpx.Response(204))
+    client = make_client(lambda r: httpx2.Response(204))
     assert client.get("tickets/1/") is None
 
 
 def test_non_json_success_body_returns_text():
     client = make_client(
-        lambda r: httpx.Response(200, text="plain text", headers={"content-type": "text/plain"})
+        lambda r: httpx2.Response(200, text="plain text", headers={"content-type": "text/plain"})
     )
     assert client.get("export/") == "plain text"
 
@@ -636,7 +636,7 @@ def test_non_json_success_body_returns_text():
 # client.py: error mapping for other status codes
 # =========================================================================
 def test_500_maps_to_api_error():
-    client = make_client(lambda r: httpx.Response(500, json={"error": "boom"}))
+    client = make_client(lambda r: httpx2.Response(500, json={"error": "boom"}))
     with pytest.raises(APIError) as exc:
         client.get("tickets/")
     assert exc.value.status_code == 500
@@ -644,13 +644,13 @@ def test_500_maps_to_api_error():
 
 
 def test_403_maps_to_auth_error():
-    client = make_client(lambda r: httpx.Response(403, json={"error": "forbidden"}))
+    client = make_client(lambda r: httpx2.Response(403, json={"error": "forbidden"}))
     with pytest.raises(AuthError):
         client.get("tickets/")
 
 
 def test_404_maps_to_not_found():
-    client = make_client(lambda r: httpx.Response(404, text="missing"))
+    client = make_client(lambda r: httpx2.Response(404, text="missing"))
     with pytest.raises(NotFoundError):
         client.get("ticket/1/")
 
@@ -660,20 +660,20 @@ def test_404_maps_to_not_found():
 # =========================================================================
 def test_paginate_non_list_records_wrapped_as_single():
     client = make_client(
-        lambda r: httpx.Response(200, json={"data": {"id": 1}, "page_info": {}})
+        lambda r: httpx2.Response(200, json={"data": {"id": 1}, "page_info": {}})
     )
     records = list(client.paginate("tickets/", page_limit=1))
     assert records == [{"id": 1}]
 
 
 def test_paginate_scalar_body_yields_nothing():
-    client = make_client(lambda r: httpx.Response(200, json=42))
+    client = make_client(lambda r: httpx2.Response(200, json=42))
     records = list(client.paginate("weird/", page_limit=1))
     assert records == []
 
 
 def test_extract_error_dict_without_error_key_returns_whole_body():
-    client = make_client(lambda r: httpx.Response(500, json={"message": "oops", "code": 9}))
+    client = make_client(lambda r: httpx2.Response(500, json={"message": "oops", "code": 9}))
     with pytest.raises(APIError) as exc:
         client.get("tickets/")
     assert exc.value.detail == {"message": "oops", "code": 9}
@@ -682,7 +682,7 @@ def test_extract_error_dict_without_error_key_returns_whole_body():
 def test_extract_error_non_json_returns_truncated_text():
     long = "x" * 1000
     client = make_client(
-        lambda r: httpx.Response(500, text=long, headers={"content-type": "text/plain"})
+        lambda r: httpx2.Response(500, text=long, headers={"content-type": "text/plain"})
     )
     with pytest.raises(APIError) as exc:
         client.get("tickets/")

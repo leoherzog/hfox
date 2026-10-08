@@ -10,7 +10,7 @@ import json
 import re
 import sys
 
-import httpx
+import httpx2
 import pytest
 import typer
 import yaml
@@ -58,12 +58,12 @@ def dry_run_preview(capsys, **call_kwargs):
 
 
 def install_client(monkeypatch, handler, *, sleeps=None, built=None):
-    """Patch the client factory; record its sleeps and the httpx clients it builds."""
+    """Patch the client factory; record its sleeps and the httpx2 clients it builds."""
 
     def factory(base_url, api_key, auth_code, **kwargs):
         sleep = (lambda _s: None) if sleeps is None else sleeps.append
         client = HappyFoxClient(base_url, api_key, auth_code, sleep=sleep)
-        client._client = httpx.Client(transport=httpx.MockTransport(handler))
+        client._client = httpx2.Client(transport=httpx2.MockTransport(handler))
         if built is not None:
             built.append(client._client)
         return client
@@ -76,7 +76,7 @@ def paged(key, pages):
 
     def handler(request):
         page = int(request.url.params.get("page", "1"))
-        return httpx.Response(
+        return httpx2.Response(
             200, json={"page_info": {"page_count": len(pages)}, key: pages[page - 1]}
         )
 
@@ -89,7 +89,7 @@ def ndjson(text):
 
 def serve(body):
     """Return a 200 response holding `body` as JSON; None is a response without a body."""
-    return httpx.Response(200) if body is None else httpx.Response(200, json=body)
+    return httpx2.Response(200) if body is None else httpx2.Response(200, json=body)
 
 
 # -- dry-run preview ----------------------------------------------------------
@@ -148,7 +148,7 @@ def test_dry_run_lists_every_attachment_in_order(tmp_path):
     ],
     ids=["mapping", "part-without-filename"],
 )
-def test_dry_run_summarizes_the_other_files_shapes_httpx_takes(capsys, files, fields):
+def test_dry_run_summarizes_the_other_files_shapes_httpx2_takes(capsys, files, fields):
     preview = dry_run_preview(capsys, files=files)
     assert preview["attachments"] == {"count": 1, "fields": fields}
 
@@ -157,7 +157,7 @@ def test_dry_run_summarizes_the_other_files_shapes_httpx_takes(capsys, files, fi
 def test_reply_with_attachment_sends_the_form_fields_beside_the_file(mock_api, tmp_path):
     f = tmp_path / "log.txt"
     f.write_bytes(b"hello")
-    captured = mock_api(lambda req: httpx.Response(200, json={"id": 5}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={"id": 5}))
     result = run("tickets", "reply", "5", "--text", "see attached", "--attachment", str(f))
     assert result.exit_code == 0, result.output
     (request,) = captured
@@ -185,8 +185,8 @@ def test_reply_with_attachment_sends_the_form_fields_beside_the_file(mock_api, t
 def test_command_leaves_no_http_client_open(monkeypatch):
     def handler(request):
         if request.url.path.endswith("/staff/"):
-            return httpx.Response(200, json=STAFF)
-        return httpx.Response(200, json={"id": 5})
+            return httpx2.Response(200, json=STAFF)
+        return httpx2.Response(200, json={"id": 5})
 
     built = []
     install_client(monkeypatch, handler, built=built)
@@ -196,7 +196,7 @@ def test_command_leaves_no_http_client_open(monkeypatch):
 
 
 def test_requests_authenticate_with_the_key_as_user_and_the_code_as_password(mock_api):
-    captured = mock_api(lambda req: httpx.Response(200, json=[]))
+    captured = mock_api(lambda req: httpx2.Response(200, json=[]))
     env = {**ENV, "HFOX_API_KEY": "the-key", "HFOX_AUTH_CODE": "the-code"}
     result = runner.invoke(cli, ["system", "statuses"], env=env)
     assert result.exit_code == 0, result.output
@@ -206,7 +206,7 @@ def test_requests_authenticate_with_the_key_as_user_and_the_code_as_password(moc
 
 # -- staff resolution and prompts ---------------------------------------------
 def test_global_staff_id_wins_over_global_staff_without_a_lookup(mock_api):
-    captured = mock_api(lambda req: httpx.Response(200, json=STAFF))
+    captured = mock_api(lambda req: httpx2.Response(200, json=STAFF))
     ctx = make_ctx(staff_id_override=9, staff_override="Bob Jones")
     assert ctx.resolve_staff_id() == 9
     assert ctx.require_staff_id() == 9
@@ -261,7 +261,7 @@ def test_prompt_shows_its_text_without_control_characters(
 
 # -- page walks ---------------------------------------------------------------
 def test_filter_error_names_each_active_filter_as_its_flag(mock_api):
-    captured = mock_api(lambda req: httpx.Response(200, json=[]))
+    captured = mock_api(lambda req: httpx2.Response(200, json=[]))
     filters = {"display_name": "x", "name": "  ", "email": "y", "serial": None}
     with pytest.raises(ValidationError) as exc:
         make_ctx().paginate("assets/", filters=filters)
@@ -412,8 +412,8 @@ def test_ndjson_error_line_exits_with_the_code_of_its_error(
 ):
     def handler(request):
         if request.url.params["page"] == "2":
-            return httpx.Response(status, json={"error": "nope"})
-        return httpx.Response(200, json={"page_info": {"page_count": 2}, "data": [{"id": 1}]})
+            return httpx2.Response(status, json={"error": "nope"})
+        return httpx2.Response(200, json={"page_info": {"page_count": 2}, "data": [{"id": 1}]})
 
     mock_api(handler)
     with pytest.raises(typer.Exit) as exc:
@@ -428,7 +428,7 @@ def test_unexpected_exception_mid_walk_is_an_internal_ndjson_line(mock_api, caps
     def handler(request):
         if request.url.params["page"] == "2":
             raise RuntimeError("boom")
-        return httpx.Response(200, json={"page_info": {"page_count": 2}, "data": [{"id": 1}]})
+        return httpx2.Response(200, json={"page_info": {"page_count": 2}, "data": [{"id": 1}]})
 
     mock_api(handler)
     with pytest.raises(typer.Exit) as exc:

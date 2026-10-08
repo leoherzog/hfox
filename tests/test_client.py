@@ -1,4 +1,4 @@
-import httpx
+import httpx2
 import pytest
 
 from hfox import __version__
@@ -26,9 +26,9 @@ def make_client(handler) -> HappyFoxClient:
     client = HappyFoxClient(
         "https://acme.happyfox.com/api/1.1/json", "key", "code", sleep=lambda _s: None
     )
-    client._client = httpx.Client(
-        transport=httpx.MockTransport(handler),
-        auth=httpx.BasicAuth("key", "code"),
+    client._client = httpx2.Client(
+        transport=httpx2.MockTransport(handler),
+        auth=httpx2.BasicAuth("key", "code"),
     )
     return client
 
@@ -36,18 +36,18 @@ def make_client(handler) -> HappyFoxClient:
 def test_basic_auth_header_is_sent():
     seen = {}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         seen["auth"] = request.headers.get("authorization", "")
-        return httpx.Response(200, json={"ok": True})
+        return httpx2.Response(200, json={"ok": True})
 
     make_client(handler).get("staff/")
     assert seen["auth"].startswith("Basic ")
 
 
 def test_pagination_walks_pages():
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         page = int(request.url.params.get("page", "1"))
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={
                 "page_info": {"page_count": 3},
@@ -60,8 +60,8 @@ def test_pagination_walks_pages():
 
 
 def test_pagination_respects_page_limit():
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"page_info": {"page_count": 99}, "data": [{"x": 1}]})
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json={"page_info": {"page_count": 99}, "data": [{"x": 1}]})
 
     records = list(make_client(handler).paginate("tickets/", page_limit=2))
     assert len(records) == 2
@@ -70,11 +70,11 @@ def test_pagination_respects_page_limit():
 def test_429_is_retried_then_succeeds():
     calls = {"n": 0}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         calls["n"] += 1
         if calls["n"] < 3:
-            return httpx.Response(429, json={"error": "slow down"})
-        return httpx.Response(200, json={"done": True})
+            return httpx2.Response(429, json={"error": "slow down"})
+        return httpx2.Response(200, json={"done": True})
 
     assert make_client(handler).get("tickets/") == {"done": True}
     assert calls["n"] == 3
@@ -82,7 +82,7 @@ def test_429_is_retried_then_succeeds():
 
 def test_404_maps_to_not_found():
     def handler(request):
-        return httpx.Response(404, json={"error": "nope"})
+        return httpx2.Response(404, json={"error": "nope"})
 
     with pytest.raises(NotFoundError):
         make_client(handler).get("ticket/999/")
@@ -90,7 +90,7 @@ def test_404_maps_to_not_found():
 
 def test_401_maps_to_auth_error():
     def handler(request):
-        return httpx.Response(401, text="unauthorized")
+        return httpx2.Response(401, text="unauthorized")
 
     with pytest.raises(AuthError):
         make_client(handler).get("staff/")
@@ -99,10 +99,10 @@ def test_401_maps_to_auth_error():
 def test_bool_params_lowercased():
     seen = {}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         seen["minify"] = request.url.params.get("minify_response")
         seen["has_skip"] = "skip" in request.url.params
-        return httpx.Response(200, json=[])
+        return httpx2.Response(200, json=[])
 
     make_client(handler).get("tickets/", params={"minify_response": True, "skip": None})
     assert seen["minify"] == "true"
@@ -119,7 +119,7 @@ def make_client_recording_sleep(handler, **kwargs):
         **kwargs,
     )
     # Swap only the transport so the client keeps its own headers and timeout.
-    client._client._transport = httpx.MockTransport(handler)
+    client._client._transport = httpx2.MockTransport(handler)
     return client, slept
 
 
@@ -127,11 +127,11 @@ def make_client_recording_sleep(handler, **kwargs):
 def test_transient_network_error_retried_then_succeeds():
     calls = {"n": 0}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         calls["n"] += 1
         if calls["n"] < 3:
-            raise httpx.ConnectError("boom", request=request)
-        return httpx.Response(200, json={"done": True})
+            raise httpx2.ConnectError("boom", request=request)
+        return httpx2.Response(200, json={"done": True})
 
     client, slept = make_client_recording_sleep(handler)
     assert client.get("tickets/") == {"done": True}
@@ -140,8 +140,8 @@ def test_transient_network_error_retried_then_succeeds():
 
 
 def test_persistent_network_error_raised_as_hfox_error():
-    def handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("boom", request=request)
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ConnectError("boom", request=request)
 
     client, _ = make_client_recording_sleep(handler)
     with pytest.raises(HfoxError) as exc:
@@ -154,12 +154,12 @@ def test_persistent_network_error_raised_as_hfox_error():
 def test_retry_after_full_cooldown_passed_through():
     calls = {"n": 0}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         calls["n"] += 1
         if calls["n"] == 1:
             # HappyFox's documented 10-minute cooldown must survive unclamped.
-            return httpx.Response(429, headers={"Retry-After": "600"}, json={})
-        return httpx.Response(200, json={"ok": True})
+            return httpx2.Response(429, headers={"Retry-After": "600"}, json={})
+        return httpx2.Response(200, json={"ok": True})
 
     client, slept = make_client_recording_sleep(handler)
     assert client.get("tickets/") == {"ok": True}
@@ -169,11 +169,11 @@ def test_retry_after_full_cooldown_passed_through():
 def test_numeric_retry_after_header_drives_clamped_sleep():
     calls = {"n": 0}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         calls["n"] += 1
         if calls["n"] == 1:
-            return httpx.Response(429, headers={"Retry-After": "99999"}, json={})
-        return httpx.Response(200, json={"ok": True})
+            return httpx2.Response(429, headers={"Retry-After": "99999"}, json={})
+        return httpx2.Response(200, json={"ok": True})
 
     client, slept = make_client_recording_sleep(handler)
     assert client.get("tickets/") == {"ok": True}
@@ -183,11 +183,11 @@ def test_numeric_retry_after_header_drives_clamped_sleep():
 def test_retry_after_fractional_seconds_passed_through():
     calls = {"n": 0}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         calls["n"] += 1
         if calls["n"] == 1:
-            return httpx.Response(429, headers={"Retry-After": "2.5"}, json={})
-        return httpx.Response(200, json={"ok": True})
+            return httpx2.Response(429, headers={"Retry-After": "2.5"}, json={})
+        return httpx2.Response(200, json={"ok": True})
 
     client, slept = make_client_recording_sleep(handler)
     assert client.get("tickets/") == {"ok": True}
@@ -197,9 +197,9 @@ def test_retry_after_fractional_seconds_passed_through():
 def test_always_429_exhausts_retries_and_raises_api_error():
     calls = {"n": 0}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         calls["n"] += 1
-        return httpx.Response(429, json={"error": "slow down"})
+        return httpx2.Response(429, json={"error": "slow down"})
 
     client, slept = make_client_recording_sleep(handler)
     with pytest.raises(APIError) as exc:
@@ -215,9 +215,9 @@ def test_always_429_exhausts_retries_and_raises_api_error():
 
 # -- paginate handles all three response envelopes ---------------------------
 def test_paginate_reports_envelope_page_count_and_rows():
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         page = int(request.url.params.get("page", "1"))
-        return httpx.Response(
+        return httpx2.Response(
             200,
             # reports module shape: top-level page_count + rows
             json={"page_count": 2, "rows": [{"r": page}]},
@@ -228,8 +228,8 @@ def test_paginate_reports_envelope_page_count_and_rows():
 
 
 def test_paginate_bare_list_single_page():
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=[{"id": 1}, {"id": 2}])
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json=[{"id": 1}, {"id": 2}])
 
     records = list(make_client(handler).paginate("staff/", page_limit=10))
     assert [r["id"] for r in records] == [1, 2]
@@ -238,9 +238,9 @@ def test_paginate_bare_list_single_page():
 def test_paginate_single_page_when_page_count_one():
     calls = {"n": 0}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         calls["n"] += 1
-        return httpx.Response(
+        return httpx2.Response(
             200, json={"page_info": {"page_count": 1}, "data": [{"id": 1}]}
         )
 
@@ -252,9 +252,9 @@ def test_paginate_single_page_when_page_count_one():
 def test_paginate_clamps_size_to_50():
     seen = {}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         seen["size"] = request.url.params.get("size")
-        return httpx.Response(200, json={"page_info": {"page_count": 1}, "data": []})
+        return httpx2.Response(200, json={"page_info": {"page_count": 1}, "data": []})
 
     list(make_client(handler).paginate("tickets/", size=500, page_limit=1))
     assert seen["size"] == "50"
@@ -263,8 +263,8 @@ def test_paginate_clamps_size_to_50():
 def test_paginate_non_numeric_page_raises_validation():
     from hfox.core.errors import ValidationError
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"page_info": {"page_count": 1}, "data": []})
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json={"page_info": {"page_count": 1}, "data": []})
 
     with pytest.raises(ValidationError):
         list(make_client(handler).paginate("tickets/", params={"page": "abc"}))
@@ -274,9 +274,9 @@ def test_paginate_non_numeric_page_raises_validation():
 def test_user_agent_carries_version():
     seen = {}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         seen["ua"] = request.headers["user-agent"]
-        return httpx.Response(200, json=[])
+        return httpx2.Response(200, json=[])
 
     client, _ = make_client_recording_sleep(handler)
     client.get("staff/")
@@ -284,15 +284,15 @@ def test_user_agent_carries_version():
     assert seen["ua"] == USER_AGENT
 
 
-def test_timeout_reaches_httpx_client():
+def test_timeout_reaches_httpx2_client():
     client = HappyFoxClient("https://acme.happyfox.com/api/1.1/json", "key", "code", timeout=7.5)
-    assert client._client.timeout == httpx.Timeout(7.5)
+    assert client._client.timeout == httpx2.Timeout(7.5)
     client.close()
 
 
 def test_default_timeout_and_retries():
     client = HappyFoxClient("https://acme.happyfox.com/api/1.1/json", "key", "code")
-    assert client._client.timeout == httpx.Timeout(DEFAULT_TIMEOUT)
+    assert client._client.timeout == httpx2.Timeout(DEFAULT_TIMEOUT)
     assert client.max_retries == MAX_RETRIES
     client.close()
 
@@ -301,13 +301,13 @@ def test_on_retry_called_once_per_429_retry():
     calls = {"n": 0}
     seen: list[tuple] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         calls["n"] += 1
         if calls["n"] == 1:
-            return httpx.Response(429, headers={"Retry-After": "2.5"}, json={})
+            return httpx2.Response(429, headers={"Retry-After": "2.5"}, json={})
         if calls["n"] == 2:
-            return httpx.Response(429, json={})
-        return httpx.Response(200, json={"ok": True})
+            return httpx2.Response(429, json={})
+        return httpx2.Response(200, json={"ok": True})
 
     client, slept = make_client_recording_sleep(handler, on_retry=lambda *a: seen.append(a))
     assert client.get("tickets/") == {"ok": True}
@@ -322,16 +322,16 @@ def test_on_retry_called_before_the_sleep():
     order: list[str] = []
     calls = {"n": 0}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         calls["n"] += 1
-        return httpx.Response(429 if calls["n"] == 1 else 200, json={})
+        return httpx2.Response(429 if calls["n"] == 1 else 200, json={})
 
     client = HappyFoxClient(
         "https://acme.happyfox.com/api/1.1/json", "key", "code",
         sleep=lambda _s: order.append("sleep"),
         on_retry=lambda *_a: order.append("notify"),
     )
-    client._client._transport = httpx.MockTransport(handler)
+    client._client._transport = httpx2.MockTransport(handler)
     client.get("tickets/")
     assert order == ["notify", "sleep"]
 
@@ -340,11 +340,11 @@ def test_on_retry_called_for_transport_error():
     calls = {"n": 0}
     seen: list[tuple] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         calls["n"] += 1
         if calls["n"] == 1:
-            raise httpx.ConnectError("boom", request=request)
-        return httpx.Response(200, json={"ok": True})
+            raise httpx2.ConnectError("boom", request=request)
+        return httpx2.Response(200, json={"ok": True})
 
     client, slept = make_client_recording_sleep(
         handler, max_retries=3, on_retry=lambda *a: seen.append(a)
@@ -357,8 +357,8 @@ def test_on_retry_called_for_transport_error():
 def test_on_retry_not_called_for_page_delay():
     seen: list[tuple] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"page_info": {"page_count": 3}, "data": [1]})
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, json={"page_info": {"page_count": 3}, "data": [1]})
 
     client, slept = make_client_recording_sleep(handler, on_retry=lambda *a: seen.append(a))
     assert len(list(client.paginate("tickets/", page_delay_ms=100))) == 3
@@ -371,9 +371,9 @@ def test_max_retries_zero_sends_one_request(status):
     calls = {"n": 0}
     seen: list[tuple] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         calls["n"] += 1
-        return httpx.Response(status, json={})
+        return httpx2.Response(status, json={})
 
     client, slept = make_client_recording_sleep(
         handler, max_retries=0, on_retry=lambda *a: seen.append(a)
@@ -388,9 +388,9 @@ def test_max_retries_zero_sends_one_request(status):
 def test_max_retries_zero_does_not_retry_transport_error():
     calls = {"n": 0}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         calls["n"] += 1
-        raise httpx.ConnectError("boom", request=request)
+        raise httpx2.ConnectError("boom", request=request)
 
     client, slept = make_client_recording_sleep(handler, max_retries=0)
     with pytest.raises(NetworkError):
@@ -404,8 +404,8 @@ def test_max_retries_zero_does_not_retry_transport_error():
     [("120", 120.0, 120), ("2.5", 2.5, 2.5), ("99999", 99999.0, 99999)],
 )
 def test_exhausted_429_carries_unclamped_retry_after(header, expected, rendered):
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(429, headers={"Retry-After": header}, json={"error": "slow"})
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(429, headers={"Retry-After": header}, json={"error": "slow"})
 
     client, slept = make_client_recording_sleep(handler, max_retries=1)
     with pytest.raises(RateLimitError) as exc:
@@ -424,8 +424,8 @@ def test_exhausted_429_carries_unclamped_retry_after(header, expected, rendered)
 def test_exhausted_429_without_usable_retry_after(header):
     headers = {} if header is None else {"Retry-After": header}
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(429, headers=headers, json={})
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(429, headers=headers, json={})
 
     client, _ = make_client_recording_sleep(handler, max_retries=0)
     with pytest.raises(RateLimitError) as exc:
@@ -435,8 +435,8 @@ def test_exhausted_429_without_usable_retry_after(header):
 
 
 def test_read_timeout_raises_request_timeout_error():
-    def handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.ReadTimeout("slow", request=request)
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ReadTimeout("slow", request=request)
 
     client, _ = make_client_recording_sleep(handler, max_retries=1)
     with pytest.raises(RequestTimeoutError) as exc:
@@ -450,8 +450,8 @@ def test_read_timeout_raises_request_timeout_error():
 
 @pytest.mark.parametrize("method", ["POST", "PUT", "DELETE"])
 def test_write_answered_504_has_unknown_outcome(method):
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(504, text="gateway timeout")
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(504, text="gateway timeout")
 
     client, _ = make_client_recording_sleep(handler)
     with pytest.raises(APIError) as exc:
@@ -465,8 +465,8 @@ def test_write_answered_504_has_unknown_outcome(method):
 
 
 def test_get_answered_504_has_known_outcome():
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(504, text="gateway timeout")
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(504, text="gateway timeout")
 
     client, _ = make_client_recording_sleep(handler)
     with pytest.raises(APIError) as exc:
@@ -479,8 +479,8 @@ def test_get_answered_504_has_known_outcome():
 
 @pytest.mark.parametrize("status", [400, 409, 429])
 def test_write_answered_below_500_has_known_outcome(status):
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(status, json={"error": "no"})
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(status, json={"error": "no"})
 
     client, _ = make_client_recording_sleep(handler, max_retries=0)
     with pytest.raises(APIError) as exc:

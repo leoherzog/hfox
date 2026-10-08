@@ -6,7 +6,7 @@ import io
 import json
 import sys
 
-import httpx
+import httpx2
 import pytest
 from typer.testing import CliRunner
 
@@ -55,10 +55,10 @@ def api(mock_api):
     def handler(request):
         path = request.url.path.removeprefix("/api/1.1/json/")
         if path == "categories/":
-            return httpx.Response(200, json=CATEGORIES)
+            return httpx2.Response(200, json=CATEGORIES)
         if path == "ticket/1/":
-            return httpx.Response(200, json=TICKET)
-        return httpx.Response(404, json={"error": "Not found"})
+            return httpx2.Response(200, json=TICKET)
+        return httpx2.Response(404, json={"error": "Not found"})
 
     return mock_api(handler)
 

@@ -2,7 +2,7 @@
 
 import json
 
-import httpx
+import httpx2
 import pytest
 from typer.testing import CliRunner
 
@@ -64,8 +64,8 @@ def rejected(*args, **kw):
 def staff_api(mock_api):
     def handler(request):
         if request.url.path.endswith("/staff/"):
-            return httpx.Response(200, json=STAFF)
-        return httpx.Response(200, json={"ok": True})
+            return httpx2.Response(200, json=STAFF)
+        return httpx2.Response(200, json={"ok": True})
 
     return mock_api(handler)
 
@@ -83,7 +83,7 @@ def test_create_bulk_sends_100_tickets():
 
 
 def test_create_bulk_rejects_101_tickets_before_any_request(mock_api):
-    captured = mock_api(lambda req: httpx.Response(200, json=[]))
+    captured = mock_api(lambda req: httpx2.Response(200, json=[]))
     payload = json.dumps(bulk(101))
     assert "1 and 100" in rejected("tickets", "create-bulk", "--file", "-", input=payload)
     assert captured == []
@@ -126,7 +126,7 @@ def test_create_sends_every_optional_field():
     ("body", "rendered"), [({}, None), ({"json": [{"id": 7}]}, [{"id": 7}])], ids=["empty", "list"]
 )
 def test_create_renders_a_non_object_response_without_a_status_line(mock_api, body, rendered):
-    captured = mock_api(lambda req: httpx.Response(200, **body))
+    captured = mock_api(lambda req: httpx2.Response(200, **body))
     result = run(*CREATE)
     assert result.exit_code == 0, result.exception
     assert len(captured) == 1
@@ -467,7 +467,7 @@ def test_inline_attachment_rejects_a_file_without_a_known_type(tmp_path):
 
 
 def test_delete_takes_the_short_yes_flag(mock_api):
-    captured = mock_api(lambda req: httpx.Response(200, json={"deleted_ticket": "#DC00000005"}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={"deleted_ticket": "#DC00000005"}))
     result = run("tickets", "delete", "5", "-y")
     assert result.exit_code == 0, result.output
     assert [r.method for r in captured] == ["POST"]
@@ -503,7 +503,7 @@ def test_set_cf_choices_sends_only_the_choices_of_a_field_object():
 
 
 def test_set_cf_choices_yes_summary_ignores_quiet(mock_api):
-    captured = mock_api(lambda req: httpx.Response(200, json={"id": 7}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={"id": 7}))
     result = run(
         "--quiet", "tickets", "set-cf-choices", "7", "--yes", "--choices-json", json.dumps(CHOICES)
     )
@@ -513,7 +513,7 @@ def test_set_cf_choices_yes_summary_ignores_quiet(mock_api):
 
 
 def test_set_cf_choices_prompt_states_the_summary_once(mock_api, tty):
-    captured = mock_api(lambda req: httpx.Response(200, json={"id": 7}))
+    captured = mock_api(lambda req: httpx2.Response(200, json={"id": 7}))
     result = run(
         "tickets", "set-cf-choices", "7", "--choices-json", json.dumps(CHOICES), input="y\n"
     )
