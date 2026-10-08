@@ -366,8 +366,9 @@ def test_shell_completion_answers_to_the_hfox_variable():
 
 # -- deep nesting -------------------------------------------------------------
 # Past the recursion limit where the json module handles it. Before 3.13 it parses or
-# indents with Python recursion, so older interpreters use a depth it can manage.
-DEEP = 3000 if sys.version_info >= (3, 13) else 500
+# indents with Python recursion, so older interpreters use a depth it can manage. The C
+# encoder stops at 3.13's C recursion limit, which is 3000 on Windows.
+DEEP = 2000 if sys.version_info >= (3, 13) else 500
 DEEP_TEXT = "[" * DEEP + "NaN" + "]" * DEEP
 DEEP_NULL = "[" * DEEP + "null" + "]" * DEEP
 

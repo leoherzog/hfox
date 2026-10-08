@@ -291,8 +291,9 @@ def test_yaml_float_with_fraction_and_exponent_is_written_as_is(value, text):
 # --- deep nesting -----------------------------------------------------------------
 
 # Past the recursion limit where the json module handles it. Before 3.13 it parses or
-# indents with Python recursion, so older interpreters use a depth it can manage.
-DEEP = 3000 if sys.version_info >= (3, 13) else 500
+# indents with Python recursion, so older interpreters use a depth it can manage. The C
+# encoder stops at 3.13's C recursion limit, which is 3000 on Windows.
+DEEP = 2000 if sys.version_info >= (3, 13) else 500
 
 
 def _nested(depth, leaf, wrap=lambda inner: [inner]):
