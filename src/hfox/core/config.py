@@ -632,3 +632,18 @@ def clear_credentials(cfg_dir: Path) -> bool:
     except OSError as exc:
         raise ConfigError(f"Cannot remove token file {path}: {exc}", hint=_WRITE_HINT) from exc
     return True
+
+
+def token_exists(cfg_dir: Path) -> bool:
+    """Return True when token.json is there, so `clear_credentials` would remove it.
+
+    Raises ConfigError when its presence cannot be checked.
+    """
+    path = cfg_dir / TOKEN_FILENAME
+    try:
+        path.lstat()
+    except _ABSENT:
+        return False
+    except OSError as exc:
+        raise ConfigError(f"Cannot check token file {path}: {exc}", hint=_WRITE_HINT) from exc
+    return True

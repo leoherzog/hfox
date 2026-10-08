@@ -1,10 +1,12 @@
 """`hfox auth`: login, status and logout.
 
-Login checks credentials against staff/ before saving them. Each command renders one
-document that never holds a secret.
+Login and status check the credentials against staff/, and login saves them only after the
+check passes. Each command renders one document that never holds a secret.
 """
 
 from __future__ import annotations
+
+import os
 
 import typer
 
@@ -20,30 +22,35 @@ from ..core.config import (
     save_credentials,
     save_settings,
     stored_account,
+    token_exists,
     validate_host,
 )
 from ..core.errors import AuthError, HfoxError, ValidationError
 from . import _util, output
 from ._util import fold, nonblank_or_none, require_nonblank
 from .context import emit_dry_run, get_ctx
+from .output import OutputFormat
 
 app = typer.Typer(no_args_is_help=True, help="Manage HappyFox credentials.")
 
 
-# Flag to environment variable, for the values login cannot prompt for without a terminal.
+# Each required login value and the variable that supplies it when stdin is not a terminal.
 _LOGIN_ENV = {
-    "--subdomain": "HFOX_SUBDOMAIN",
-    "--api-key": "HFOX_API_KEY",
-    "--auth-code": "HFOX_AUTH_CODE",
+    "subdomain": "HFOX_SUBDOMAIN",
+    "API key": "HFOX_API_KEY",
+    "auth code": "HFOX_AUTH_CODE",
 }
 
 
+def _and(items: list[str]) -> str:
+    return items[0] if len(items) == 1 else f"{', '.join(items[:-1])} and {items[-1]}"
+
+
 def _missing_values_error(missing: list[str]) -> ValidationError:
-    """Name the missing login values and their variables; only the subdomain may go on argv."""
-    names = [_LOGIN_ENV[flag] for flag in missing]
-    variables = names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
-    message = f"Missing {', '.join(missing)}; stdin is not a terminal, so set {variables}."
-    if "--subdomain" in missing:
+    """Name the missing login values and their variables; only the subdomain has a flag."""
+    variables = _and([_LOGIN_ENV[name] for name in missing])
+    message = f"Missing the {_and(missing)}; stdin is not a terminal, so set {variables}."
+    if "subdomain" in missing:
         message += " The subdomain can also be passed with --subdomain."
     return ValidationError(message)
 
@@ -99,30 +106,20 @@ def login(
     subdomain: str = typer.Option(
         None,
         "--subdomain",
-        "-s",
         envvar="HFOX_SUBDOMAIN",
         help="Account subdomain or full custom host.",
     ),
     region: str = typer.Option(
         None, "--region", envvar="HFOX_REGION", help="Data center: us or eu."
     ),
-    api_key: str = typer.Option(
-        None,
-        "--api-key",
-        envvar="HFOX_API_KEY",
-        help="API key; omit it to use HFOX_API_KEY or a hidden prompt, out of shell history.",
-    ),
-    auth_code: str = typer.Option(
-        None,
-        "--auth-code",
-        envvar="HFOX_AUTH_CODE",
-        help="Auth code; omit it to use HFOX_AUTH_CODE or a hidden prompt, out of shell history.",
-    ),
     email: str = typer.Option(
-        None, "--email", "-e", help="Agent email, used to set a default staff id."
+        None, "--email", help="Agent email, used to set a default staff id."
     ),
 ) -> None:
-    """Configure and validate HappyFox credentials."""
+    """Configure and validate HappyFox credentials.
+
+    The API key and auth code come from HFOX_API_KEY and HFOX_AUTH_CODE, else a hidden prompt.
+    """
     obj = get_ctx(ctx)
     cfg_dir = obj.config.dir
     given = ctx.get_parameter_source("subdomain")
@@ -130,12 +127,12 @@ def login(
 
     subdomain = nonblank_or_none(subdomain)
     region = nonblank_or_none(region)
-    api_key = nonblank_or_none(api_key)
-    auth_code = nonblank_or_none(auth_code)
+    api_key = nonblank_or_none(os.environ.get("HFOX_API_KEY"))
+    auth_code = nonblank_or_none(os.environ.get("HFOX_AUTH_CODE"))
 
     interactive = _util.stdin_is_tty()
-    required = (("--subdomain", subdomain), ("--api-key", api_key), ("--auth-code", auth_code))
-    missing = [flag for flag, value in required if value is None]
+    required = (("subdomain", subdomain), ("API key", api_key), ("auth code", auth_code))
+    missing = [name for name, value in required if value is None]
     if missing and not interactive:
         raise _missing_values_error(missing)
     if subdomain is None:
@@ -164,6 +161,7 @@ def login(
         api_key=api_key,
         auth_code=auth_code,
         base_url_override=override,
+        dir=cfg_dir,
     )
     base_url = probe.base_url
     source = obj.config.base_url_source
@@ -240,13 +238,11 @@ def login(
 
 
 @app.command()
-def status(
-    ctx: typer.Context,
-    check: bool = typer.Option(
-        False, "--check", help="Verify the credentials with one request."
-    ),
-) -> None:
-    """Show the active account; exit 2 when credentials are missing."""
+def status(ctx: typer.Context) -> None:
+    """Show the active account and verify its credentials.
+
+    Sends one GET staff/. Exits 0 when the credentials work, 2 when missing or rejected.
+    """
     obj = get_ctx(ctx)
     cfg = obj.config
     payload: dict = {
@@ -254,32 +250,28 @@ def status(
         "subdomain": cfg.subdomain,
         "region": cfg.region,
         "base_url": cfg.base_url if (cfg.subdomain or cfg.base_url_override) else None,
-        "authenticated": cfg.is_authenticated,
+        "authenticated": False,
         "default_staff_id": cfg.default_staff_id if cfg.staff_id_error is None else None,
         "api_key": _mask(cfg.api_key),
     }
     if cfg.staff_id_error is not None:
         payload["default_staff_id_error"] = str(cfg.staff_id_error)
     if not cfg.is_authenticated:
-        if check:
-            payload["verified"] = False
         obj.render(payload)
         output.warn("Not authenticated. Run `hfox auth login`.")
         raise typer.Exit(2)
-    if check:
-        try:
-            if not isinstance(obj.call("GET", "staff/"), list):
-                raise HfoxError(
-                    "Unexpected response from staff/; cannot verify the credentials."
-                )
-        except HfoxError as err:
-            # Stdout holds one document, so the failure rides inside the payload.
-            payload["verified"] = False
-            payload["check_error"] = err.to_dict()
-            obj.render(payload)
-            output.warn(err.message)
-            raise typer.Exit(int(err.exit_code)) from None
-        payload["verified"] = True
+    try:
+        if not isinstance(obj.call("GET", "staff/"), list):
+            raise HfoxError("Unexpected response from staff/; cannot verify the credentials.")
+    except HfoxError as err:
+        # Only a rejection is a verdict; any other failure leaves the answer unknown.
+        payload["authenticated"] = False if isinstance(err, AuthError) else None
+        # Stdout holds one document, so the failure rides inside the payload.
+        payload["check_error"] = err.to_dict()
+        obj.render(payload)
+        output.warn(err.message)
+        raise typer.Exit(int(err.exit_code)) from None
+    payload["authenticated"] = True
     obj.render(payload)
 
 
@@ -289,8 +281,16 @@ def logout(ctx: typer.Context) -> None:
     obj = get_ctx(ctx)
     cfg_dir = obj.config.dir
     if obj.dry_run:
-        obj.success(f"Dry run: would remove {cfg_dir / 'token.json'}.")
-        obj.render({"dry_run": True, "removed": False, "config_dir": str(cfg_dir)})
+        would_remove = token_exists(cfg_dir)
+        if would_remove:
+            obj.success(f"Dry run: would remove {cfg_dir / TOKEN_FILENAME}.")
+        else:
+            obj.success("Dry run: no stored credentials to remove.")
+        # Always JSON, through the writer every dry-run preview uses.
+        output.render(
+            {"dry_run": True, "would_remove": would_remove, "config_dir": str(cfg_dir)},
+            OutputFormat.JSON,
+        )
         raise typer.Exit(0)
     removed = clear_credentials(cfg_dir)
     if removed:

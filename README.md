@@ -32,18 +32,21 @@ click **Enable**, add a key with **+**, then hover its row and click **see auth 
 hfox auth login                        # prompts for subdomain, region, API key, auth code
 hfox auth login --subdomain acme --email agent@acme.com   # also sets your default staff id
 HFOX_API_KEY=... HFOX_AUTH_CODE=... hfox auth login --subdomain acme   # scripted
-hfox auth status --check
+hfox auth status
 hfox auth logout
 ```
 
-Login checks the credentials against `staff/` before saving them. It takes each value from
-its flag, then from `HFOX_SUBDOMAIN`, `HFOX_REGION`, `HFOX_API_KEY` or `HFOX_AUTH_CODE`, then
-from a prompt on stderr. Keep the two secrets off the command line, where the shell history
-and the process list expose them. When stdin is not a terminal, a missing region means `us`,
-and a missing subdomain, key or code exits 3 with an error naming each missing flag and its
-variable. A whitespace-only flag or variable counts as missing, and a whitespace-only key or
-code typed at the prompt exits 3. Outer whitespace is stripped from the subdomain, key and
-code, and the subdomain is stored in lowercase.
+Login checks the credentials against `staff/` before saving them. The subdomain and region
+come from `--subdomain` and `--region`, then `HFOX_SUBDOMAIN` and `HFOX_REGION`, then a
+prompt on stderr. The API key and auth code have no flags, since the shell history and the
+process list would expose them. They come from `HFOX_API_KEY` and `HFOX_AUTH_CODE`, else
+from a hidden prompt.
+
+When stdin is not a terminal, a missing region means `us`, and a missing subdomain, key or
+code exits 3 with an error naming each missing value and its variable. A whitespace-only
+flag or variable counts as missing, and a whitespace-only key or code typed at the prompt
+exits 3. Outer whitespace is stripped from the subdomain, key and code, and the subdomain is
+stored in lowercase.
 
 `--email` saves the id of the one agent with that email as the default staff id. Without
 `--email`, a login to the same subdomain, region and base URL keeps the stored default, and
@@ -51,11 +54,15 @@ any other login removes it. An `--email` that matches no agent, several agents o
 with an unusable id sets no default and removes a stored one; the login still succeeds.
 `default_staff_id` in the login JSON is the value stored after the save.
 
-Each `auth` command prints one document that never holds a secret. `auth status` masks
-the API key and exits 2 when credentials are missing, after printing its payload.
-`auth status --check` sends one request and adds `verified`; a failed check adds
-`check_error` and exits with that error's code. A `staff/` answer that is not a list fails
-the check with exit 5.
+Each `auth` command prints one document that never holds a secret. `auth status` masks the
+API key and, when credentials are present, verifies them with one GET `staff/`, which
+`--dry-run` previews instead. `authenticated` is `true` when the answer is the agent list.
+It is `false`, with exit 2, when the credentials are missing or HappyFox rejects them. It is
+`null` when the check cannot finish, as with a network error, a rate limit or a `staff/`
+answer that is not a list, and the exit code is that error's.
+
+A failed check adds `check_error`, the error object. `auth logout --dry-run` removes nothing
+and prints `{dry_run, would_remove, config_dir}` as JSON, whatever `--format` says.
 
 ### Configuration
 
@@ -272,7 +279,7 @@ A nonzero exit carries that error object except in these cases:
 
 - A partial bulk or group-membership failure prints the response and exits 1. Removing a
   contact that is not in the group does not count.
-- `auth status` prints its payload when it exits 2 and when `--check` fails.
+- `auth status` prints its payload instead, with `check_error` when the check fails.
 - With `--page-all` in JSON, the error is the last NDJSON line.
 - Ctrl-C outside a prompt exits 130 and prints no error object.
 

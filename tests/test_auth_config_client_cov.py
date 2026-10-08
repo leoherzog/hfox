@@ -35,6 +35,7 @@ from hfox.core.errors import (
 )
 
 runner = CliRunner()
+SECRETS = {"HFOX_API_KEY": "K", "HFOX_AUTH_CODE": "C"}
 
 
 # =========================================================================
@@ -163,9 +164,8 @@ def test_login_invalid_region_rejected(monkeypatch, tmp_path):
     )
     result = runner.invoke(
         cli,
-        ["auth", "login", "--subdomain", "acme", "--region", "mars",
-         "--api-key", "K", "--auth-code", "C"],
-        env={"HFOX_CONFIG_DIR": str(tmp_path / "hfox")},
+        ["auth", "login", "--subdomain", "acme", "--region", "mars"],
+        env={"HFOX_CONFIG_DIR": str(tmp_path / "hfox"), **SECRETS},
     )
     assert isinstance(result.exception, ValidationError)
     assert "region must be one of" in str(result.exception)
@@ -179,9 +179,9 @@ def test_login_region_prompt_default_us(monkeypatch, tmp_path, tty):
     cfg_dir = tmp_path / "hfox"
     result = runner.invoke(
         cli,
-        ["auth", "login", "--subdomain", "acme", "--api-key", "K", "--auth-code", "C"],
+        ["auth", "login", "--subdomain", "acme"],
         input="\n",  # accept default region us
-        env={"HFOX_CONFIG_DIR": str(cfg_dir)},
+        env={"HFOX_CONFIG_DIR": str(cfg_dir), **SECRETS},
     )
     assert result.exit_code == 0, result.stderr
     saved = json.loads((cfg_dir / "token.json").read_text())
@@ -197,8 +197,8 @@ def test_login_no_region_without_tty_defaults_to_us(monkeypatch, tmp_path):
     cfg_dir = tmp_path / "hfox"
     result = runner.invoke(
         cli,
-        ["auth", "login", "--subdomain", "acme", "--api-key", "K", "--auth-code", "C"],
-        env={"HFOX_CONFIG_DIR": str(cfg_dir)},
+        ["auth", "login", "--subdomain", "acme"],
+        env={"HFOX_CONFIG_DIR": str(cfg_dir), **SECRETS},
     )
     assert result.exit_code == 0, result.stderr
     assert json.loads((cfg_dir / "token.json").read_text())["region"] == "us"
@@ -211,11 +211,11 @@ def test_login_missing_secret_without_tty_builds_no_client(monkeypatch, tmp_path
     )
     result = runner.invoke(
         cli,
-        ["auth", "login", "--subdomain", "acme", "--api-key", "K"],
-        env={"HFOX_CONFIG_DIR": str(tmp_path / "hfox")},
+        ["auth", "login", "--subdomain", "acme"],
+        env={"HFOX_CONFIG_DIR": str(tmp_path / "hfox"), "HFOX_API_KEY": "K"},
     )
     assert isinstance(result.exception, ValidationError)
-    assert str(result.exception).startswith("Missing --auth-code; stdin is not a terminal")
+    assert str(result.exception).startswith("Missing the auth code; stdin is not a terminal")
 
 
 def test_login_validation_failure_maps_to_auth_error(monkeypatch, tmp_path):
@@ -225,9 +225,8 @@ def test_login_validation_failure_maps_to_auth_error(monkeypatch, tmp_path):
     )
     result = runner.invoke(
         cli,
-        ["auth", "login", "--subdomain", "acme", "--region", "us",
-         "--api-key", "K", "--auth-code", "C"],
-        env={"HFOX_CONFIG_DIR": str(tmp_path / "hfox")},
+        ["auth", "login", "--subdomain", "acme", "--region", "us"],
+        env={"HFOX_CONFIG_DIR": str(tmp_path / "hfox"), **SECRETS},
     )
     assert type(result.exception) is AuthError
     assert "Could not validate credentials" in str(result.exception)
@@ -250,9 +249,8 @@ def test_login_other_probe_errors_are_not_wrapped(
     cfg_dir = tmp_path / "hfox"
     result = runner.invoke(
         cli,
-        ["auth", "login", "--subdomain", "acme", "--region", "us",
-         "--api-key", "K", "--auth-code", "C"],
-        env={"HFOX_CONFIG_DIR": str(cfg_dir)},
+        ["auth", "login", "--subdomain", "acme", "--region", "us"],
+        env={"HFOX_CONFIG_DIR": str(cfg_dir), **SECRETS},
     )
     assert type(result.exception) is error_type
     assert "Could not validate credentials" not in str(result.exception)
@@ -268,9 +266,8 @@ def test_login_transport_error_is_network_error(monkeypatch, tmp_path):
     _patch_staff_client(monkeypatch, response_factory=handler)
     result = runner.invoke(
         cli,
-        ["auth", "login", "--subdomain", "acme", "--region", "us",
-         "--api-key", "K", "--auth-code", "C"],
-        env={"HFOX_CONFIG_DIR": str(tmp_path / "hfox")},
+        ["auth", "login", "--subdomain", "acme", "--region", "us"],
+        env={"HFOX_CONFIG_DIR": str(tmp_path / "hfox"), **SECRETS},
     )
     assert type(result.exception) is NetworkError
     payload = result.exception.to_dict()
@@ -285,9 +282,8 @@ def test_login_non_list_staff_response_rejected(monkeypatch, tmp_path):
     cfg_dir = tmp_path / "hfox"
     result = runner.invoke(
         cli,
-        ["auth", "login", "--subdomain", "acme", "--region", "us",
-         "--api-key", "K", "--auth-code", "C"],
-        env={"HFOX_CONFIG_DIR": str(cfg_dir)},
+        ["auth", "login", "--subdomain", "acme", "--region", "us"],
+        env={"HFOX_CONFIG_DIR": str(cfg_dir), **SECRETS},
     )
     assert type(result.exception) is HfoxError
     assert str(result.exception) == (
@@ -307,9 +303,8 @@ def test_login_non_numeric_staff_id_warns_and_skips_default(monkeypatch, tmp_pat
     cfg_dir = tmp_path / "hfox"
     result = runner.invoke(
         cli,
-        ["auth", "login", "--subdomain", "acme", "--region", "us",
-         "--api-key", "K", "--auth-code", "C", "--email", "a@x.org"],
-        env={"HFOX_CONFIG_DIR": str(cfg_dir)},
+        ["auth", "login", "--subdomain", "acme", "--region", "us", "--email", "a@x.org"],
+        env={"HFOX_CONFIG_DIR": str(cfg_dir), **SECRETS},
     )
     assert result.exit_code == 0, result.stderr
     assert "Ignoring unexpected staff id 'not-a-number'" in result.stderr
@@ -327,9 +322,8 @@ def test_login_email_no_match_warns(monkeypatch, tmp_path):
     cfg_dir = tmp_path / "hfox"
     result = runner.invoke(
         cli,
-        ["auth", "login", "--subdomain", "acme", "--region", "us",
-         "--api-key", "K", "--auth-code", "C", "--email", "ghost@x.org"],
-        env={"HFOX_CONFIG_DIR": str(cfg_dir)},
+        ["auth", "login", "--subdomain", "acme", "--region", "us", "--email", "ghost@x.org"],
+        env={"HFOX_CONFIG_DIR": str(cfg_dir), **SECRETS},
     )
     assert result.exit_code == 0, result.stderr
     assert "No agent matched ghost@x.org" in result.stderr
@@ -355,11 +349,11 @@ def test_login_persists_base_url_override(monkeypatch, tmp_path):
     # HFOX_BASE_URL is the root; Config.base_url appends the /api/1.1/json suffix.
     result = runner.invoke(
         cli,
-        ["auth", "login", "--subdomain", "acme", "--region", "us",
-         "--api-key", "K", "--auth-code", "C", "--email", "a@x.org"],
+        ["auth", "login", "--subdomain", "acme", "--region", "us", "--email", "a@x.org"],
         env={
             "HFOX_CONFIG_DIR": str(cfg_dir),
             "HFOX_BASE_URL": "https://gw.internal",
+            **SECRETS,
         },
     )
     assert result.exit_code == 0, result.stderr

@@ -455,6 +455,8 @@ it. One account, no profiles; `--profile`, `HFOX_PROFILE` and `--columns` are re
   reason, with `_WRITE_HINT`. A missing `token.json` is not an error; `clear_credentials`
   returns False. A read-only directory the user owns is not such a failure, since the write
   first restricts it to `0700`.
+- `token_exists(cfg_dir)` answers whether `clear_credentials` would remove a `token.json`,
+  by `lstat`, so a dangling symlink counts. Another `OSError` raises `ConfigError`.
 - `config_dir` raises `ConfigError` when the default needs a home directory that cannot be
   determined, and when the `~` of `--config-dir` or `HFOX_CONFIG_DIR` cannot be expanded.
 
@@ -484,17 +486,21 @@ entry that needs an undeterminable home directory is left out.
 file. Every user-named file and stdin goes through them: a prompt-injected agent must not be
 able to send `token.json` out.
 
-**`auth` behavior.** `login` takes each value from its flag, then `HFOX_SUBDOMAIN`,
-`HFOX_REGION`, `HFOX_API_KEY` or `HFOX_AUTH_CODE`, then `obj.prompt`. A whitespace-only
-subdomain, region, API key or auth code from a flag or variable counts as unset; a
-whitespace-only secret typed at the prompt raises `ValidationError`, also under `--dry-run`.
-The API key and auth code are stripped before the probe and the save. The subdomain is
-probed, stored and rendered as `validate_host` returns it, stripped and lowercased. On a
-non-terminal stdin a missing subdomain, key or code
-raises `ValidationError` before any prompt, and a missing region is `us`. The message names
-each missing flag and its `HFOX_` variable, and suggests the flag form only for
-`--subdomain`, so secrets stay off argv. Only an `AuthError` from the probe is rewrapped;
-network, rate-limit and other API errors keep their type.
+**`auth` behavior.** `login` takes the subdomain and region from `--subdomain` and
+`--region`, then `HFOX_SUBDOMAIN` or `HFOX_REGION`, then `obj.prompt`. The API key and auth
+code have no flags, so they stay off argv: `login` reads `HFOX_API_KEY` and `HFOX_AUTH_CODE`
+from `os.environ`, then prompts with hidden input. A whitespace-only subdomain, region, API
+key or auth code from a flag or variable counts as unset; a whitespace-only secret typed at
+the prompt raises `ValidationError`, also under `--dry-run`. The API key and auth code are
+stripped before the probe and the save. The subdomain is probed, stored and rendered as
+`validate_host` returns it, stripped and lowercased.
+
+On a non-terminal stdin a missing subdomain, key or code raises `ValidationError` before any
+prompt, and a missing region is `us`. The message names each missing value and its `HFOX_`
+variable, and adds `--subdomain` for the subdomain. Only an `AuthError` from the probe is
+rewrapped; network, rate-limit and other API errors keep their type. The probe `Config`
+gets `dir=cfg_dir`: its default calls `config_dir()`, which ignores `--config-dir` and
+raises without a home directory.
 
 `login --email` sets the default staff id only when exactly one `staff/` row has that email
 and its id passes `parse_staff_id`. No match, several matches or an unusable id warns, sets
@@ -507,9 +513,13 @@ When the base URL override comes from a file and `--subdomain` was passed on the
 line, `login` warns that the stored base URL overrides it, also under `--dry-run`. The
 warning names `hfox auth logout` for a `token.json` value and the `config.toml` key otherwise.
 
-`status --check` adds `verified`, plus `check_error` on failure. A 2xx `staff/` body that is
-not a list is a failed check with `HfoxError`, exit 5. `logout --dry-run` renders
-`{dry_run, removed, config_dir}`.
+`status` sends one GET `staff/` through `obj.call` whenever credentials are present, so
+`--dry-run` prints its preview and exits 0. `authenticated` is true for a list and false,
+with exit 2, for missing credentials, which send nothing, or an `AuthError`. It is null for
+any other `HfoxError`, including a 2xx body that is not a list, which exits 5. A failed
+check adds `check_error` and exits with that error's code. `logout --dry-run` renders
+`{dry_run, would_remove, config_dir}` through `output.render(..., OutputFormat.JSON)`,
+whatever `--format` says, with `would_remove` from `token_exists`.
 
 ## Exit codes and errors (stable public contract; do not renumber)
 
@@ -558,7 +568,7 @@ unclamped `Retry-After` of a 429 that outlasted the retries.
 - **Partial bulk failure:** bulk and group-membership commands print the response unchanged,
   warn the failed count on stderr and exit **1**; "not part of the group" on remove is benign.
 - **`auth status`** prints its payload, not an error object, when it exits 2 for missing
-  credentials or when `--check` fails.
+  credentials or when the check fails.
 
 The stability policy in `README.md` is the public statement of this contract. Adding a key,
 a `type` slug, a flag or an env var is compatible; removing or renaming one is breaking.

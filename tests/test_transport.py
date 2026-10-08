@@ -314,9 +314,10 @@ def test_saved_base_url_error_names_its_file(tmp_path, monkeypatch, filename, te
         _ = load_config().base_url
 
 
-def test_status_reports_malformed_staff_id(tmp_path, monkeypatch):
+def test_status_reports_malformed_staff_id(tmp_path, monkeypatch, mock_api):
     monkeypatch.setenv("HFOX_CONFIG_DIR", str(tmp_path))
     (tmp_path / "config.toml").write_text("default_staff_id = 1.5\n")
+    mock_api(lambda r: httpx.Response(200, json=[]))
     result = runner.invoke(cli, ["auth", "status"], env=ENV | {"HFOX_STAFF_ID": ""})
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
@@ -338,9 +339,13 @@ def test_login_persists_normalized_base_url(monkeypatch, tmp_path):
     monkeypatch.setattr(context_mod, "HappyFoxClient", factory)
     result = runner.invoke(
         cli,
-        ["auth", "login", "--subdomain", "acme", "--region", "us",
-         "--api-key", "K", "--auth-code", "C"],
-        env={"HFOX_CONFIG_DIR": str(tmp_path), "HFOX_BASE_URL": "https://gw.internal/api/1.1/json"},
+        ["auth", "login", "--subdomain", "acme", "--region", "us"],
+        env={
+            "HFOX_CONFIG_DIR": str(tmp_path),
+            "HFOX_BASE_URL": "https://gw.internal/api/1.1/json",
+            "HFOX_API_KEY": "K",
+            "HFOX_AUTH_CODE": "C",
+        },
     )
     assert result.exit_code == 0, result.output
     assert seen["base_url"] == "https://gw.internal/api/1.1/json"

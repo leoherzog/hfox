@@ -23,8 +23,9 @@ directory. There is no keyring integration, so anyone who can read the file as y
 holds the credentials.
 
 `HFOX_API_KEY` and `HFOX_AUTH_CODE` override the stored values and let a script or CI job run
-without a token file. Pass secrets through these variables or the hidden login prompt, not on
-the command line, where the shell history and the process list expose them.
+without a token file. `hfox auth login` reads the secrets only from these variables or a
+hidden prompt. It has no flag for them, since the shell history and the process list would
+expose one.
 
 ## Transport
 

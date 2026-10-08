@@ -38,13 +38,14 @@ and never set `--subdomain`, `--region`, `--config-dir`, their `HFOX_*` variable
 
 ## Credentials
 
-Check the session with `hfox auth status --check`, which prints one document. Exit 0 with
-`"verified": true` means the credentials work. Exit 2 means they are missing
-(`authenticated: false`) or rejected (`check_error.type` is `auth`). Any other nonzero exit
-carries `check_error` too.
+Check the session with `hfox auth status`, which sends one request and prints one document.
+Exit 0 with `"authenticated": true` means the credentials work. Exit 2 with
+`"authenticated": false` means they are missing, or rejected when `check_error.type` is
+`auth`. Any other nonzero exit means the check could not finish: `authenticated` is `null`
+and `check_error` says why.
 
-Never put the API key or auth code on a command line, and never print, log or echo them.
-Supply them through `HFOX_API_KEY` and `HFOX_AUTH_CODE`, for a single command or a login:
+Never print, log or echo the API key or auth code. No flag takes them; supply them through
+`HFOX_API_KEY` and `HFOX_AUTH_CODE`, for a single command or a login:
 
 ```bash
 HFOX_API_KEY=... HFOX_AUTH_CODE=... hfox auth login --subdomain acme --email agent@acme.com
@@ -228,7 +229,7 @@ A nonzero exit carries that object except here:
 
 - A partial bulk or group-membership failure exits 1 and prints the response; inspect each
   entry's `success`.
-- `auth status` prints its payload, with `check_error` when `--check` fails.
+- `auth status` prints its payload, with `check_error` when the check fails.
 - With `--page-all` in JSON, the error is the last NDJSON line.
 - Ctrl-C outside a prompt exits 130 and prints no error object.
 
