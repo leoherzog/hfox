@@ -89,6 +89,11 @@ def _check_root_values(command, args: list[str]) -> None:
             )
 
 
+def _may_take_next(token: str) -> bool:
+    """Whether click could read the token after `token` as that option's value."""
+    return len(token) > 1 and token.startswith("-") and token != "--" and "=" not in token
+
+
 class _RootGroup(TyperGroup):
     """Root group: the usage-line fox, the root option value check and the misplaced-flag scan."""
 
@@ -107,13 +112,17 @@ class _RootGroup(TyperGroup):
         # swallowed as the value of the option before it. `--opt=--dry-run` sends the literal.
         if not ctx.resilient_parsing:
             flags = _root_flags(self) - _PER_COMMAND_FLAGS
+            previous = ""
             for token in args:
-                if token == "--":
+                # `--text -- --dry-run` makes the `--` a value, so only a `--` that cannot be
+                # one ends the scan.
+                if token == "--" and not _may_take_next(previous):
                     break
                 # A short flag matches only as a whole token: `-fjson` may be data like `-fixed`.
                 name = token.partition("=")[0] if token.startswith("--") else token
                 if name in flags:
                     raise _misplaced(name)
+                previous = token
         return super().resolve_command(ctx, args)
 
 

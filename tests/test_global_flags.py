@@ -244,6 +244,40 @@ def test_terminator_stops_the_scan(run_app):
     assert "--page-all" in payload["error"]
 
 
+# Each `--` is an option's value, so a global flag after it is still misplaced.
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("tickets", "reply", "5", "--text", "--", "--subject", "--dry-run"),
+        ("tickets", "reply", "5", "--text", "--", "--subject", "-f"),
+        ("tickets", "reply", "5", "--text", "--", "--subject", "--", "--format=table"),
+        ("tickets", "note", "5", "--text", "--", "--dry-run"),
+        ("tickets", "list", "-q", "--", "--sort", "--page-all"),
+    ],
+    ids=" ".join,
+)
+def test_terminator_read_as_an_option_value_does_not_stop_the_scan(run_app, mock_api, argv):
+    def refuse(request):
+        pytest.fail(f"request sent: {request.method} {request.url}")
+
+    captured = mock_api(refuse)
+    code, payload, err = run_app("--staff-id", "1", *argv)
+    name = argv[-1].partition("=")[0]
+    assert code == 3
+    assert payload == {"error": placement(name), "type": "usage", "exit_code": 3, "hint": HINT}
+    assert err == ""
+    assert captured == []
+
+
+def test_terminator_after_an_option_with_its_value_stops_the_scan(run_app, mock_api):
+    captured = mock_api(lambda req: pytest.fail("request sent"))
+    code, payload, _ = run_app("--dry-run", "tickets", "note", "5", "--text=hi", "--", "--page-all")
+    assert code == 3
+    assert payload["type"] == "usage"
+    assert "global flag" not in payload["error"]
+    assert captured == []
+
+
 def test_scan_raises_usage_error_under_cli_runner():
     result = run("tickets", "list", "--page-all")
     assert isinstance(result.exception, UsageError)

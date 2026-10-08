@@ -144,8 +144,10 @@ the staff name. A numeric option keeps a negative number for its range check. Th
 come from the callback's params, so an added root option is covered.
 
 A global flag placed after the resource raises `UsageError` saying where it goes. Two
-detectors produce it. `_RootGroup.resolve_command` scans the tokens up to a `--` terminator
-for a root-only flag, which also catches one swallowed as the value of the option before it.
+detectors produce it. `_RootGroup.resolve_command` scans the tokens for a root-only flag,
+which also catches one swallowed as the value of the option before it. A `--` ends the scan
+only when the token before it cannot take it as a value: a token that starts with `-`, is not
+`--` and holds no `=` may, so `--text -- --subject --dry-run` is still caught.
 A long flag matches bare or as `--flag=value`; a short one (`-f`, `-v`) matches only as a
 whole token. `app()` maps a `NoSuchOption` from a subcommand whose name is a root option,
 which covers a short flag with text attached (`-fjson`) and `--staff`/`--staff-id` on
