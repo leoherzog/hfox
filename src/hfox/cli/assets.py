@@ -15,6 +15,7 @@ from ._util import (
     require_ids,
     require_nonblank,
     split_csv_ints,
+    strip_or_reject,
 )
 from .cf import CF_HELP, CF_JSON_HELP, parse_asset_cf, parse_cf_json
 from .context import get_ctx
@@ -26,23 +27,23 @@ MAX_NAME_LENGTH = 200
 
 _FILTER_NAME_HELP = filter_help("name", paged=True)
 
-_NEW_CONTACT_HELP = (
+_NEW_CONTACTS_HELP = (
     "JSON array of new contacts to create and link; needs Manage all Contacts permission."
 )
 
 
 def _parse_new_contacts(raw: str | None) -> list | None:
-    """Parse --new-contact-json into a list of objects; None when blank or an empty array."""
+    """Parse --new-contacts-json into a list of objects; None when blank or an empty array."""
     if raw is None or raw.strip() == "":
         return None
-    parsed = parse_json(raw, "--new-contact-json")
+    parsed = parse_json(raw, "--new-contacts-json")
     if not isinstance(parsed, list):
         raise ValidationError(
-            "Invalid --new-contact-json: expected a JSON array of new-contact objects."
+            "Invalid --new-contacts-json: expected a JSON array of new-contact objects."
         )
     if not all(isinstance(item, dict) for item in parsed):
         raise ValidationError(
-            "Invalid --new-contact-json: each array element must be a JSON object."
+            "Invalid --new-contacts-json: each array element must be a JSON object."
         )
     return parsed or None
 
@@ -108,7 +109,9 @@ def create_asset(
     contact_group_ids: str = typer.Option(
         None, "--contact-group-ids", help="Comma-separated ids of contact groups to link."
     ),
-    new_contact_json: str = typer.Option(None, "--new-contact-json", help=_NEW_CONTACT_HELP),
+    new_contacts_json: str = typer.Option(
+        None, "--new-contacts-json", help=_NEW_CONTACTS_HELP
+    ),
     cf: list[str] = typer.Option(None, "--cf", help=CF_HELP),
     cf_json: str = typer.Option(None, "--cf-json", help=CF_JSON_HELP),
 ) -> None:
@@ -126,7 +129,7 @@ def create_asset(
             "created_by": created_by,
             "contact_ids": linked_contacts,
             "contact_group_ids": linked_groups,
-            "contacts": _parse_new_contacts(new_contact_json),
+            "contacts": _parse_new_contacts(new_contacts_json),
             "custom_fields": _custom_fields(cf, cf_json),
         }
     )
@@ -149,22 +152,24 @@ def update_asset(
     contact_group_ids: str = typer.Option(
         None, "--contact-group-ids", help="Comma-separated ids of contact groups to link."
     ),
-    new_contact_json: str = typer.Option(None, "--new-contact-json", help=_NEW_CONTACT_HELP),
+    new_contacts_json: str = typer.Option(
+        None, "--new-contacts-json", help=_NEW_CONTACTS_HELP
+    ),
     cf: list[str] = typer.Option(None, "--cf", help=CF_HELP),
     cf_json: str = typer.Option(None, "--cf-json", help=CF_JSON_HELP),
 ) -> None:
     """Update an asset."""
     obj = get_ctx(ctx)
+    name = strip_or_reject(name, "--name")
     _check_name(name)
-    if display_id is not None:
-        require_nonblank(display_id, "--display-id")
+    display_id = strip_or_reject(display_id, "--display-id")
     fields = compact(
         {
             "name": name,
             "display_id": display_id,
             "contact_ids": split_csv_ints(contact_ids),
             "contact_group_ids": split_csv_ints(contact_group_ids),
-            "contacts": _parse_new_contacts(new_contact_json),
+            "contacts": _parse_new_contacts(new_contacts_json),
             "custom_fields": _custom_fields(cf, cf_json),
         }
     )

@@ -11,7 +11,6 @@ from ._util import (
     exit_on_failures,
     filter_help,
     filter_rows,
-    nonblank_or_none,
     require_nonblank,
     split_csv,
     split_csv_ints,
@@ -36,16 +35,19 @@ def _validate_phone_type(phone_type: str | None) -> None:
 
 
 def _single_phone(values: list[str] | None) -> str | None:
-    """Return the one --phone value, or None when it is absent or blank."""
+    """Return the one --phone value stripped, or None when it is absent.
+
+    Raises ValidationError for more than one value or a blank one.
+    """
     if values and len(values) > 1:
         raise ValidationError("--phone takes one number per call; use create-bulk for more.")
-    return nonblank_or_none(values[0] if values else None)
+    return strip_or_reject(values[0] if values else None, "--phone")
 
 
-def _login_flag(set_login: bool | None) -> str | None:
-    if set_login is None:
+def _login_flag(enable_login: bool | None) -> str | None:
+    if enable_login is None:
         return None
-    return "TRUE" if set_login else "FALSE"
+    return "TRUE" if enable_login else "FALSE"
 
 
 def _domains(value: str | None) -> str | None:
@@ -97,8 +99,8 @@ def create_contact(
     phone_type: str = typer.Option(
         None, "--phone-type", help="Phone type: mo, w, m, h or o (default)."
     ),
-    set_login: bool = typer.Option(
-        None, "--set-login/--no-set-login", help="Enable or disable portal login."
+    enable_login: bool = typer.Option(
+        None, "--enable-login/--disable-login", help="Enable or disable portal login."
     ),
     cf: list[str] = typer.Option(None, "--cf", help=CF_HELP),
     cf_json: str = typer.Option(None, "--cf-json", help=CF_JSON_HELP),
@@ -107,7 +109,7 @@ def create_contact(
     obj = get_ctx(ctx)
     require_nonblank(name, "--name")
     number = _single_phone(phone)
-    email = nonblank_or_none(email)
+    email = strip_or_reject(email, "--email")
     if email is None and number is None:
         raise ValidationError("Provide --email or --phone.")
     _validate_phone_type(phone_type)
@@ -117,7 +119,7 @@ def create_contact(
     body = {"name": name, "email": email}
     if number is not None:
         body["phones"] = [{"type": phone_type or "o", "number": number, "is_primary": True}]
-    body.update(compact({"is_login_enabled": _login_flag(set_login)}))
+    body.update(compact({"is_login_enabled": _login_flag(enable_login)}))
     body.update(parse_cf_options(cf, prefix="c-cf-"))
     body.update(parse_cf_json(cf_json, "c-cf-"))
     result = obj.call("POST", "users/", json=body)
@@ -128,7 +130,7 @@ def create_contact(
 def update_contact(
     ctx: typer.Context,
     contact_id: str = typer.Argument(
-        ..., help="Contact id; an email address is documented only with --set-login."
+        ..., help="Contact id; an email address is documented only with --enable-login."
     ),
     name: str = typer.Option(None, "--name", help="New name."),
     email: str = typer.Option(None, "--email", help="New email address."),
@@ -139,13 +141,13 @@ def update_contact(
     phone_type: str = typer.Option(
         None, "--phone-type", help="Phone type: mo, w, m, h or o; required with --phone-id."
     ),
-    primary: bool = typer.Option(
-        None, "--primary/--no-primary", help="Set whether the phone is primary."
+    phone_primary: bool = typer.Option(
+        None, "--phone-primary/--no-phone-primary", help="Set whether the phone is primary."
     ),
     cf: list[str] = typer.Option(None, "--cf", help=CF_HELP),
     cf_json: str = typer.Option(None, "--cf-json", help=CF_JSON_HELP),
-    set_login: bool = typer.Option(
-        None, "--set-login/--no-set-login", help="Enable or disable portal login."
+    enable_login: bool = typer.Option(
+        None, "--enable-login/--disable-login", help="Enable or disable portal login."
     ),
 ) -> None:
     """Edit a contact. Only the fields you pass are sent; unsent custom fields may still reset."""
@@ -153,21 +155,21 @@ def update_contact(
     contact_id = validate_contact_ref(contact_id)
     number = _single_phone(phone)
     _validate_phone_type(phone_type)
-    if number is None and any(v is not None for v in (phone_id, phone_type, primary)):
-        raise ValidationError("--phone-id, --phone-type and --primary require --phone.")
+    if number is None and any(v is not None for v in (phone_id, phone_type, phone_primary)):
+        raise ValidationError("--phone-id, --phone-type and --phone-primary require --phone.")
     # An edited phone without a type would fall back to the documented default 'o'.
     if phone_id is not None and phone_type is None:
         raise ValidationError("--phone-id requires --phone-type.")
     phones = None
     if number is not None:
-        entry = {"id": phone_id, "type": phone_type, "number": number, "is_primary": primary}
+        entry = {"id": phone_id, "type": phone_type, "number": number, "is_primary": phone_primary}
         phones = [compact(entry)]
     body = compact(
         {
             "name": strip_or_reject(name, "--name"),
             "email": strip_or_reject(email, "--email"),
             "phones": phones,
-            "is_login_enabled": _login_flag(set_login),
+            "is_login_enabled": _login_flag(enable_login),
         }
     )
     body.update(parse_cf_options(cf, prefix="c-cf-"))
@@ -274,7 +276,9 @@ def update_group(
 def add_contacts(
     ctx: typer.Context,
     group_id: int = typer.Argument(..., min=1, help="Id of the contact group."),
-    contacts: str = typer.Option(..., "--contacts", help="Comma-separated contact ids (max 100)."),
+    contact_ids: str = typer.Option(
+        ..., "--contact-ids", help="Comma-separated contact ids (max 100)."
+    ),
     access_tickets: bool = typer.Option(
         None,
         "--access-tickets/--no-access-tickets",
@@ -283,11 +287,11 @@ def add_contacts(
 ) -> None:
     """Add or edit contacts of a contact group."""
     obj = get_ctx(ctx)
-    contact_ids = split_csv_ints(contacts)
-    if not contact_ids or len(contact_ids) > 100:
+    ids = split_csv_ints(contact_ids)
+    if not ids or len(ids) > 100:
         raise ValidationError("Adding contacts accepts between 1 and 100 contact ids.")
     payload = [
-        compact({"contact": cid, "access_tickets": access_tickets}) for cid in contact_ids
+        compact({"contact": cid, "access_tickets": access_tickets}) for cid in ids
     ]
     result = obj.call("POST", f"contact_group/{group_id}/update_contacts/", json=payload)
     obj.render(result)
@@ -298,14 +302,14 @@ def add_contacts(
 def remove_contacts(
     ctx: typer.Context,
     group_id: int = typer.Argument(..., min=1, help="Id of the contact group."),
-    contacts: str = typer.Option(..., "--contacts", help="Comma-separated contact ids."),
+    contact_ids: str = typer.Option(..., "--contact-ids", help="Comma-separated contact ids."),
 ) -> None:
     """Remove contacts from a contact group."""
     obj = get_ctx(ctx)
-    contact_ids = split_csv_ints(contacts)
-    if not contact_ids:
+    ids = split_csv_ints(contact_ids)
+    if not ids:
         raise ValidationError("Provide at least one contact id.")
-    body = {"contacts": contact_ids}
+    body = {"contacts": ids}
     result = obj.call("POST", f"contact_group/{group_id}/delete_contacts/", json=body)
     obj.render(result)
     exit_on_failures(result, benign=NOT_IN_GROUP)

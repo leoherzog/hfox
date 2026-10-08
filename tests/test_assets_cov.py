@@ -148,7 +148,7 @@ def test_assets_create_new_contact_json_sent_as_contacts(mock_api):
     result = run(
         "assets", "create",
         "--name", "X", "--display-id", "D",
-        "--new-contact-json", '[{"name": "Jane", "email": "j@x.org"}]',
+        "--new-contacts-json", '[{"name": "Jane", "email": "j@x.org"}]',
     )
     assert result.exit_code == 0, result.stdout
     sent = json.loads(captured[0].content)
@@ -163,11 +163,11 @@ def test_create_new_contact_json_invalid_json(mock_api):
     result = run(
         "assets", "create",
         "--name", "X", "--display-id", "D",
-        "--new-contact-json", "{not json",
+        "--new-contacts-json", "{not json",
     )
     assert result.exit_code != 0
     assert isinstance(result.exception, ValidationError)
-    assert "Invalid JSON in --new-contact-json" in str(result.exception)
+    assert "Invalid JSON in --new-contacts-json" in str(result.exception)
     assert captured == []
 
 
@@ -176,7 +176,7 @@ def test_create_new_contact_json_not_a_list(mock_api):
     result = run(
         "assets", "create",
         "--name", "X", "--display-id", "D",
-        "--new-contact-json", '{"name": "Jane"}',
+        "--new-contacts-json", '{"name": "Jane"}',
     )
     assert isinstance(result.exception, ValidationError)
     assert "expected a JSON array" in str(result.exception)
@@ -188,7 +188,7 @@ def test_create_new_contact_json_element_not_object(mock_api):
     result = run(
         "assets", "create",
         "--name", "X", "--display-id", "D",
-        "--new-contact-json", '[1, 2, 3]',
+        "--new-contacts-json", '[1, 2, 3]',
     )
     assert isinstance(result.exception, ValidationError)
     assert "each array element must be a JSON object" in str(result.exception)
@@ -573,7 +573,7 @@ def test_dry_run_cf_json_keeps_null_and_bare_ids():
 
 
 def test_dry_run_blank_new_contact_json_is_omitted():
-    p = dry("assets", "update", "10", "--name", "X", "--new-contact-json", "[]")
+    p = dry("assets", "update", "10", "--name", "X", "--new-contacts-json", "[]")
     assert p["body"] == {"updated_by": 1, "name": "X"}
 
 
@@ -627,9 +627,9 @@ def test_out_of_range_ids_and_paging_are_validation_errors(mock_api, monkeypatch
         (("create", "--name", "X", "--display-id", "D", "--cf-json", '{"t-cf-5": 1}'), "t-cf-5"),
         (("create", "--name", "X", "--display-id", "D", "--contact-group-ids", "a"), "integers"),
         (("create", "--name", "X", "--display-id", "D", "--contact-ids", " , "), "--contact-ids"),
-        (("update", "10", "--new-contact-json", "[NaN]"), "--new-contact-json"),
+        (("update", "10", "--new-contacts-json", "[NaN]"), "--new-contacts-json"),
         (("update", "10"), "Nothing to update"),
-        (("update", "10", "--new-contact-json", "[]"), "Nothing to update"),
+        (("update", "10", "--new-contacts-json", "[]"), "Nothing to update"),
         (("update", "10", "--cf-json", "{}"), "Nothing to update"),
     ],
 )

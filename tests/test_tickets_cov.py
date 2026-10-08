@@ -203,7 +203,7 @@ def test_create_existing_client_no_name_email(mock_api):
     captured = mock_api(ok_json({"id": 8}))
     result = run(
         "tickets", "create",
-        "--subject", "S", "--category", "2", "--client", "55", "--html", "<p>hi</p>",
+        "--subject", "S", "--category", "2", "--contact-id", "55", "--html", "<p>hi</p>",
     )
     assert result.exit_code == 0
     body = json.loads(captured[0].content)
@@ -329,7 +329,7 @@ def test_user_reply_posts_and_renders(mock_api):
     captured = mock_api(ok_json({"id": 200}))
     result = run(
         "tickets", "user-reply", "42",
-        "--user", "9", "--text", "thanks", "--cc", "a@x.org,b@x.org",
+        "--contact-id", "9", "--text", "thanks", "--cc", "a@x.org,b@x.org",
     )
     assert result.exit_code == 0
     req = captured[0]

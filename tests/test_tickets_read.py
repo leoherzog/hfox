@@ -169,7 +169,7 @@ VERBS = [
     ["get"],
     ["reply", "--text", "x"],
     ["note", "--text", "x"],
-    ["user-reply", "--user", "9", "--text", "x"],
+    ["user-reply", "--contact-id", "9", "--text", "x"],
     ["update", "--status", "3"],
     ["update-cf", "--cf", "1=x"],
     ["tags", "--add", "a"],

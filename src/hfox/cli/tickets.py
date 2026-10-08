@@ -152,7 +152,7 @@ def create_ticket(
     ),
     name: str = typer.Option(None, "--name", help="Contact name (for a new contact)."),
     email: str = typer.Option(None, "--email", help="Contact email (for a new contact)."),
-    client: int = typer.Option(None, "--client", min=1, help="Existing contact (client) id."),
+    contact_id: int = typer.Option(None, "--contact-id", min=1, help="Existing contact id."),
     phone: str = typer.Option(None, "--phone", help="Contact phone number."),
     text: str = typer.Option(None, "--text", help="Plain-text ticket body."),
     text_file: str = typer.Option(
@@ -189,18 +189,18 @@ def create_ticket(
     _check_unassign(unassign, assignee, attachment)
     text = nonblank_or_none(obj.text_input(text, text_file, "--text"))
     html = nonblank_or_none(obj.text_input(html, html_file, "--html"))
-    name, email = nonblank_or_none(name), nonblank_or_none(email)
+    name, email = strip_or_reject(name, "--name"), strip_or_reject(email, "--email")
     if not (text or html):
         raise ValidationError("Provide a ticket body with --text or --html.")
-    if not ((name and email) or client is not None):
+    if not ((name and email) or contact_id is not None):
         raise ValidationError(
-            "Identify the contact: pass both --name and --email, or --client <id>."
+            "Identify the contact: pass both --name and --email, or --contact-id <id>."
         )
     body = compact(
         {
             "name": name,
             "email": email,
-            "client": client,
+            "client": contact_id,
             "phone": strip_or_reject(phone, "--phone"),
             "subject": subject,
             "text": text,
@@ -426,7 +426,9 @@ def note(
 def user_reply(
     ctx: typer.Context,
     ticket_id: str = typer.Argument(..., help=TICKET_HELP),
-    user: int = typer.Option(..., "--user", min=1, help="Contact (user) id posting the reply."),
+    contact_id: int = typer.Option(
+        ..., "--contact-id", min=1, help="Id of the contact posting the reply."
+    ),
     text: str = typer.Option(None, "--text", help="Reply body."),
     text_file: str = typer.Option(None, "--text-file", help=text_file_help("reply body")),
     cc: str = typer.Option(None, "--cc", help="Comma-separated CC addresses."),
@@ -435,7 +437,7 @@ def user_reply(
         None, "--attachment", help="File path to attach (repeatable)."
     ),
 ):
-    """Post a reply to a ticket as the contact (user)."""
+    """Post a reply to a ticket as the contact."""
     obj = get_ctx(ctx)
     ticket_id = validate_ticket_id(ticket_id)
     text = obj.text_input(text, text_file, "--text")
@@ -444,7 +446,7 @@ def user_reply(
     require_nonblank(text, "--text")
     body = compact(
         {
-            "user": user,
+            "user": contact_id,
             "text": text,
             "cc": comma_join(split_csv(cc)),
             "bcc": comma_join(split_csv(bcc)),
@@ -669,8 +671,8 @@ def move(
     staff_id: int = typer.Option(None, "--staff-id", min=0, help=STAFF_ID_HELP),
     note: str = typer.Option(None, "--note", help="Note to record with the move."),
     note_file: str = typer.Option(None, "--note-file", help=text_file_help("move note")),
-    assign_to: int = typer.Option(
-        None, "--assign-to", min=1, help="Assignee staff id after the move."
+    assignee: int = typer.Option(
+        None, "--assignee", min=1, help="Assignee staff id after the move."
     ),
 ):
     """Move a ticket to another category; the acting agent's role needs the move permission."""
@@ -684,7 +686,7 @@ def move(
             "staff_id": obj.require_staff_id(staff_id, staff),
             "target_category_id": to_category,
             "move_note": note,
-            "assign_to": assign_to,
+            "assign_to": assignee,
         }
     )
     result = obj.call("POST", f"ticket/{ticket_id}/move/", json=body)

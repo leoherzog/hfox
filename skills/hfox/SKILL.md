@@ -117,8 +117,8 @@ The flag on the command wins, then the global flag, then `HFOX_STAFF_ID`, then t
 saved at login. A `--staff` value that matches no agent or several exits 3; the error for
 several carries `detail.staff_ids`.
 
-`--assignee`, `--assign-to` and `--agents` take staff ids; `--alert` takes `s`, `c` or a
-staff id. None accepts an email or name.
+`--assignee` and `--agents` take staff ids; `--alert` takes `s`, `c` or a staff id. None
+accepts an email or name.
 
 ## Confirmation needs `--yes`
 
@@ -162,11 +162,12 @@ A path must name a regular file. A directory, FIFO, device or process substituti
   ids; `--cf-json '{"5": ""}'` sends values as given. A `null` value cannot be combined
   with `--attachment`. A field given twice keeps the last value, and `007` names field 7.
 - An empty or whitespace-only value exits 3 on `--due-date`, `--created-at`,
-  `tickets create --phone`, `reply --subject`, `note --alert`, `move --note`, `--agents`,
-  `--ticket-attachments`, `contacts update --name` and `--email`, and `contacts groups create
-  --description` and `--domains`. An empty value clears on `contacts groups update
-  --description` and `--domains`, and `assets update --contact-ids ''` and
-  `--contact-group-ids ''` send an empty list.
+  `reply --subject`, `note --alert`, `move --note`, `--agents` and `--ticket-attachments`;
+  on `--name`, `--email` and `--phone` of `tickets create` and `contacts update`; on
+  `contacts create --email` and `--phone`; on `assets update --name` and `--display-id`; and
+  on `contacts groups create --description` and `--domains`. An empty value clears on
+  `contacts groups update --description` and `--domains`, and
+  `assets update --contact-ids ''` and `--contact-group-ids ''` send an empty list.
 - `contacts create` and `create-bulk` edit the contact that already has that email and
   reset every custom field they do not send.
 

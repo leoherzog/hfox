@@ -25,7 +25,9 @@ STAFF = [
     {"id": 2, "name": "Bob Jones", "email": "bob@x.org", "active": True},
 ]
 
-CREATE = ("tickets", "create", "--subject", "S", "--category", "3", "--client", "5", "--text", "b")
+CREATE = (
+    "tickets", "create", "--subject", "S", "--category", "3", "--contact-id", "5", "--text", "b"
+)
 REPLY = ("tickets", "reply", "5", "--text", "b")
 NOTE = ("tickets", "note", "5", "--text", "b")
 UPDATE = ("tickets", "update", "5", "--status", "3")
@@ -288,6 +290,8 @@ def test_invalid_command_is_rejected_before_the_staff_lookup(mock_api, argv, nam
 # -- optional one-line values: blank is rejected, outer whitespace is dropped --
 # (argv that is complete without the flag, the flag, its body key, a value)
 LINE_FLAGS = [
+    (CREATE, "--name", "name", "Han Solo"),
+    (CREATE, "--email", "email", "han@x.org"),
     (CREATE, "--phone", "phone", "555-0100"),
     (CREATE, "--created-at", "created_at", "2026-01-02T03:04:05"),
     (CREATE, "--due-date", "due_date", "2026-02-03"),
@@ -426,7 +430,7 @@ def test_subscribe_without_agents_omits_data():
 
 def test_user_reply_joins_cc_and_bcc():
     p = preview(
-        "tickets", "user-reply", "5", "--user", "9", "--text", "thanks",
+        "tickets", "user-reply", "5", "--contact-id", "9", "--text", "thanks",
         "--cc", " a@x.org , b@x.org", "--bcc", "c@x.org, ",
     )
     assert p["method"] == "POST"

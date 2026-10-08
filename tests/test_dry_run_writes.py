@@ -34,7 +34,7 @@ def preview(*args, env_extra=None):
 def test_dry_run_ticket_move_body():
     p = preview(
         "--dry-run", "tickets", "move", "42",
-        "--to-category", "9", "--note", "rerouted", "--assign-to", "7",
+        "--to-category", "9", "--note", "rerouted", "--assignee", "7",
     )
     assert p["method"] == "POST"
     assert p["url"].endswith("/ticket/42/move/")
@@ -120,7 +120,7 @@ def test_dry_run_contact_update_body():
 def test_dry_run_group_add_contacts_array_body():
     p = preview(
         "--dry-run", "contacts", "groups", "add-contacts", "3",
-        "--contacts", "11,12", "--access-tickets",
+        "--contact-ids", "11,12", "--access-tickets",
     )
     assert p["method"] == "POST"
     assert p["url"].endswith("/contact_group/3/update_contacts/")

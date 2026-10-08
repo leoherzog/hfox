@@ -78,7 +78,7 @@ def test_contacts_create_bulk_accepts_100_contacts(tmp_path):
 def test_groups_add_contacts_accepts_100_ids():
     ids = list(range(1, 101))
     p = dry(
-        "contacts", "groups", "add-contacts", "3", "--contacts", ",".join(str(i) for i in ids)
+        "contacts", "groups", "add-contacts", "3", "--contact-ids", ",".join(str(i) for i in ids)
     )
     assert p["url"].endswith("/contact_group/3/update_contacts/")
     assert p["body"] == [{"contact": i} for i in ids]
@@ -87,13 +87,13 @@ def test_groups_add_contacts_accepts_100_ids():
 @pytest.mark.parametrize("verb", ["add-contacts", "remove-contacts"])
 @pytest.mark.parametrize("blank", ["", " , "])
 def test_groups_membership_refuses_a_blank_contact_list(mock_api, verb, blank):
-    refused(mock_api, "contacts", "groups", verb, "3", "--contacts", blank, match="contact id")
+    refused(mock_api, "contacts", "groups", verb, "3", "--contact-ids", blank, match="contact id")
 
 
 @pytest.mark.parametrize("verb", ["add-contacts", "remove-contacts"])
 @pytest.mark.parametrize("ids", ["0", "4,0", "00"])
 def test_groups_membership_refuses_a_zero_contact_id(mock_api, verb, ids):
-    refused(mock_api, "contacts", "groups", verb, "3", "--contacts", ids, match="at least 1")
+    refused(mock_api, "contacts", "groups", verb, "3", "--contact-ids", ids, match="at least 1")
 
 
 # -- contact phones ----------------------------------------------------------
@@ -118,20 +118,20 @@ def test_contacts_empty_phone_type_is_refused(mock_api, argv):
     refused(mock_api, "contacts", *argv, "--phone-type", "", match="Invalid phone type")
 
 
-def test_contacts_create_blank_phone_with_phone_type_is_refused(mock_api):
+def test_contacts_create_blank_phone_is_refused_before_the_phone_type_check(mock_api):
     refused(
         mock_api, "contacts", "create", "--name", "J", "--email", "j@x.org",
         "--phone", " ", "--phone-type", "w",
-        match="--phone-type requires --phone",
+        match="--phone must not be blank.",
     )
 
 
 @pytest.mark.parametrize(
     "extra",
     [
-        ("--no-primary",),
-        ("--phone", " ", "--primary"),
-        ("--phone", "", "--phone-id", "31", "--phone-type", "w"),
+        ("--no-phone-primary",),
+        ("--phone-primary",),
+        ("--phone-id", "31", "--phone-type", "w"),
     ],
 )
 def test_contacts_update_phone_options_need_a_number(mock_api, extra):
@@ -140,14 +140,32 @@ def test_contacts_update_phone_options_need_a_number(mock_api, extra):
     )
 
 
+@pytest.mark.parametrize(
+    "extra", [("--phone-primary",), ("--phone-id", "31", "--phone-type", "w")]
+)
+def test_contacts_update_blank_phone_with_phone_options_is_refused(mock_api, extra):
+    refused(
+        mock_api, "contacts", "update", "12", "--phone", " ", *extra,
+        match="--phone must not be blank.",
+    )
+
+
 # -- optional one-line values ------------------------------------------------
+_NEW_BY_EMAIL = ("contacts", "create", "--name", "J", "--email", "j@x.org")
+_NEW_BY_PHONE = ("contacts", "create", "--name", "J", "--phone", "555")
 _EDIT = ("contacts", "update", "12", "--cf", "5=Gold")
 _GROUP = ("contacts", "groups", "create", "--name", "VIPs")
 BLANK_VALUES = [
+    (_NEW_BY_PHONE, "--email", ""),
+    (_NEW_BY_PHONE, "--email", " \t"),
+    (_NEW_BY_EMAIL, "--phone", ""),
+    (_NEW_BY_EMAIL, "--phone", "  "),
     (_EDIT, "--name", ""),
     (_EDIT, "--name", " \t"),
     (_EDIT, "--email", ""),
     (_EDIT, "--email", "  "),
+    (_EDIT, "--phone", ""),
+    (_EDIT, "--phone", "  "),
     (_GROUP, "--description", ""),
     (_GROUP, "--description", "  "),
     (_GROUP, "--domains", ""),
@@ -167,9 +185,23 @@ def test_contacts_blank_one_line_value_is_refused(mock_api, argv, flag, blank, d
     assert message == f"{flag} must not be blank."
 
 
+def test_contacts_create_sends_email_and_phone_without_outer_whitespace():
+    p = dry("contacts", "create", "--name", "n", "--email", " a@x.com ", "--phone", " 123 ")
+    assert p["body"] == {
+        "name": "n",
+        "email": "a@x.com",
+        "phones": [{"type": "o", "number": "123", "is_primary": True}],
+    }
+
+
 def test_contacts_update_sends_name_and_email_without_outer_whitespace():
     p = dry("contacts", "update", "12", "--name", "  Jane Doe ", "--email", " j@x.org\t")
     assert p["body"] == {"name": "Jane Doe", "email": "j@x.org"}
+
+
+def test_contacts_update_sends_phone_without_outer_whitespace():
+    p = dry("contacts", "update", "12", "--phone", "\t999 ")
+    assert p["body"] == {"phones": [{"number": "999"}]}
 
 
 def test_groups_create_sends_description_without_outer_whitespace():
@@ -271,7 +303,7 @@ _ASSET = ("assets", "create", "--name", "X", "--display-id", "D")
         ((*_PHONE_EDIT, "--phone-id", "0"), "--phone-id"),
         (("contacts", "groups", "get", "0"), "group_id"),
         (("contacts", "groups", "update", "0", "--description", "d"), "group_id"),
-        (("contacts", "groups", "add-contacts", "0", "--contacts", "1"), "group_id"),
+        (("contacts", "groups", "add-contacts", "0", "--contact-ids", "1"), "group_id"),
         ((*_ASSET, "--asset-type", "0"), "--asset-type"),
         (("assets", "delete", "0", "--yes"), "asset_id"),
         (("assets", "custom-fields", "list", "--asset-type", "0"), "--asset-type"),
@@ -294,8 +326,8 @@ def test_out_of_range_value_exits_3_as_validation(app_error, mock_api, argv, nam
         (("contacts", "create", "--email", "j@x.org"), "--name"),
         (("contacts", "create-bulk"), "--file"),
         (("contacts", "groups", "create"), "--name"),
-        (("contacts", "groups", "add-contacts", "3"), "--contacts"),
-        (("contacts", "groups", "remove-contacts", "3"), "--contacts"),
+        (("contacts", "groups", "add-contacts", "3"), "--contact-ids"),
+        (("contacts", "groups", "remove-contacts", "3"), "--contact-ids"),
         (("assets", "create", "--display-id", "D"), "--name"),
         (("assets", "create", "--name", "X"), "--display-id"),
     ],
@@ -349,35 +381,51 @@ def test_assets_create_without_asset_type_sends_no_query():
 
 def test_assets_update_sends_new_contacts_as_contacts():
     new = [{"name": "Jane", "email": "j@x.org"}]
-    p = dry("assets", "update", "10", "--new-contact-json", json.dumps(new))
+    p = dry("assets", "update", "10", "--new-contacts-json", json.dumps(new))
     assert p["body"] == {"updated_by": 1, "contacts": new}
 
 
 @pytest.mark.parametrize("blank", ["", "  "])
-def test_assets_blank_new_contact_json_is_omitted(blank):
-    p = dry(*_ASSET, "--new-contact-json", blank)
+def test_assets_blank_new_contacts_json_is_omitted(blank):
+    p = dry(*_ASSET, "--new-contacts-json", blank)
     assert p["body"] == {"name": "X", "display_id": "D", "created_by": 1}
 
 
 @pytest.mark.parametrize(
     "argv, flag",
     [
-        ((*_ASSET, "--new-contact-json", '[{"name": "Jane"}, 5]'), "--new-contact-json"),
+        ((*_ASSET, "--new-contacts-json", '[{"name": "Jane"}, 5]'), "--new-contacts-json"),
         (("assets", "update", "10", "--name", "x" * 201), "--name"),
+        (("assets", "update", "10", "--name", ""), "--name"),
+        (("assets", "update", "10", "--name", " \t"), "--name"),
         (("assets", "update", "10", "--display-id", ""), "--display-id"),
+        (("assets", "update", "10", "--display-id", "  "), "--display-id"),
         ((*_ASSET, "--contact-group-ids", ""), "--contact-group-ids"),
         ((*_ASSET, "--contact-group-ids", " , "), "--contact-group-ids"),
     ],
     ids=[
         "new contacts mixed with a non-object",
         "update name over 200 characters",
+        "update empty name",
+        "update blank name",
         "update empty display id",
+        "update blank display id",
         "create empty contact group ids",
         "create blank contact group ids",
     ],
 )
 def test_assets_invalid_value_is_refused_naming_its_flag(mock_api, argv, flag):
     refused(mock_api, *argv, match=flag)
+
+
+def test_assets_update_sends_name_and_display_id_without_outer_whitespace():
+    p = dry("assets", "update", "10", "--name", " a ", "--display-id", "\td ")
+    assert p["body"] == {"updated_by": 1, "name": "a", "display_id": "d"}
+
+
+def test_assets_update_checks_the_name_length_after_stripping():
+    name = "x" * 200
+    assert dry("assets", "update", "10", "--name", f" {name} ")["body"]["name"] == name
 
 
 @pytest.mark.parametrize("argv", [_ASSET, ("assets", "update", "10")], ids=["create", "update"])
@@ -418,6 +466,8 @@ def test_assets_custom_field_id_is_sent_without_leading_zeros(argv, options, fie
         ("create", "--name", " ", "--display-id", "D"),
         ("create", "--name", "X", "--display-id", "D", "--contact-ids", ""),
         ("update", "10"),
+        ("update", "10", "--name", " "),
+        ("update", "10", "--display-id", " "),
     ],
 )
 def test_assets_invalid_input_is_refused_before_the_staff_lookup(mock_api, argv):

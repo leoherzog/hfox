@@ -212,10 +212,10 @@ def test_contacts_create_no_phone_omits_phones_uses_cf_json():
 
 
 # -- contacts update -------------------------------------------------------
-def test_contacts_update_set_login_true_maps_to_TRUE():
+def test_contacts_update_enable_login_maps_to_TRUE():
     p = preview(
         "--dry-run", "contacts", "update", "55",
-        "--name", "Jane", "--set-login",
+        "--name", "Jane", "--enable-login",
     )
     assert p["method"] == "POST"
     assert p["url"].endswith("/user/55/")
@@ -223,10 +223,10 @@ def test_contacts_update_set_login_true_maps_to_TRUE():
     assert p["body"]["is_login_enabled"] == "TRUE"
 
 
-def test_contacts_update_no_set_login_sends_false():
+def test_contacts_update_disable_login_sends_false():
     p = preview(
         "--dry-run", "contacts", "update", "55",
-        "--email", "new@x.org", "--no-set-login",
+        "--email", "new@x.org", "--disable-login",
     )
     assert p["body"]["is_login_enabled"] == "FALSE"
     assert p["body"]["email"] == "new@x.org"
@@ -528,7 +528,7 @@ def test_groups_update_empty_body_rejected(mock_api):
 def test_groups_add_contacts_array_body():
     p = preview(
         "--dry-run", "contacts", "groups", "add-contacts", "3",
-        "--contacts", "11,12", "--access-tickets",
+        "--contact-ids", "11,12", "--access-tickets",
     )
     assert p["method"] == "POST"
     assert p["url"].endswith("/contact_group/3/update_contacts/")
@@ -541,7 +541,7 @@ def test_groups_add_contacts_array_body():
 def test_groups_add_contacts_omits_access_tickets_by_default():
     p = preview(
         "--dry-run", "contacts", "groups", "add-contacts", "5",
-        "--contacts", "1",
+        "--contact-ids", "1",
     )
     assert p["body"] == [{"contact": 1}]
 
@@ -549,7 +549,7 @@ def test_groups_add_contacts_omits_access_tickets_by_default():
 def test_groups_add_contacts_no_access_tickets_applies_to_every_contact():
     p = preview(
         "--dry-run", "contacts", "groups", "add-contacts", "5",
-        "--contacts", "1,2", "--no-access-tickets",
+        "--contact-ids", "1,2", "--no-access-tickets",
     )
     assert p["body"] == [
         {"contact": 1, "access_tickets": False},
@@ -560,7 +560,7 @@ def test_groups_add_contacts_no_access_tickets_applies_to_every_contact():
 def test_groups_add_contacts_over_100_is_validation_error(mock_api):
     captured = mock_api(lambda req: httpx.Response(200, json={}))
     ids = ",".join(str(i) for i in range(1, 102))
-    result = run("contacts", "groups", "add-contacts", "3", "--contacts", ids)
+    result = run("contacts", "groups", "add-contacts", "3", "--contact-ids", ids)
     assert result.exit_code != 0
     assert isinstance(result.exception, ValidationError)
     assert int(result.exception.exit_code) == 3
@@ -570,14 +570,14 @@ def test_groups_add_contacts_over_100_is_validation_error(mock_api):
 
 def test_groups_add_contacts_over_100_exits_3():
     ids = ",".join(str(i) for i in range(1, 102))
-    proc = run_app(["contacts", "groups", "add-contacts", "3", "--contacts", ids])
+    proc = run_app(["contacts", "groups", "add-contacts", "3", "--contact-ids", ids])
     assert proc.returncode == 3
     assert "between 1 and 100" in json.loads(proc.stdout)["error"]
 
 
 def test_groups_add_contacts_rejects_non_int():
     result = run(
-        "--dry-run", "contacts", "groups", "add-contacts", "3", "--contacts", "abc",
+        "--dry-run", "contacts", "groups", "add-contacts", "3", "--contact-ids", "abc",
     )
     assert isinstance(result.exception, ValidationError)
 
@@ -635,7 +635,7 @@ def test_groups_update_live_renders_result(mock_api):
 def test_groups_add_contacts_live_renders_result(mock_api):
     resp = [{"data": {"access_tickets": False, "contact": 11}, "success": True}]
     captured = mock_api(lambda req: httpx.Response(200, json=resp))
-    result = run("contacts", "groups", "add-contacts", "3", "--contacts", "11")
+    result = run("contacts", "groups", "add-contacts", "3", "--contact-ids", "11")
     assert result.exit_code == 0, result.stdout
     assert captured[0].url.path.endswith("/contact_group/3/update_contacts/")
     assert json.loads(result.stdout) == resp
@@ -649,7 +649,7 @@ def test_groups_remove_contacts_live_renders_result(mock_api):
          "success": False},
     ]
     captured = mock_api(lambda req: httpx.Response(200, json=resp))
-    result = run("contacts", "groups", "remove-contacts", "3", "--contacts", "11,12")
+    result = run("contacts", "groups", "remove-contacts", "3", "--contact-ids", "11,12")
     assert result.exit_code == 0, result.stdout
     assert captured[0].url.path.endswith("/contact_group/3/delete_contacts/")
     assert json.loads(result.stdout) == resp
@@ -659,7 +659,7 @@ def test_groups_remove_contacts_live_renders_result(mock_api):
 def test_groups_remove_contacts_body():
     p = preview(
         "--dry-run", "contacts", "groups", "remove-contacts", "3",
-        "--contacts", "11, 12, 13",
+        "--contact-ids", "11, 12, 13",
     )
     assert p["method"] == "POST"
     assert p["url"].endswith("/contact_group/3/delete_contacts/")
@@ -726,8 +726,8 @@ def test_contacts_send_the_id_without_leading_zeros(verb):
     assert p["url"].endswith("/api/1.1/json/user/7/")
 
 
-def test_contacts_update_by_email_set_login():
-    p = preview("--dry-run", "contacts", "update", "a@x.com", "--no-set-login")
+def test_contacts_update_by_email_disable_login():
+    p = preview("--dry-run", "contacts", "update", "a@x.com", "--disable-login")
     assert p["method"] == "POST"
     assert p["url"].endswith("/user/a@x.com/")
     assert p["body"] == {"is_login_enabled": "FALSE"}
@@ -737,22 +737,12 @@ def test_contacts_create_requires_email_or_phone(mock_api):
     _fails_offline(mock_api, "contacts", "create", "--name", "Jane", match="--email or --phone")
 
 
-def test_contacts_create_blank_email_and_phone_fail(mock_api):
+@pytest.mark.parametrize("blank", ["", " "])
+def test_contacts_create_blank_email_is_not_sent_as_null(mock_api, blank):
     _fails_offline(
-        mock_api, "contacts", "create", "--name", "Jane", "--email", " ", "--phone", "",
-        match="--email or --phone",
+        mock_api, "contacts", "create", "--name", "Jane", "--email", blank, "--phone", "555",
+        match="--email must not be blank",
     )
-
-
-def test_contacts_create_blank_email_with_phone_sends_null():
-    p = preview(
-        "--dry-run", "contacts", "create", "--name", "Jane", "--email", "", "--phone", "555",
-    )
-    assert p["body"] == {
-        "name": "Jane",
-        "email": None,
-        "phones": [{"type": "o", "number": "555", "is_primary": True}],
-    }
 
 
 def test_contacts_create_blank_name_fails(mock_api):
@@ -777,11 +767,11 @@ def test_contacts_create_phone_type_without_phone_fails(mock_api):
     )
 
 
-def test_contacts_create_set_login_flags():
+def test_contacts_create_login_flags():
     base = ("--dry-run", "contacts", "create", "--name", "J", "--email", "j@x.org")
     assert "is_login_enabled" not in preview(*base)["body"]
-    assert preview(*base, "--set-login")["body"]["is_login_enabled"] == "TRUE"
-    assert preview(*base, "--no-set-login")["body"]["is_login_enabled"] == "FALSE"
+    assert preview(*base, "--enable-login")["body"]["is_login_enabled"] == "TRUE"
+    assert preview(*base, "--disable-login")["body"]["is_login_enabled"] == "FALSE"
 
 
 def test_contacts_create_cf_keys_allow_only_contact_prefix(mock_api):
@@ -803,12 +793,12 @@ def test_contacts_create_cf_help_shows_list_syntax():
     assert "'<id>=[a,b]'" in result.stdout
 
 
-def test_contacts_update_primary_is_tri_state():
+def test_contacts_update_phone_primary_is_tri_state():
     base = ("--dry-run", "contacts", "update", "12", "--phone", "999")
-    assert preview(*base, "--primary")["body"]["phones"] == [
+    assert preview(*base, "--phone-primary")["body"]["phones"] == [
         {"number": "999", "is_primary": True}
     ]
-    assert preview(*base, "--no-primary")["body"]["phones"] == [
+    assert preview(*base, "--no-phone-primary")["body"]["phones"] == [
         {"number": "999", "is_primary": False}
     ]
 
@@ -821,7 +811,11 @@ def test_contacts_update_phone_id_requires_phone_type(mock_api):
 
 
 def test_contacts_update_phone_options_require_phone(mock_api):
-    for extra in (("--phone-id", "31", "--phone-type", "w"), ("--primary",), ("--phone-type", "w")):
+    for extra in (
+        ("--phone-id", "31", "--phone-type", "w"),
+        ("--phone-primary",),
+        ("--phone-type", "w"),
+    ):
         _fails_offline(
             mock_api, "contacts", "update", "12", "--name", "x", *extra,
             match="require --phone",
@@ -841,7 +835,7 @@ def test_contacts_update_empty_body_fails(mock_api):
 
 def test_groups_ids_must_be_positive_ints():
     for gid in ("abc", "0", "2/../7"):
-        proc = run_app(["contacts", "groups", "remove-contacts", gid, "--contacts", "1"])
+        proc = run_app(["contacts", "groups", "remove-contacts", gid, "--contact-ids", "1"])
         assert proc.returncode == 3, (gid, proc.stdout)
     proc = run_app(["contacts", "groups", "get", "abc"])
     assert proc.returncode == 3
@@ -881,7 +875,7 @@ def test_groups_add_contacts_failure_exits_1(mock_api):
         {"errors": [{"field": "contact", "errors": ["Select a valid choice."]}], "success": False},
     ]
     mock_api(lambda req: httpx.Response(200, json=resp))
-    result = run("contacts", "groups", "add-contacts", "3", "--contacts", "1,200")
+    result = run("contacts", "groups", "add-contacts", "3", "--contact-ids", "1,200")
     assert result.exit_code == 1
     assert json.loads(result.stdout) == resp
     assert "1 of 2 entries failed" in result.stderr
@@ -894,7 +888,7 @@ def test_groups_remove_contacts_missing_contact_exits_1(mock_api):
         {"data": {"message": "Contact does not exist", "contact": 100}, "success": False},
     ]
     mock_api(lambda req: httpx.Response(200, json=resp))
-    result = run("contacts", "groups", "remove-contacts", "3", "--contacts", "3,100")
+    result = run("contacts", "groups", "remove-contacts", "3", "--contact-ids", "3,100")
     assert result.exit_code == 1
     assert json.loads(result.stdout) == resp
     assert "1 of 2 entries failed" in result.stderr
@@ -906,6 +900,6 @@ def test_groups_remove_contacts_not_in_group_is_benign(mock_api):
          "success": False},
     ]
     mock_api(lambda req: httpx.Response(200, json=resp))
-    result = run("contacts", "groups", "remove-contacts", "3", "--contacts", "3")
+    result = run("contacts", "groups", "remove-contacts", "3", "--contact-ids", "3")
     assert result.exit_code == 0, result.stderr
     assert result.stderr == ""

@@ -24,7 +24,7 @@ ENV = {
 
 CREATE = (
     "--dry-run", "tickets", "create", "--subject", "S", "--category", "3",
-    "--client", "5", "--text", "body",
+    "--contact-id", "5", "--text", "body",
 )
 
 # Documented create-bulk response: one success and one validation failure.
@@ -172,9 +172,9 @@ def test_create_contact_cf_json_rejects_other_prefix():
 @pytest.mark.parametrize(
     ("flags", "word"),
     [
-        (["--client", "5", "--text", "   "], "body"),
-        (["--client", "5", "--html", " "], "body"),
-        (["--name", " ", "--email", " ", "--text", "t"], "contact"),
+        (["--contact-id", "5", "--text", "   "], "body"),
+        (["--contact-id", "5", "--html", " "], "body"),
+        (["--name", "Han", "--text", "t"], "contact"),
     ],
 )
 def test_create_blank_body_or_contact_is_rejected(flags, word):
@@ -185,7 +185,7 @@ def test_create_blank_body_or_contact_is_rejected(flags, word):
 def test_create_blank_subject_is_rejected():
     assert "--subject" in rejected(
         "--dry-run", "tickets", "create", "--subject", "  ", "--category", "3",
-        "--client", "5", "--text", "body",
+        "--contact-id", "5", "--text", "body",
     )
 
 
@@ -207,23 +207,33 @@ def test_create_null_value_rejects_attachment_before_reading_it(flag, tmp_path):
 @pytest.mark.parametrize(
     "contact", [[], ["--name", "Han", "--email", "h@x.org"]], ids=["alone", "with-name-and-email"]
 )
-def test_create_client_below_1_exits_3(monkeypatch, capsys, value, contact):
+def test_create_contact_id_below_1_exits_3(monkeypatch, capsys, value, contact):
     code, payload = run_main(
         monkeypatch, capsys, "--dry-run", "tickets", "create", "--subject", "S",
-        "--category", "3", "--text", "body", "--client", value, *contact,
+        "--category", "3", "--text", "body", "--contact-id", value, *contact,
     )
     assert code == 3
     assert (payload["type"], payload["exit_code"]) == ("validation", 3)
-    assert payload["error"].startswith("Invalid value for '--client'")
+    assert payload["error"].startswith("Invalid value for '--contact-id'")
     assert "dry_run" not in payload
 
 
-def test_create_client_1_is_sent():
+def test_create_contact_id_1_is_sent():
     p = preview(
         "--dry-run", "tickets", "create", "--subject", "S", "--category", "3",
-        "--client", "1", "--text", "body",
+        "--contact-id", "1", "--text", "body",
     )
     assert p["body"] == {"client": 1, "subject": "S", "text": "body", "category": 3}
+
+
+def test_create_new_contact_is_sent_without_outer_whitespace():
+    p = preview(
+        "--dry-run", "tickets", "create", "--subject", "S", "--category", "3",
+        "--name", " Han ", "--email", "\th@x.org ", "--text", "body",
+    )
+    assert p["body"] == {
+        "name": "Han", "email": "h@x.org", "subject": "S", "text": "body", "category": 3,
+    }
 
 
 # -- create-bulk: partial failure -------------------------------------------
@@ -307,7 +317,7 @@ def test_forward_blank_subject_or_message_is_rejected(flags, flag):
 
 def test_user_reply_blank_text_is_rejected():
     assert "--text" in rejected(
-        "--dry-run", "tickets", "user-reply", "5", "--user", "9", "--text", " \t"
+        "--dry-run", "tickets", "user-reply", "5", "--contact-id", "9", "--text", " \t"
     )
 
 
@@ -386,7 +396,7 @@ def test_create_unassign_rejects_attachment(tmp_path):
 
 # -- bodies from a file or stdin ----------------------------------------------
 CREATE_NO_BODY = (
-    "tickets", "create", "--subject", "S", "--category", "3", "--client", "5",
+    "tickets", "create", "--subject", "S", "--category", "3", "--contact-id", "5",
 )
 FORWARD_NO_BODY = ("tickets", "forward", "5", "--to", "a@x.org", "--subject", "s")
 
@@ -398,7 +408,7 @@ BODY_FLAGS = [
     (("tickets", "reply", "5"), "--html-file", "--html", "html"),
     (("tickets", "note", "5"), "--text-file", "--text", "plaintext"),
     (("tickets", "note", "5"), "--html-file", "--html", "html"),
-    (("tickets", "user-reply", "5", "--user", "9"), "--text-file", "--text", "text"),
+    (("tickets", "user-reply", "5", "--contact-id", "9"), "--text-file", "--text", "text"),
     (FORWARD_NO_BODY, "--message-file", "--message", "message"),
     (("tickets", "move", "5", "--to-category", "2"), "--note-file", "--note", "move_note"),
 ]
@@ -409,7 +419,7 @@ EMPTY_BODY = [
     (("tickets", "reply", "5"), "--text-file"),
     (("tickets", "note", "5"), "--html-file"),
     (CREATE_NO_BODY, "--text-file"),
-    (("tickets", "user-reply", "5", "--user", "9"), "--text-file"),
+    (("tickets", "user-reply", "5", "--contact-id", "9"), "--text-file"),
     (FORWARD_NO_BODY, "--message-file"),
 ]
 EMPTY_IDS = [argv[1] for argv, _flag in EMPTY_BODY]
@@ -492,7 +502,7 @@ def test_body_file_is_sent_on_the_wire(mock_api, tmp_path):
 
 
 def test_user_reply_needs_a_body():
-    assert "--text-file" in rejected("--dry-run", "tickets", "user-reply", "5", "--user", "9")
+    assert "--text-file" in rejected("--dry-run", "tickets", "user-reply", "5", "--contact-id", "9")
 
 
 def test_forward_needs_a_message():
@@ -556,7 +566,7 @@ def test_create_bulk_file_in_config_dir_is_rejected(tmp_path):
         (*CREATE_NO_BODY, "--text", "b"),
         ("tickets", "reply", "5", "--text", "b"),
         ("tickets", "note", "5", "--text", "b"),
-        ("tickets", "user-reply", "5", "--user", "9", "--text", "b"),
+        ("tickets", "user-reply", "5", "--contact-id", "9", "--text", "b"),
         (*FORWARD_NO_BODY, "--message", "m"),
     ],
     ids=["create", "reply", "note", "user-reply", "forward"],
@@ -595,7 +605,7 @@ def test_attachment_holding_credentials_is_rejected(tmp_path):
 
 
 # -- id, count and duration bounds --------------------------------------------
-_NEW = ("tickets", "create", "--subject", "S", "--client", "5", "--text", "b")
+_NEW = ("tickets", "create", "--subject", "S", "--contact-id", "5", "--text", "b")
 _NEW_IN_3 = (*_NEW, "--category", "3")
 _REPLY = ("tickets", "reply", "5", "--text", "b")
 _NOTE = ("tickets", "note", "5", "--text", "b")
@@ -618,9 +628,9 @@ ID_FLAGS = [
     (_UPDATE, "--status", "status"),
     (_UPDATE, "--priority", "priority"),
     (_UPDATE, "--assignee", "assignee"),
-    (("tickets", "user-reply", "5", "--text", "b"), "--user", "user"),
+    (("tickets", "user-reply", "5", "--text", "b"), "--contact-id", "user"),
     (_MOVE, "--to-category", "target_category_id"),
-    ((*_MOVE, "--to-category", "2"), "--assign-to", "assign_to"),
+    ((*_MOVE, "--to-category", "2"), "--assignee", "assign_to"),
 ]
 ID_FLAG_IDS = [f"{argv[1]} {flag}" for argv, flag, _ in ID_FLAGS]
 TIME_SPENT = [_REPLY, _NOTE, _UPDATE]

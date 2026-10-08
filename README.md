@@ -186,8 +186,8 @@ takes the agent whose whole email, or failing that whole name, equals the text, 
 case. No match, several matches and a value made of digits exit 3. The lookup is a read, so
 it is also sent under `--dry-run` and needs credentials.
 
-`--assignee`, `--assign-to` and `--agents` take staff ids; `--alert` takes `s`, `c` or a
-staff id. None accepts an email or name. Find the ids with `hfox system staff`.
+`--assignee` and `--agents` take staff ids; `--alert` takes `s`, `c` or a staff id. None
+accepts an email or name. Find the ids with `hfox system staff`.
 
 ## Input from files and stdin
 
@@ -319,8 +319,9 @@ assignee. `contacts create` and `create-bulk` also edit the contact with the sam
 reset custom fields they do not send.
 
 An empty or whitespace-only value exits 3 on `--due-date`, `--created-at`,
-`tickets create --phone`, `reply --subject`, `note --alert`, `move --note`,
-`contacts update --name` and `--email`, and `contacts groups create --description` and
+`reply --subject`, `note --alert` and `move --note`; on `--name`, `--email` and `--phone` of
+`tickets create` and `contacts update`; on `contacts create --email` and `--phone`; on
+`assets update --name` and `--display-id`; and on `contacts groups create --description` and
 `--domains`. Apart from `--note`, these values are sent without outer whitespace. `--agents`
 and `--ticket-attachments`, when given, exit 3 unless they list an id. An empty value clears on
 `contacts groups update --description` and `--domains`, and `assets update --contact-ids ''`
@@ -355,7 +356,7 @@ hfox tickets delete 1234 --yes
 hfox -f table contacts list -q name:han
 hfox contacts create --name "Leia" --email leia@rebels.org --cf 4=VIP
 hfox contacts create-bulk --file - < contacts.json
-hfox contacts groups add-contacts 12 --contacts 41,200 --access-tickets
+hfox contacts groups add-contacts 12 --contact-ids 41,200 --access-tickets
 
 # Assets
 hfox -f table assets list --asset-type 1

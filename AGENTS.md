@@ -286,15 +286,15 @@ Helpers:
   `staff_id: int = typer.Option(None, "--staff-id", min=0, help=STAFF_ID_HELP)` and calls
   `obj.require_staff_id(staff_id, staff)`. No other flag spelling names the actor. Only
   `tickets subscribe` and `unsubscribe` write their own help, since their pair is not the
-  actor. Of the flags that name another agent, `--assignee`, `--assign-to` and `--agents`
-  take staff ids and `--alert` takes `s`, `c` or a staff id. None accepts an email or name.
+  actor. Of the flags that name another agent, `--assignee` and `--agents` take staff ids
+  and `--alert` takes `s`, `c` or a staff id. None accepts an email or name.
 - **Destructive commands** take `yes: bool = typer.Option(False, "--yes", "-y", help=YES_HELP)`
   and call `obj.confirm(message, yes=yes)`. The order is validate, resolve staff, confirm,
   call. Never call `typer.confirm` or `typer.prompt`; use `obj.confirm` and `obj.prompt`.
 - **Bodies:** a text flag `--x` gets a sibling `--x-file` with `help=text_file_help(...)`, read
   through `obj.text_input(inline, file, "--x")`. A JSON `--file` flag is read with
   `obj.read_json(file, "--file")`, which accepts `-`. `--cf-json`, `--contact-cf-json` and
-  `--new-contact-json` are inline only.
+  `--new-contacts-json` are inline only.
 - **Blank values:** an optional one-line string in a write body goes through
   `strip_or_reject(value, "--x")`, and an optional id list through `require_ids(value,
   "--x")` unless a blank value clears. An optional body read through `obj.text_input` gets
