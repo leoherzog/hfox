@@ -117,6 +117,15 @@ hfox <args> → Typer (main.cli) → callback builds AppContext from global flag
 error on stdout plus its exit code, so commands **raise** `HfoxError` subclasses rather than
 printing and exiting.
 
+Under `--page-all` with JSON output, every JSON document on stdout is one compact line, so
+stdout is always NDJSON. The root callback enters `output.ndjson_framing` for the life of the
+root context, and `output.render` honors it for JSON, so a direct
+`output.render(x, OutputFormat.JSON)` is covered. `_fail` runs after that context closes and
+frames the error from `_RootGroup.ndjson`. `app()` seeds it through `_early_ndjson`:
+`--page-all` before the resource, unless `--format` or `HFOX_FORMAT` names table, csv or
+yaml. The callback replaces it once the format is resolved, so an error raised earlier, such
+as a root parse error, a misplaced flag or a config error, never consults `default_format`.
+
 ### Global flags
 
 The root callback declares, in this order: `--format/-f`, `--dry-run`, `--page-all`,
@@ -165,7 +174,7 @@ the only API a command module uses to talk to HappyFox, read input, prompt or em
 |--------|---------|
 | `obj.call(method, path, *, params, json, data, files)` | single GETs and **all writes**; returns the parsed body, `None` when empty and text when not JSON; `--dry-run` prints the exact wire request and exits |
 | `obj.paginate(path, *, params, root_key="data", filters=None)` | paginated lists; honors `--dry-run`. `--page-all` + JSON **streams NDJSON**, one compact line per page or error, then exits, so `render_list` never runs; other formats get the flat record list, or the body of an only page that holds no row list, which `render_list` shows as it does without `--page-all`. A filtered walk always returns the matching rows. Without `--page-all`, the single page from `client.get_page`. Warns on stderr when `--page-limit` truncates and still exits 0. In both modes a page with a malformed `page_info` or `page_count`, or one that reports more than one page and holds no row list, is an `HfoxError`: NDJSON prints the page and then the error line, the single page and other formats raise before rendering. `filters={field: text}` applies `filter_rows` to every page, NDJSON lines included; without `--page-all` it raises `ValidationError`, even under `--dry-run`. Filters never reach the request |
-| `obj.render(data)` | render one object/list in the active `--format` |
+| `obj.render(data)` | render one object/list in the active `--format`; JSON is one compact line under `--page-all` |
 | `obj.render_list(body, *, root_key="data")` | render a listing: JSON keeps the `{page_info, data}` envelope; other formats unwrap to rows |
 | `obj.resolve_staff_id(staff_id=None, staff=None)` | staff id from the command's `--staff-id` and `--staff` values; both given raises `ValidationError`. Order: command id, command `--staff` lookup, global `--staff-id`, global `--staff` lookup, then the configured default; may be `None` |
 | `obj.require_staff_id(staff_id=None, staff=None)` | same, but raises `ValidationError` if none is available |

@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import os
 import sys
+from collections.abc import Iterator
 from typing import NoReturn
 
 import typer
@@ -21,6 +22,7 @@ from .context import AppContext, as_hfox_error
 from .output import OutputFormat
 
 _FORMAT_NAMES = {*(f.value for f in OutputFormat), "yml"}
+_OTHER_FORMATS = _FORMAT_NAMES - {OutputFormat.JSON.value}
 
 # Declared by commands that take a staff identity, so the token scan cannot claim them.
 _PER_COMMAND_FLAGS = {"--staff", "--staff-id"}
@@ -61,13 +63,14 @@ def _value_options(command) -> dict[str, bool]:
     return names
 
 
-def _check_root_values(command, args: list[str]) -> None:
-    """Raise UsageError when a root option's value starts with `-`.
+def _root_options(
+    takes_value: dict[str, bool], args: list[str]
+) -> Iterator[tuple[str, str | None]]:
+    """Yield (name, value) for each option token before the resource or a `--`.
 
-    An option missing its value would otherwise take the next flag, such as --dry-run, and a
-    repeat hides the swallowed one. A numeric option keeps a negative number for its range check.
+    An option in `takes_value` reads its value after `=` or from the next token. `value` is
+    None for any other option and for one missing its value at the end of `args`.
     """
-    takes_value = _value_options(command)
     index = 0
     while index < len(args):
         token = args[index]
@@ -76,17 +79,49 @@ def _check_root_values(command, args: list[str]) -> None:
         name, equals, value = token.partition("=")
         index += 1
         if name not in takes_value:
-            continue
-        if not equals:
-            if index == len(args):
-                return
-            value = args[index]
+            yield name, None
+        elif equals:
+            yield name, value
+        elif index < len(args):
             index += 1
+            yield name, args[index - 1]
+        else:
+            yield name, None
+
+
+def _check_root_values(command, args: list[str]) -> None:
+    """Raise UsageError when a root option's value starts with `-`.
+
+    An option missing its value would otherwise take the next flag, such as --dry-run, and a
+    repeat hides the swallowed one. A numeric option keeps a negative number for its range check.
+    """
+    takes_value = _value_options(command)
+    for name, value in _root_options(takes_value, args):
+        if value is None or name not in takes_value:
+            continue
         if value.startswith("-") and not (takes_value[name] and _is_number(value)):
             raise UsageError(
                 f"{name} needs a value, got {value!r}.",
                 hint=f"Pass {name} a value or drop it; a value cannot start with '-'.",
             )
+
+
+def _early_ndjson(command, args: list[str]) -> bool:
+    """Return the NDJSON framing for an error raised before the output format is resolved.
+
+    True when --page-all comes before the resource and neither --format nor HFOX_FORMAT names
+    table, csv or yaml; `default_format` in the config file is not consulted.
+    """
+    page_all, fmt = False, None
+    for name, value in _root_options(_value_options(command), args):
+        if name == "--page-all":
+            page_all = True
+        elif name in ("--format", "-f"):
+            fmt = value
+        elif name.startswith("-f") and not name.startswith("--"):
+            fmt = name[2:]  # click reads `-ftable` as `-f table`
+    fmt = nonblank_or_none(fmt) or os.environ.get("HFOX_FORMAT") or ""
+    return page_all and fmt.strip().lower() not in _OTHER_FORMATS
 
 
 def _may_take_next(token: str) -> bool:
@@ -96,6 +131,10 @@ def _may_take_next(token: str) -> bool:
 
 class _RootGroup(TyperGroup):
     """Root group: the usage-line fox, the root option value check and the misplaced-flag scan."""
+
+    # Whether the error object app() prints after the root context closes is one NDJSON line.
+    # app() seeds it from argv and the root callback sets it once the format is resolved.
+    ndjson = False
 
     def parse_args(self, ctx, args):
         if not ctx.resilient_parsing:
@@ -205,9 +244,12 @@ def main(
     if timeout is not None and not (math.isfinite(timeout) and timeout > 0):
         raise ValidationError("--timeout must be a positive number of seconds.")
     config = load_config(config_dir)
+    output_format = _resolve_format(fmt, config)
+    ctx.command.ndjson = page_all and output_format is OutputFormat.JSON
+    ctx.with_resource(output.ndjson_framing(ctx.command.ndjson))
     ctx.obj = AppContext(
         config=config,
-        fmt=_resolve_format(fmt, config),
+        fmt=output_format,
         dry_run=dry_run,
         page_all=page_all,
         page_limit=page_limit,
@@ -244,9 +286,10 @@ def _resolve_format(flag: str | None, config) -> OutputFormat:
     return OutputFormat.parse(value)
 
 
-def _fail(err: HfoxError) -> NoReturn:
-    """Print the error JSON on stdout and exit with its code."""
-    output.render(err.to_dict(), OutputFormat.JSON)
+def _fail(err: HfoxError, ndjson: bool) -> NoReturn:
+    """Print the error JSON on stdout, as one line when `ndjson`, and exit with its code."""
+    with output.ndjson_framing(ndjson):
+        output.render(err.to_dict(), OutputFormat.JSON)
     raise SystemExit(int(err.exit_code))
 
 
@@ -257,12 +300,13 @@ def app() -> None:
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(errors="backslashreplace")
     command = typer.main.get_command(cli)
+    command.ndjson = _early_ndjson(command, sys.argv[1:])
     try:
         # Non-standalone mode returns typer.Exit's code instead of raising it. A fixed prog_name
         # keeps usage, hints and completion on "hfox" for renamed binaries and `python -m hfox`.
         exit_code = command(args=None, prog_name="hfox", standalone_mode=False)
     except typer.Abort:
-        _fail(CancelledError("Cancelled."))
+        _fail(CancelledError("Cancelled."), command.ndjson)
     except click_exceptions.NoArgsIsHelpError as exc:
         # Click's default exit code 2 would collide with ExitCode.AUTH.
         exc.show()
@@ -272,27 +316,27 @@ def app() -> None:
         # the token scan leaves alone.
         parent = getattr(exc.ctx, "parent", None)
         if parent is not None and exc.option_name in _root_flags(command):
-            _fail(_misplaced(exc.option_name))
+            _fail(_misplaced(exc.option_name), command.ndjson)
         exc.show()
-        _fail(UsageError(exc.format_message()))
+        _fail(UsageError(exc.format_message()), command.ndjson)
     except click_exceptions.MissingParameter as exc:
         exc.show()
-        _fail(UsageError(exc.format_message()))
+        _fail(UsageError(exc.format_message()), command.ndjson)
     except click_exceptions.BadParameter as exc:
         # A rejected value is a validation error whichever layer rejects it.
         exc.show()
-        _fail(ValidationError(exc.format_message()))
+        _fail(ValidationError(exc.format_message()), command.ndjson)
     except click_exceptions.UsageError as exc:
         exc.show()
-        _fail(UsageError(exc.format_message()))
+        _fail(UsageError(exc.format_message()), command.ndjson)
     except click_exceptions.ClickException as exc:
         # Click's own exit code 1 would read as an API error.
         exc.show()
-        _fail(HfoxError(exc.format_message()))
+        _fail(HfoxError(exc.format_message()), command.ndjson)
     except KeyboardInterrupt:
         raise SystemExit(130) from None
     except Exception as exc:
-        _fail(as_hfox_error(exc))
+        _fail(as_hfox_error(exc), command.ndjson)
     if isinstance(exit_code, int) and exit_code:
         raise SystemExit(exit_code)
 

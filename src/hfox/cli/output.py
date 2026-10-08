@@ -5,6 +5,7 @@ Table and CSV flatten nested objects to dot-notation keys. Status and warnings g
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import io
 import json
@@ -13,6 +14,7 @@ import os
 import re
 import sys
 import unicodedata
+from collections.abc import Iterator
 from enum import StrEnum
 from typing import Any
 
@@ -158,8 +160,26 @@ def _csv_cell(value: Any) -> str:
     return text
 
 
+# Set through `ndjson_framing` for a --page-all run with JSON output.
+_ndjson = False
+
+
+@contextlib.contextmanager
+def ndjson_framing(enabled: bool) -> Iterator[None]:
+    """Within the block, write every JSON document as one compact line when `enabled`.
+
+    --page-all with JSON output enables it, so stdout stays NDJSON.
+    """
+    global _ndjson
+    previous, _ndjson = _ndjson, enabled
+    try:
+        yield
+    finally:
+        _ndjson = previous
+
+
 def render(data: Any, fmt: OutputFormat, *, stream=None) -> None:
-    """Render data in the requested format.
+    """Render data in the requested format; JSON is one line under `ndjson_framing`.
 
     `stream` defaults to sys.stdout resolved at call time, so CliRunner redirects are honored.
     """
@@ -243,7 +263,10 @@ def _dump_json(data: Any, stream, **kwargs: Any) -> str:
 
 
 def _render_json(data: Any, stream) -> None:
-    stream.write(_dump_json(data, stream, indent=2) + "\n")
+    if _ndjson:
+        render_ndjson_line(data, stream=stream)
+    else:
+        stream.write(_dump_json(data, stream, indent=2) + "\n")
 
 
 def render_ndjson_line(data: Any, *, stream=None) -> None:

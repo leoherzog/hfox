@@ -67,7 +67,7 @@ flag after the resource exits 3 with `"type": "usage"`.
 |------|-----|
 | `-f, --format json\|table\|csv\|yaml` | keep the default `json` when parsing |
 | `--dry-run` | print the request instead of sending it |
-| `--page-all`, `--page-limit N`, `--page-delay MS` | walk pages; JSON becomes NDJSON, one page per line |
+| `--page-all`, `--page-limit N`, `--page-delay MS` | walk pages; JSON output becomes NDJSON |
 | `--staff TEXT`, `--staff-id N` | acting staff for writes |
 | `--timeout SECONDS`, `--max-retries N` | timeout for each connect, read or write, and retry count |
 | `--quiet` | drop status lines and retry notices |
@@ -193,9 +193,10 @@ new one.
 verbs and `contacts groups list` are not paged and return the whole set as a bare array;
 HappyFox does not document the `priorities` shape.
 
-With `--page-all`, JSON output is NDJSON: parse each line as one page. The walk stops at
-`--page-limit` pages (default 10), warns on stderr and still exits 0. Check stderr for that
-warning, or raise the limit, before treating the result as complete.
+With `--page-all`, JSON output is NDJSON: parse each line as one document. A paged listing
+prints one line per page; anything else, a dry-run preview or an error included, prints one
+line. The walk stops at `--page-limit` pages (default 10), warns on stderr and still exits 0.
+Check stderr for that warning, or raise the limit, before treating the result as complete.
 
 Pass `--size 50` with `--page-all`; the default `--size` stops the walk at 100 rows.
 A page with a malformed `page_info` or `page_count`, or one that reports more than one page

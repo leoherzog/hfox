@@ -122,7 +122,7 @@ Global flags go before the resource: `hfox -f table tickets list`, not `hfox tic
 |------|---------|
 | `-f, --format {json\|table\|csv\|yaml}` | output format (default `json`) |
 | `--dry-run` | print the exact request without sending it |
-| `--page-all` | fetch up to `--page-limit` pages from `--page`; JSON streams NDJSON, one page per line |
+| `--page-all` | fetch up to `--page-limit` pages from `--page`; JSON output becomes NDJSON |
 | `--page-limit N` / `--page-delay MS` | bound `--page-all` (default 10 pages / 100 ms) |
 | `--staff TEXT` / `--staff-id N` | acting staff for write actions, by email or name, or by id |
 | `--timeout SECONDS` | per-attempt timeout for connecting and for each read or write (default 30) |
@@ -226,6 +226,13 @@ an error of type `cancelled` and exits 5.
 
 Status lines, warnings and prompts go to stderr, so stdout stays parseable. CSV ends every
 row with one CRLF on every platform, and a newline inside a cell stays a bare LF.
+
+With `--page-all` and JSON output, stdout is NDJSON: every JSON document hfox writes is one
+compact line. A paged listing prints one line per page. An unpaged listing, a single object,
+a dry-run preview and an error object each print one line. An error raised before hfox has
+resolved the output format, such as an unknown root option or an unreadable config file, is
+one line unless `--format` or `HFOX_FORMAT` names table, csv or yaml; `default_format` is not
+consulted for it.
 
 Table and CSV cells drop control, bidi and zero-width characters, so ticket text cannot drive
 the terminal. Newline, tab and the zero-width joiner and non-joiner are kept. A CSV text cell
