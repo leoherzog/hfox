@@ -286,3 +286,84 @@ def test_yaml_float_with_fraction_and_exponent_is_written_as_is(value, text):
     rendered = _render({"ratio": value}, OutputFormat.YAML)
     assert rendered == f"ratio: {text}\n"
     assert yaml.safe_load(rendered) == {"ratio": value}
+
+
+# --- deep nesting -----------------------------------------------------------------
+
+# Past the recursion limit where the json module handles it. Before 3.13 it parses or
+# indents with Python recursion, so older interpreters use a depth it can manage.
+DEEP = 3000 if sys.version_info >= (3, 13) else 500
+
+
+def _nested(depth, leaf, wrap=lambda inner: [inner]):
+    data = leaf
+    for _ in range(depth):
+        data = wrap(data)
+    return data
+
+
+def _bottom(data, depth, step=lambda node: node[0]):
+    for _ in range(depth):
+        data = step(data)
+    return data
+
+
+def _unbounded(call, *args, **kwargs):
+    """Return call(*args, **kwargs), failing fast on a RecursionError.
+
+    pytest's report of a RecursionError, even as the context of another failure, compares
+    the locals of every frame, which takes minutes on deep data.
+    """
+    try:
+        return call(*args, **kwargs)
+    except RecursionError:
+        pass
+    pytest.fail(f"{call.__name__} hit the recursion limit", pytrace=False)
+
+
+@pytest.mark.parametrize(
+    ("wrap", "step"),
+    [
+        (lambda inner: [inner], lambda node: node[0]),
+        (lambda inner: {"k": inner}, lambda node: node["k"]),
+        (lambda inner: (inner, 1.5), lambda node: node[0]),
+    ],
+    ids=["list", "dict", "tuple"],
+)
+def test_finite_copies_nesting_far_past_the_recursion_limit(wrap, step):
+    depth = sys.getrecursionlimit() * 10
+    copy = _unbounded(output._finite, _nested(depth, float("nan"), wrap))
+    assert _bottom(copy, depth, step) is None
+
+
+def test_finite_copies_a_shared_container_once():
+    shared = [1.5, float("inf")]
+    copy = output._finite({"a": shared, "b": [shared]})
+    assert copy == {"a": [1.5, None], "b": [[1.5, None]]}
+    assert copy["a"] is copy["b"][0]
+
+
+def test_finite_returns_for_a_cycle():
+    loop: list = [float("nan")]
+    loop.append(loop)
+    copy = _unbounded(output._finite, loop)
+    assert copy[0] is None
+    assert copy[1] is copy
+
+
+@JSON_WRITERS
+def test_json_renders_nesting_past_the_recursion_limit(write):
+    buf = io.StringIO()
+    _unbounded(write, {"deep": _nested(DEEP, float("nan"))}, buf)
+    assert _bottom(_strict_loads(buf.getvalue())["deep"], DEEP) is None
+
+
+def test_ndjson_line_holds_nesting_past_the_recursion_limit():
+    buf = io.StringIO()
+    _unbounded(render_ndjson_line, {"deep": _nested(DEEP, float("nan"))}, stream=buf)
+    assert buf.getvalue() == '{"deep":' + "[" * DEEP + "null" + "]" * DEEP + "}\n"
+
+
+def test_csv_renders_a_nested_cell_past_the_recursion_limit():
+    rows = _unbounded(_csv_rows, [{"id": 1, "deep": _nested(DEEP, float("-inf"))}])
+    assert rows == [["id", "deep"], ["1", "[" * DEEP + "null" + "]" * DEEP]]

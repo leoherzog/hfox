@@ -196,14 +196,35 @@ def _json_escape(match: re.Match[str]) -> str:
 
 
 def _finite(data: Any) -> Any:
-    """Copy JSON data with None in place of every NaN and infinity, as JSON.stringify does."""
+    """Copy JSON data with None in place of every NaN and infinity, as JSON.stringify does.
+
+    Iterative, so nesting deeper than the recursion limit still renders.
+    """
     if isinstance(data, float):
         return data if math.isfinite(data) else None
-    if isinstance(data, dict):
-        return {key: _finite(value) for key, value in data.items()}
-    if isinstance(data, (list, tuple)):
-        return [_finite(item) for item in data]
-    return data
+    if not isinstance(data, (dict, list, tuple)):
+        return data
+    root: Any = {} if isinstance(data, dict) else []
+    # Keyed by id, so a shared container is copied once and a cycle cannot loop forever.
+    copies = {id(data): root}
+    pending = [(data, root)]
+    while pending:
+        source, target = pending.pop()
+        items = source.items() if isinstance(source, dict) else enumerate(source)
+        for key, value in items:
+            if isinstance(value, float):
+                value = value if math.isfinite(value) else None
+            elif isinstance(value, (dict, list, tuple)):
+                copy = copies.get(id(value))
+                if copy is None:
+                    copy = copies[id(value)] = {} if isinstance(value, dict) else []
+                    pending.append((value, copy))
+                value = copy
+            if isinstance(target, dict):
+                target[key] = value
+            else:
+                target.append(value)
+    return root
 
 
 def _dump_json(data: Any, stream, **kwargs: Any) -> str:

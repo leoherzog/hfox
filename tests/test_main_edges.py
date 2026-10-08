@@ -364,6 +364,46 @@ def test_shell_completion_answers_to_the_hfox_variable():
     assert proc.stdout.split() == ["tickets"]
 
 
+# -- deep nesting -------------------------------------------------------------
+# Past the recursion limit where the json module handles it. Before 3.13 it parses or
+# indents with Python recursion, so older interpreters use a depth it can manage.
+DEEP = 3000 if sys.version_info >= (3, 13) else 500
+DEEP_TEXT = "[" * DEEP + "NaN" + "]" * DEEP
+DEEP_NULL = "[" * DEEP + "null" + "]" * DEEP
+
+
+def _json_response(text):
+    return httpx.Response(200, content=text.encode(), headers={"content-type": "application/json"})
+
+
+def test_dry_run_preview_of_a_deeply_nested_file(run_app, tmp_path):
+    deep = tmp_path / "deep.json"
+    deep.write_text("[" * DEEP + "]" * DEEP, encoding="utf-8")
+    code, out, err = run_app("--dry-run", "tickets", "create-bulk", "--file", str(deep))
+    assert (code, err) == (0, "")
+    body = json.loads(out)["body"]
+    for _ in range(DEEP - 1):
+        body = body[0]
+    assert body == []
+
+
+def test_ndjson_page_with_deep_nesting(run_app, mock_api):
+    def page(deep):
+        return '{"page_info":{"page_count":1},"data":[{"id":1,"deep":' + deep + "}]}"
+
+    mock_api(lambda req: _json_response(page(DEEP_TEXT)))
+    code, out, _ = run_app("--page-all", "tickets", "list")
+    assert code == 0
+    assert out == page(DEEP_NULL) + "\n"
+
+
+def test_csv_cell_with_deep_nesting(run_app, mock_api):
+    mock_api(lambda req: _json_response('{"id":1,"deep":' + DEEP_TEXT + "}"))
+    code, out, _ = run_app("-f", "csv", "tickets", "get", "1")
+    assert code == 0
+    assert out == f"id,deep\r\n1,{DEEP_NULL}\r\n"
+
+
 # -- system custom-field rendering --------------------------------------------
 def test_custom_field_choices_flattened_in_yaml(mock_api):
     fields = [
