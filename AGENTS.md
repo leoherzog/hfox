@@ -589,8 +589,9 @@ unclamped `Retry-After` of a 429 that outlasted the retries.
 - **`auth status`** prints its payload, not an error object, when it exits 2 for missing
   credentials or when the check fails.
 
-The stability policy in `README.md` is the public statement of this contract. Adding a key,
-a `type` slug, a flag or an env var is compatible; removing or renaming one is breaking.
+The stability policy in `README.md` is the public statement of this contract. Adding a
+command, a key, a `type` slug, a flag or an env var is compatible; removing or renaming a
+command path, positional argument, key, slug, flag or env var is breaking.
 
 ## Testing
 

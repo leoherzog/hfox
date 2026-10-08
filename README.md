@@ -296,19 +296,39 @@ option without its value. Bare group invocations (`hfox tickets`) print help and
 
 ## Stability
 
-These are contract from 1.0 on: the JSON that hfox itself produces, CSV output, exit codes,
-flag names and environment variable names. The hfox JSON is the error object, the
-`--dry-run` preview `{dry_run, method, url, params, body, attachments}`, the `auth` payloads
-and the NDJSON framing of one page per line. Truncation at `--page-limit` keeps exit 0 and
-the stderr warning.
+From 1.0 on, these are contract:
 
-These are not contract: table layout, the files inside the config directory, the bodies
-HappyFox returns and hfox passes through, and the content of `detail` apart from `staff_ids`
-on an ambiguous `--staff`.
+- Command paths, positional arguments, flag names and environment variable names.
+- Exit codes, and the error object with its keys and `type` values.
+- Stdout holds only data. Status lines, warnings, retry notices and prompts go to stderr.
+- The JSON and CSV that hfox itself produces, described below.
 
-Minor releases may add keys, `type` values, flags and environment variables, so ignore the
-ones you do not know. Removing or renaming any of them is a breaking change. The names
-`--columns`, `--profile` and `HFOX_PROFILE` are reserved.
+The `--dry-run` preview of a request is `{dry_run, method, url, params, body, attachments}`.
+`auth logout --dry-run` sends no request and prints `{dry_run, would_remove, config_dir}`;
+tell the two apart by `method`. Every dry run prints JSON, whatever `--format` says.
+
+`auth login` prints `authenticated`, `subdomain`, `region`, `base_url`, `default_staff_id`
+and `config_dir`. `auth status` prints `config_dir`, `subdomain`, `region`, `base_url`,
+`authenticated`, `default_staff_id` and the masked `api_key`, plus `default_staff_id_error`
+and `check_error` when set. `auth logout` prints `removed` and `config_dir`. In `login`,
+`default_staff_id` is the value saved to `config.toml`; in `status` it is the value in
+effect after `HFOX_STAFF_ID`.
+
+With `--page-all` and JSON output, stdout is NDJSON with one document per line, as described
+under [Output](#output). A paged listing prints one page per line and an error is the last
+line. Truncation at `--page-limit` keeps exit 0 and warns on stderr.
+
+CSV has one header row of dot-joined key paths, writes a list or object cell as JSON text,
+ends each row in CRLF and prefixes formula-like cells as described under [Output](#output).
+
+These are not contract: table and YAML output, the wording of `error`, `hint` and every
+stderr line, help text, the files inside the config directory, the bodies HappyFox returns and
+hfox passes through, and `detail` apart from `staff_ids` on an ambiguous `--staff`. Scripts
+should parse JSON or CSV.
+
+Minor releases may add commands, keys, `type` values, flags and environment variables, so
+ignore the ones you do not know. Removing or renaming any contract item is a breaking change.
+The names `--columns`, `--profile` and `HFOX_PROFILE` are reserved.
 
 ## Command overview
 
@@ -411,14 +431,18 @@ multiple-option field. The choices come from `--file`, stdin or `--choices-json`
 array or as an object `{"choices": [...]}`.
 
 ```bash
-hfox tickets set-cf-choices 7 --yes \
-  --choices-json '[{"id": 11, "text": "Low"}, {"id": 12, "text": "High"}, {"id": null, "text": "Urgent"}]'
+hfox system ticket-custom-fields | jq '.[] | select(.id == 7) | .choices' > choices.json
+# edit choices.json, then:
+hfox tickets set-cf-choices 7 --file choices.json
 ```
 
 Every choice needs a non-blank `text` and an `id`. An existing choice keeps its id, a new one
-has `"id": null`, and an existing choice left out of the list is deleted. Read the current
-ids with `hfox system ticket-custom-fields` first and carry each one you want to keep. The
-command states how many choices are kept and how many are new before it asks.
+has `"id": null`, and an existing choice left out of the list is deleted.
+`hfox system ticket-custom-fields` lists each field's choices in the shape this command
+takes, so start from that list. Keep each existing choice's `dependant_fields` as read and
+give a new one `[]`; whether HappyFox keeps a choice's dependent fields when that key is
+missing is unverified. The command states how many choices are kept and how many are new
+before it asks.
 
 ## Architecture
 

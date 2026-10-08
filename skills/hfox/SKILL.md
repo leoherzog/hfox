@@ -175,16 +175,20 @@ A path must name a regular file. A directory, FIFO, device or process substituti
 ### Replacing custom-field choices
 
 `tickets set-cf-choices <field_id>` replaces the whole choice list, and any existing choice
-you leave out is deleted. Read the field's current choices first and carry every id:
+you leave out is deleted. `hfox system ticket-custom-fields` lists each field's choices in
+the shape this command takes, so start from that list and edit it:
 
 ```bash
-hfox system ticket-custom-fields --name "Region"      # note each choice's id
-hfox --dry-run tickets set-cf-choices 7 --choices-json \
-  '[{"id": 11, "text": "North"}, {"id": 12, "text": "South"}, {"id": null, "text": "West"}]'
+hfox system ticket-custom-fields | jq '.[] | select(.id == 7) | .choices' > choices.json
+# edit choices.json: change a text, drop a choice, or append
+# {"id": null, "text": "West", "dependant_fields": []}
+hfox --dry-run tickets set-cf-choices 7 --file choices.json
 ```
 
 Every choice needs `text` and `id`: the existing id to keep or rename a choice, `null` for a
-new one.
+new one. Keep each existing choice's `dependant_fields` as read and give a new one `[]`.
+Whether HappyFox keeps a choice's dependent fields when that key is missing is unverified, so
+never drop it.
 
 ## Lists and pagination
 
@@ -246,8 +250,8 @@ hfox already retries 429 and network errors, so do not add your own retry loop.
 
 ## What is stable
 
-The error object, the dry-run preview, the `auth` payloads, NDJSON framing, CSV output, exit
-codes, flag names and environment variable names are contract. Table layout, the files in
-the config directory, `detail` content other than `staff_ids` and the bodies HappyFox
-returns are not. Later releases may add keys, `type` values and flags, so ignore the ones
-you do not know.
+Command paths, positional arguments, flag names, environment variable names, exit codes, the
+error object, the dry-run previews, the `auth` payloads, NDJSON framing and CSV output are
+contract. Table and YAML output, the wording of messages and stderr, `detail` content other
+than `staff_ids` and the bodies HappyFox returns are not, so parse JSON or CSV. Later
+releases may add commands, keys, `type` values and flags; ignore the ones you do not know.
