@@ -339,6 +339,14 @@ Helpers:
 
 Sourced from `Docs/` unless marked observed. Honor them exactly.
 
+`Docs/1039` is damaged upstream, and `Docs/sync.py` transcribes it faithfully. It omits
+every `<…>` placeholder but the `<module>` example: `ticket//staff_update/` means
+`ticket/<ticket_number>/staff_update/`, the user reply heading shows only `/user_reply/`,
+and `t-cf-`, `c-cf-` and `ccf-` mean `t-cf-<id>`, `c-cf-<id>` and `ccf-<id>`.
+`user_customfields/`, `ticket_customfields/` and `show_cfchanges` mean `user_custom_fields/`,
+`ticket_custom_fields/` and `show_cf_changes`, and stray `**` and `_` marks and "Back to top"
+lines are formatting debris, not emphasis or content.
+
 - **Auth is HTTP Basic only:** API key = username, auth code = password. Redirects are not
   followed, since httpx2 would drop the auth on a cross-host redirect.
 - **Base URL is host-templated:** `https://<subdomain>.happyfox.com/api/1.1/json` (US) or
@@ -356,11 +364,15 @@ Sourced from `Docs/` unless marked observed. Honor them exactly.
   builds `httpx2.URL(root)`, so `core/config.py` imports httpx2 and a host the client could
   not build exits 3 before any request. httpx2 passes a malformed `xn--` label through, so
   `idna.decode` checks every host holding `xn--` and a label that is not Punycode exits 3.
-- **Rate limits are global:** 500 GET/min, 300 POST/min, then HTTP 429 for a **10-minute**
-  cooldown. Without `Retry-After`, the default five 429 retries stop after about 33s; an
-  undocumented numeric `Retry-After` is honored up to 600s per attempt. GETs retry any
-  transport error; writes retry only when no connection was made, since a write may already
-  have applied. Respect `--page-limit`/`--page-delay`.
+- **Rate limits are per account and per key:** the account allows 500 GET/min and 300
+  POST/min. An API key can carry a lower limit over its own interval in seconds, which
+  HappyFox applies first. Past a limit every request gets HTTP 429, and the docs say to back
+  off by the seconds named in the 429 body (the article's screenshot shows
+  `Throttled, wait 300 seconds.`). hfox waits the longer of a usable numeric `Retry-After`
+  (undocumented) and a `wait <N> second(s)` phrase in the body, capped at 600s per attempt;
+  when neither is usable, it backs off exponentially and the default five 429 retries stop
+  after about 33s. GETs retry any transport error; writes retry only when no connection was
+  made, since a write may already have applied. Respect `--page-limit`/`--page-delay`.
 - **Search sends `status=_all`:** the documented search URL is `tickets/?status=_all&q=...`,
   so `tickets list -q` injects it unless `--status` holds an entry. Each comma-separated
   `--status` entry loses its outer whitespace and goes through `validate_id_text`; blank
@@ -573,7 +585,8 @@ write answered with HTTP 500 or above; both carry `OUTCOME_UNKNOWN_HINT` from
 `core/client.py`. Failures to connect, pool timeouts, proxy errors and an unsupported URL
 scheme (`_NOT_SENT`) never set it, and neither does a GET. Every other transport error on a
 write sets it, `RemoteProtocolError` and `LocalProtocolError` included. `retry_after` is the
-unclamped `Retry-After` of a 429 that outlasted the retries.
+unclamped wait of a 429 that outlasted the retries, the longer of `Retry-After` and the
+body's.
 
 - **Usage errors** exit **3** with a JSON error on stdout and the usage hint on stderr;
   click's default 2 would collide with `ExitCode.AUTH`. A misplaced global flag and a

@@ -230,7 +230,7 @@ def test_backoff_is_capped_at_a_minute_plus_jitter():
     assert len(sleeps[6:]) == 3
 
 
-def test_retry_after_just_over_ten_minutes_sleeps_ten_minutes():
+def test_retry_after_just_over_the_cap_sleeps_the_cap():
     client, _, sleeps = make_client(
         always(429, headers={"Retry-After": "601"}, json={}), max_retries=1
     )
@@ -262,6 +262,31 @@ def test_error_payload_carries_the_server_message(status, error_type):
     with pytest.raises(error_type) as exc:
         client.get("ticket/5/")
     assert "why it failed" in payload_text(exc)
+
+
+def test_throttled_body_through_app_waits_then_renders_the_rate_limit_error(
+    mock_api, monkeypatch, capsys
+):
+    throttled = "Throttled, wait 300 seconds."
+    captured = mock_api(always(429, text=throttled))
+    for key, value in (("SUBDOMAIN", "acme"), ("API_KEY", "k"), ("AUTH_CODE", "c")):
+        monkeypatch.setenv(f"HFOX_{key}", value)
+    monkeypatch.setattr(sys, "argv", ["hfox", "--max-retries", "1", "system", "statuses"])
+    with pytest.raises(SystemExit) as exc:
+        main_mod.app()
+    assert exc.value.code == 1
+    out = capsys.readouterr()
+    assert json.loads(out.out) == {
+        "error": "Rate limit exceeded (HTTP 429). HappyFox refuses every request until the "
+        "throttle ends.",
+        "type": "rate_limited",
+        "exit_code": 1,
+        "status_code": 429,
+        "detail": throttled,
+        "retry_after": 300,
+    }
+    assert out.err.splitlines() == ["Retrying in 300.0s (HTTP 429; retry 1 of 1)."]
+    assert len(captured) == 2
 
 
 @pytest.mark.parametrize("status", [401, 403])

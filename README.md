@@ -149,9 +149,15 @@ whitespace-only `--format` counts as not given. In `config.toml`
 only an empty or whitespace-only string means unset, so `default_format = false` is an unknown
 format.
 
-`--timeout` does not bound the whole command: retries, their backoff and any `Retry-After`
-wait come on top. Each retry prints one stderr line with the reason and the wait. GETs retry
-any network error; writes retry only when no connection was made.
+`--timeout` does not bound the whole command: retries and their waits come on top. Each retry
+prints one stderr line with the reason and the wait. GETs retry any network error; writes
+retry only when no connection was made.
+
+HappyFox allows each account 500 GET and 300 POST requests a minute, and an API key can
+carry a lower limit over its own interval. Past a limit it answers every request with 429
+until the throttle ends. hfox then waits the longer of the seconds named in a `Retry-After`
+header and in the response body, up to 600 seconds per retry, and otherwise backs off
+exponentially. Raise `--page-delay` to keep a long `--page-all` walk under the key's limit.
 
 ## Listing and search
 
@@ -262,11 +268,12 @@ A failure prints one JSON object on stdout:
 
 ```json
 {
-  "error": "Rate limit exceeded (HTTP 429). HappyFox enforces a 10-minute cooldown after the limit is hit.",
+  "error": "Rate limit exceeded (HTTP 429). HappyFox refuses every request until the throttle ends.",
   "type": "rate_limited",
   "exit_code": 1,
   "status_code": 429,
-  "retry_after": 600
+  "detail": "Throttled, wait 300 seconds.",
+  "retry_after": 300
 }
 ```
 
@@ -277,7 +284,8 @@ A failure prints one JSON object on stdout:
 misplaced flag, a missing argument or a global option without its value, and `validation` is
 a rejected value.
 
-`retry_after` is the server's `Retry-After` in seconds on a 429 that outlasted the retries.
+`retry_after` is the wait in seconds that HappyFox named on a 429 that outlasted the retries,
+the longer of the `Retry-After` header and the response body, without the 600-second cap.
 `outcome_unknown: true` marks a write that failed after the request may have left, or that
 HappyFox answered with HTTP 500 or above. The write may have been applied, so check the
 resource before sending it again. A failure to connect, a pool timeout, a proxy error and an

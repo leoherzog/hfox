@@ -243,10 +243,15 @@ Two signals decide whether to retry:
 - `outcome_unknown: true` means a write may have been applied. Read the resource before
   sending the write again, or you may post a duplicate reply or ticket. A GET never sets it,
   and neither does a write that failed before the request left.
-- `rate_limited` means HappyFox returned 429 after hfox used up its retries. Wait
-  `retry_after` seconds when it is present, otherwise ten minutes, before any further call.
+- `rate_limited` means HappyFox returned 429 after hfox used up its retries and refuses
+  every request until the throttle ends. Wait `retry_after` seconds when it is present.
+  Without it, wait at least a minute and slow down, raising `--page-delay` on a `--page-all`
+  walk, since an API key can carry a lower limit over a longer interval.
 
-hfox already retries 429 and network errors, so do not add your own retry loop.
+hfox already retries 429 and network errors, so do not add your own retry loop. When
+HappyFox names a wait, hfox sleeps up to 600 seconds per retry. If your tool calls time out
+sooner, pass `hfox --max-retries 0 ...` and wait `retry_after` yourself; this also turns off
+network retries.
 
 ## What is stable
 

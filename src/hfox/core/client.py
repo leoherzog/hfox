@@ -5,6 +5,7 @@ structured errors, and pagination. UI-agnostic: no printing, no Typer.
 from __future__ import annotations
 
 import math
+import re
 import time
 import urllib.parse
 from collections.abc import Callable, Iterator
@@ -31,7 +32,7 @@ USER_AGENT = f"hfox/{__version__}"
 DEFAULT_TIMEOUT = 30.0
 BASE_RETRY_DELAY = 1.0
 MAX_RETRY_DELAY = 60.0
-# Matches HappyFox's documented 10-minute 429 cooldown.
+# Caps one server-requested wait, so a bad header or body cannot stall the CLI indefinitely.
 MAX_RETRY_AFTER_DELAY = 600.0
 MAX_RETRIES = 5
 MAX_PAGE_SIZE = 50
@@ -41,6 +42,9 @@ _WRITE_RETRYABLE = (httpx2.ConnectError, httpx2.ConnectTimeout, httpx2.PoolTimeo
 # Transport errors raised before any byte of the request left.
 _NOT_SENT = (*_WRITE_RETRYABLE, httpx2.ProxyError, httpx2.UnsupportedProtocol)
 OUTCOME_UNKNOWN_HINT = "The write may have been applied. Check the resource before retrying."
+
+# Matches a wait such as "Throttled, wait 300 seconds." in a text or JSON 429 body.
+_BODY_WAIT_RE = re.compile(r"\bwait\s+(\d+(?:\.\d+)?)\s+seconds?\b", re.IGNORECASE | re.ASCII)
 
 # Fixed jitter values, so backoff is deterministic in tests.
 _JITTER_CYCLE = (0.13, 0.41, 0.77, 0.29, 0.59)
@@ -136,7 +140,7 @@ class HappyFoxClient:
                 raise _transport_error(exc, method) from exc
 
             if response.status_code == 429 and attempt < self.max_retries:
-                delay = _retry_after(response.headers.get("Retry-After"))
+                delay = _retry_after(response)
                 if delay is None:
                     delay = self._backoff(attempt)
                 self._retry_sleep("HTTP 429", delay, attempt)
@@ -166,9 +170,9 @@ class HappyFoxClient:
             raise NotFoundError("Resource not found.", detail=detail)
         if status == 429:
             raise RateLimitError(
-                "Rate limit exceeded (HTTP 429). HappyFox enforces a 10-minute "
-                "cooldown after the limit is hit.",
-                retry_after=_retry_after_raw(response.headers.get("Retry-After")),
+                "Rate limit exceeded (HTTP 429). HappyFox refuses every request until "
+                "the throttle ends.",
+                retry_after=_retry_after_raw(response),
                 detail=detail,
             )
         # A server error on a write does not say whether the write was applied.
@@ -312,8 +316,26 @@ def _transport_error(exc: httpx2.RequestError, method: str) -> NetworkError:
     return NetworkError(f"Network error contacting HappyFox: {exc}", **extra)
 
 
-def _retry_after_raw(value: str | None) -> float | None:
-    """Parse Retry-After seconds; None when absent, non-numeric, negative or non-finite."""
+def _retry_after_raw(response: httpx2.Response) -> float | None:
+    """Return the seconds a 429 asks to wait: the longer of a usable Retry-After header and
+    the wait its body names.
+
+    None when neither names a usable wait.
+    """
+    header = _seconds(response.headers.get("Retry-After"))
+    match = _BODY_WAIT_RE.search(_body_text(response))
+    body = _seconds(match.group(1)) if match else None
+    return max((wait for wait in (header, body) if wait is not None), default=None)
+
+
+def _retry_after(response: httpx2.Response) -> float | None:
+    """Like `_retry_after_raw`, clamped to MAX_RETRY_AFTER_DELAY for the sleep path."""
+    delay = _retry_after_raw(response)
+    return None if delay is None else min(delay, MAX_RETRY_AFTER_DELAY)
+
+
+def _seconds(value: str | None) -> float | None:
+    """Parse a number of seconds; None when absent, non-numeric, negative or non-finite."""
     try:
         delay = float(value or "")
     except ValueError:
@@ -323,10 +345,12 @@ def _retry_after_raw(value: str | None) -> float | None:
     return delay
 
 
-def _retry_after(value: str | None) -> float | None:
-    """Like `_retry_after_raw`, clamped to MAX_RETRY_AFTER_DELAY for the sleep path."""
-    delay = _retry_after_raw(value)
-    return None if delay is None else min(delay, MAX_RETRY_AFTER_DELAY)
+def _body_text(response: httpx2.Response) -> str:
+    """Return the body as text, decoded as lenient UTF-8 when its declared charset fails."""
+    try:
+        return response.text
+    except Exception:
+        return response.content.decode("utf-8", "replace")
 
 
 def _int_param(params: dict[str, Any], key: str, default: int) -> int:
@@ -433,7 +457,7 @@ def _extract_error(response: httpx2.Response) -> Any:
     try:
         body = response.json()
     except ValueError:
-        text = response.text.strip()
+        text = _body_text(response).strip()
         return text[:500] if text else None
     if isinstance(body, dict) and "error" in body:
         return body["error"]

@@ -1,3 +1,5 @@
+import json
+
 import httpx2
 import pytest
 
@@ -151,13 +153,12 @@ def test_persistent_network_error_raised_as_hfox_error():
     assert exc.value.detail == "ConnectError"
 
 
-def test_retry_after_full_cooldown_passed_through():
+def test_retry_after_equal_to_the_cap_is_slept_in_full():
     calls = {"n": 0}
 
     def handler(request: httpx2.Request) -> httpx2.Response:
         calls["n"] += 1
         if calls["n"] == 1:
-            # HappyFox's documented 10-minute cooldown must survive unclamped.
             return httpx2.Response(429, headers={"Retry-After": "600"}, json={})
         return httpx2.Response(200, json={"ok": True})
 
@@ -432,6 +433,164 @@ def test_exhausted_429_without_usable_retry_after(header):
         client.get("tickets/")
     assert exc.value.retry_after is None
     assert "retry_after" not in exc.value.to_dict()
+
+
+# -- wait named in a 429 body ------------------------------------------------
+THROTTLED = "Throttled, wait 300 seconds."
+
+
+def throttled_once(**response):
+    """Exhaust one retry against a 429 built from `response`; return (error, slept, client)."""
+    client, slept = make_client_recording_sleep(
+        lambda _request: httpx2.Response(429, **response), max_retries=1
+    )
+    with pytest.raises(RateLimitError) as exc:
+        client.get("staff/")
+    return exc.value, slept, client
+
+
+@pytest.mark.parametrize(
+    "response", [{"text": THROTTLED}, {"json": {"error": THROTTLED}}], ids=["text", "json"]
+)
+def test_body_wait_drives_the_sleep_and_retry_after(response):
+    error, slept, _ = throttled_once(**response)
+    assert slept == [300.0]
+    assert error.retry_after == 300.0
+    payload = error.to_dict()
+    assert payload["retry_after"] == 300
+    assert type(payload["retry_after"]) is int
+    assert payload["detail"] == THROTTLED
+
+
+def test_body_wait_retry_then_success():
+    calls = {"n": 0}
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx2.Response(429, text=THROTTLED)
+        return httpx2.Response(200, json={"ok": True})
+
+    seen: list[tuple] = []
+    client, slept = make_client_recording_sleep(handler, on_retry=lambda *a: seen.append(a))
+    assert client.get("staff/") == {"ok": True}
+    assert slept == [300.0]
+    assert seen == [("HTTP 429", 300.0, 1, MAX_RETRIES)]
+
+
+@pytest.mark.parametrize(
+    ("header", "body", "expected"),
+    [
+        ("400", THROTTLED, 400.0),
+        ("5", THROTTLED, 300.0),
+        ("900", "Throttled, wait 700 seconds.", 900.0),
+    ],
+    ids=["header-longer", "body-longer", "both-over-the-cap"],
+)
+def test_the_longer_of_header_and_body_wait_is_used(header, body, expected):
+    error, slept, _ = throttled_once(headers={"Retry-After": header}, text=body)
+    assert slept == [min(expected, MAX_RETRY_AFTER_DELAY)]
+    assert error.retry_after == expected
+
+
+def test_body_wait_without_retries_sleeps_nothing_and_reports_the_wait():
+    client, slept = make_client_recording_sleep(
+        lambda _request: httpx2.Response(429, text=THROTTLED), max_retries=0
+    )
+    with pytest.raises(RateLimitError) as exc:
+        client.get("staff/")
+    assert slept == []
+    assert exc.value.retry_after == 300.0
+
+
+@pytest.mark.parametrize("header", ["", "soon", "-5", "nan", "inf"])
+def test_unusable_retry_after_header_falls_through_to_the_body(header):
+    error, slept, _ = throttled_once(headers={"Retry-After": header}, text=THROTTLED)
+    assert slept == [300.0]
+    assert error.retry_after == 300.0
+
+
+def test_body_wait_above_the_cap_sleeps_the_cap_and_reports_it_unclamped():
+    error, slept, _ = throttled_once(text="Throttled, wait 900 seconds.")
+    assert slept == [MAX_RETRY_AFTER_DELAY]
+    assert error.retry_after == 900.0
+    assert error.to_dict()["retry_after"] == 900
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ("Throttled, wait 0 seconds.", 0.0),
+        ("Throttled, wait 1 second.", 1.0),
+        ("THROTTLED, WAIT 300 SECONDS.", 300.0),
+        ("Throttled, wait 2.5 seconds.", 2.5),
+    ],
+    ids=["zero", "singular", "uppercase", "fraction"],
+)
+def test_body_wait_forms(body, expected):
+    error, slept, _ = throttled_once(text=body)
+    assert slept == [expected]
+    assert error.retry_after == expected
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "slow down",
+        "Throttled, wait soon.",
+        "Throttled, wait -5 seconds.",
+        "Throttled, wait ٣٠٠ seconds.",
+        f"Throttled, wait {'9' * 400} seconds.",
+    ],
+    ids=["no-wait", "no-number", "negative", "non-ascii-digits", "overflows-to-inf"],
+)
+def test_unusable_body_wait_falls_back_to_backoff(body):
+    error, slept, client = throttled_once(text=body)
+    assert slept == [client._backoff(0)]
+    assert error.retry_after is None
+    assert "retry_after" not in error.to_dict()
+
+
+UNDECODABLE_CHARSETS = ["base64", "idna", "rot13", "zlib"]
+
+
+@pytest.mark.parametrize("charset", UNDECODABLE_CHARSETS)
+@pytest.mark.parametrize(
+    ("content", "mime"),
+    [
+        (THROTTLED.encode(), "text/plain"),
+        (json.dumps({"error": THROTTLED}).encode(), "application/json"),
+    ],
+    ids=["text", "json"],
+)
+def test_undecodable_charset_body_wait_is_read_as_utf8(charset, content, mime):
+    error, slept, _ = throttled_once(
+        content=content, headers={"Content-Type": f"{mime}; charset={charset}"}
+    )
+    assert slept == [300.0]
+    assert error.retry_after == 300.0
+    assert error.detail == THROTTLED
+
+
+@pytest.mark.parametrize("charset", UNDECODABLE_CHARSETS)
+def test_undecodable_charset_body_without_a_wait_falls_back_to_backoff(charset):
+    error, slept, client = throttled_once(
+        content=b"slow down", headers={"Content-Type": f"text/plain; charset={charset}"}
+    )
+    assert slept == [client._backoff(0)]
+    assert error.retry_after is None
+    assert error.detail == "slow down"
+
+
+def test_body_text_falls_back_to_utf8_whatever_the_decode_raises(monkeypatch):
+    def fail(_response):
+        raise OSError("codec failed")
+
+    monkeypatch.setattr(httpx2.Response, "text", property(fail))
+    error, slept, _ = throttled_once(text=THROTTLED)
+    assert slept == [300.0]
+    assert error.retry_after == 300.0
+    assert error.detail == THROTTLED
 
 
 def test_read_timeout_raises_request_timeout_error():

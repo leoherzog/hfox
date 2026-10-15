@@ -134,7 +134,11 @@ class APIError(HfoxError):
 
 
 class RateLimitError(APIError):
-    """HTTP 429 after retries ran out. `retry_after` is the server's value in seconds, if any."""
+    """HTTP 429 after retries ran out.
+
+    `retry_after` is the server's wait in seconds, if any: the longer of Retry-After and the
+    wait named in the 429 body.
+    """
 
     type = "rate_limited"
 
