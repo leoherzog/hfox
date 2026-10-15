@@ -1,6 +1,6 @@
 # API Reference: Tickets API Endpoints
 
-Source: https://support.happyfox.com/kb/article/1039-tickets-endpoint/ (last updated 2026-09-17 17:14:55 UTC)
+Source: https://support.happyfox.com/kb/article/1039-tickets-endpoint/ (last updated 2026-10-09 16:52:18 UTC)
 
 All HappyFox help-desk instances are shipped with a RESTful web service API that enables various operations, including ticket creation, ticket update submission, ticket and user listing. This API supports payload formats such as JSON and multipart/form-data.
 
@@ -15,9 +15,11 @@ Requirements:
 Documentation Conventions:
 
 - The documentation indicates parameters that need to be replaced with actual values. The entire string including the enclosing \< and > should be replaced. For example, if the parameter is email, it should be replaced with the required email address
-- Endpoint url format: /api/1.1/json/\<module>/ - This tail url has to be prefixed with your HappyFox account url.
+- Endpoint url format:/api/1.1/json// - This tail url has to be prefixed with your HappyFox account url.
 
-Eg:- https://acme.happyfox.com/api/1.1/json/\<module>/
+```
+    Eg:- https://acme.happyfox.com/api/1.1/json/<module>/
+```
 
 - All HTTP POST API calls are to be explicitly marked as https. Else, it would be considered as GET only.
 
@@ -28,8 +30,8 @@ Eg:- https://acme.happyfox.com/api/1.1/json/\<module>/
 > 2\) API key and auth code are to be passed in Basic HTTP authentication format only.
 
 - To update assignee, status, priority, ticket custom fields, user custom fields, category, etc in the payload please use their IDs. Refer [this article](https://support.happyfox.com/kb/article/360-api-for-happyfox/) to fetch their IDs
-- \<module> - refers the module that is being accessed viz., /tickets/, /users/ etc. A full constructed example url: https://acme.happyfox.com/api/1.1/json/tickets/
-- If your HappyFox account is hosted in EU, please use \<instance_name>.happyfox.net. Eg. acme.happyfox.net
+- \- refers the module that is being accessed viz., /tickets/, /users/ etc. A full constructed example url: https://acme.happyfox.com/api/1.1/json/tickets/
+- If your HappyFox account is hosted in EU, please use .happyfox.net. Eg. acme.happyfox.net
 
 ## List of topics covered in this article
 
@@ -81,7 +83,7 @@ Eg:- https://acme.happyfox.com/api/1.1/json/\<module>/
 
 ## 1. Get a list of all Tickets
 
-### API Endpoint: /api/1.1/json/tickets/
+### \*\*API Endpoint: \*\*/api/1.1/json/tickets/
 
 ### Method: GET
 
@@ -91,17 +93,19 @@ Eg:- https://acme.happyfox.com/api/1.1/json/\<module>/
 |---|---|
 | minify_response | true/false. If true, then show only list of ticket ids in the response |
 | status | Filter tickets by status Values: _all: return tickets in all statuses (default) id of status: filter tickets by the given status |
-| category | Filter tickets by category Values: \* id of category: filter tickets by the given category |
-| q | Used for the purpose of search and advanced filters. When using this, the url should be of the format:<br>For pending behavior tickets - /api/1.1/json/tickets/?status=_pending&q=""<br>For all tickets - /api/1.1/json/tickets/?status=_all&q="" |
-| sort | sort field using advanced filters |
+| category | Filter tickets by category Values: id of category: filter tickets by the given category |
+| q | Used for the purpose of search and advanced filters. When using this, the url should be of the format:<br>For pending behavior tickets - /api/1.1/json/tickets/?status=_pending&q="" For all tickets - /api/1.1/json/tickets/?status=_all&q="" |
+| \*sort | sort field using advanced filters |
+
+_Back to top_
 
 ## 2. Get a paginated list of tickets
 
-### API Endpoint : /api/1.1/json/tickets/?size=\<size value>&page=\<page number>
+### \*\*API Endpoint : /api/1.1/json/tickets/?size=&page=\*\*
 
-Default size value is 10 and can be max 50
+Default _size value _is 10 and can be max 50
 
-Method: GET
+\*\*Method: GET\*\*
 
 ### Query Parameters that can be passed to the url are listed below with their description
 
@@ -114,13 +118,13 @@ Method: GET
 | has_attachments | true / false. if true, return tickets that have at least one attachment.<br>This has to be passed as a search parameter:<br>/api/1.1/json/tickets/?q=has_attachments:true |
 | tag | Return tickets having the given tagsvalues format: comma separated values. Case sensitive. |
 | duedate | allowed values: today - return tickets due today yesterday - return tickets that were due yesterday tomorrow - return tickets that are due tomorrow overdue - return tickets where due date is less than today next 7 days - return tickets due in 7 days |
-| priority | --return tickets belonging to the given priorities --values format: comma separated names of priorities within quotations.<br>Eg: /tickets/?status=_all&q=priority:"CRITICAL","MEDIUM" |
-| status | ---return tickets belonging to the given statuses --values format: comma separated names of statuses within quotations.<br>Eg: /tickets/?status=_all&q=status:"New","Closed" |
+| priority | --return tickets belonging to the given priorities --values format: comma separated names of priorities within quotations. Eg: /tickets/?status=_all&q=priority:"CRITICAL","MEDIUM" |
+| status | ---return tickets belonging to the given statuses --values format: comma separated names of statuses within quotations. Eg: /tickets/?status=_all&q=status:"New","Closed" |
 | assignee | list of keywords separated by commas. allowed keywords: --none - unassigned tickets --any - return all assigned tickets --some keyword - return tickets assigned to agents whose email address / username / first name / last name match the keyword given (case sensitive, exact match) |
 | group | list of keywords separated by commas. allowed keywords: --none - return tickets raised by contacts who do not belong to any contact group --any - return tickets raised by contacts who belong to at least one contact group --name of contact group - return tickets raised by contacts belonging to the contact group (case sensitive, exact match) |
-| contact | --list of keywords separated by commas. each keyword is matched against a lookup generated for the contact (name, email, phone number) --return tickets associated to contacts who match any of the given keywords<br>eg: /tickets/?status=_all&q=contact: “james@example.com” |
+| contact | --list of keywords separated by commas. each keyword is matched against a lookup generated for the contact (name, email, phone number) --return tickets associated to contacts who match any of the given keywords eg: /tickets/?status=_all&q=contact: “james@example.com” |
 | id | list of ids of tickets separated by commas. we can search by id and display id. In case of display id, do not include the #. eg: q=id:DC00000001,2 |
-| category | Returns tickets of a specific category whose id is passed in the url. Eg /tickets/?status=_all&category=\<id of the category> |
+| category | Returns tickets of a specific category whose id is passed in the url. Eg /tickets/?status=_all&category= |
 
 ## 2.1 Using url query parameters and search strings
 
@@ -160,8 +164,8 @@ We can search for tickets by contact and ticket custom fields
 
 Format of specifying custom fields in search
 
-- If the custom field name has only one word \<name of the field>: “value” - do not enclose the field name in quotes
-- If the custom field name has multiple words “\<name of the field>”:”value” - enclose the field name in quotes “field_name”:”value”
+- If the custom field name has only one word : “value” - do not enclose the field name in quotes
+- If the custom field name has multiple words “”:”value” - enclose the field name in quotes “field_name”:”value”
 - Custom field name and value should be enclosed in quotes separately.
 - Name and value should be separated by a colon (:)
 - No space after the colon separator
@@ -173,26 +177,42 @@ Format of specifying custom fields in search
 Examples queries:
 
 - text field: /tickets/?status=_all&q="Enterprise Company Name":"enterprise company"
+
 - dropdown: /tickets/?status=_all&q="Team Name":"arsenal"
+
 - multiple choice: /tickets/?status=_all&q="Country":"finland","germany"
+
 - date field: /tickets/?status=_all&q="Date Field":"08/23/2019"
+
 - number field: /tickets/?status=_all&q="Number Field":"300"
+
 - multiple fields: /tickets/?status=_all&q=Field1:"value1" "Field2":"value 2"
+
 - Filtering with contact and custom fields. Here the name of the custom field is passed within quotations: /tickets/?status=_all&q=contact:"james@happyfox.com" "Product Name":"Helpdesk"
+
 - Unlike custom fieldsFiltering with system fields like status, requires the name of the field to be passed without quotations:
   /tickets/?status=_all&q=status:"In+Progress"
+
 - To combine multiple search items for system fields, please build the search query by concatenating each search item with a +
-  Eg. Search for status In Progress and New, along with tickets that contain that contain tag routine_checks
-  To search statuses, the query string would be,
-  /tickets/?status=_all&q=status:"In+Progress","New"
-  To search with tags, the query string would be,
-  /tickets/?status=_all&q=tag:"routine_checks"
-  To combining the two,
-  /tickets/?status=_all&q=tag:"routine_checks"+status:"In+Progress","New"
-  Other combined examples using status, category IDs and last modified parameters
-  /tickets/?status=_all&category=34&category=5&q=status:"In+Progress","Send+SMS"
-  /tickets/?status=_all&category=34&category=5&q=status:"In+Progress","Send+SMS"+last-modified-on-or-after:"2023/04/15"+last-modified-before:"2023/06/15"
-  As shown in the above examples multiple search parameters can be combined using the plus operator (+).
+
+```
+Eg. Search for status In Progress and New, along with tickets that contain that contain tag **routine_checks**
+
+To search statuses, the query string would be,
+                   /tickets/?status=_all&q=status:"In+Progress","New"
+
+To search with tags, the query string would be,
+                  /tickets/?status=_all&q=tag:"routine_checks"
+
+To combining the two,
+                  /tickets/?status=_all&q=tag:"routine_checks"+status:"In+Progress","New"
+
+Other combined examples using status, category IDs and last modified parameters
+                  /tickets/?status=_all&category=34&category=5&q=status:"In+Progress","Send+SMS"
+                  /tickets/?status=_all&category=34&category=5&q=status:"In+Progress","Send+SMS"+last-modified-on-or-after:"2023/04/15"+last-modified-before:"2023/06/15"
+
+As shown in the above examples multiple search parameters can be combined using the plus operator (+).
+```
 
 ## Sorting list of tickets
 
@@ -224,11 +244,13 @@ Examples queries:
 - clienta - sort by contact id ascending
 - clientd - sort by contact id ascending
 
-## 3. Ticket detail page
+_Back to top_
 
-### Endpoint - /api/1.1/json/ticket/\<ticket_number>/
+\*\*3. Ticket detail page\*\*
 
-Note: Ticket ID is a unique identifier for each ticket. It is a combination of category prefix and ticket number. Eg. #HFS00000001. Here 1 is the ticket number and HFS is the category prefix. Ticket number and ticket ID can be obtained from the /tickets/ endpoint from the id and display_id attributes in each item of the data JSON array.
+### Endpoint - /api/1.1/json/ticket//
+
+Note: Ticket ID is a unique identifier for each ticket. It is a combination of category prefix and ticket number. Eg. #HFS00000001. Here 1 is the ticket number and HFS is the category prefix. Ticket number and ticket ID can be obtained from the /tickets/ endpoint from the id and _display_id _attributes in each item of the data JSON array.
 
 Ticket ID
 
@@ -238,7 +260,7 @@ Ticket number
 
 ![](https://hf-files-oregon.s3.amazonaws.com/hdpsupport_kb_attachments/2022/02-08/2d0eeac9-2294-450a-8d48-a2e984eb8894/Ticket_Number.png)
 
-Method: GET
+\*\*Method: GET\*\*
 
 Example Response
 
@@ -250,7 +272,7 @@ Example Response
 "order": 2,
 "default": false,
 "behavior": "pending",
-"id**": 2**
+"id": 2
 },
 "first_message": "Example message\n\n",
 "last_user_reply_at": "2019-08-13 08:59:11",
@@ -390,7 +412,6 @@ Example Response
 "cc_list": "james@example.com",
 "customer_updated": false,
 "html": "
-
 ",
 "forward_list": null,
 "message_type": null,
@@ -412,50 +433,52 @@ Example Response
 
 To obtain a history of changes/updates made on ticket custom fields, add the below url parameter.
 
-Endpoint: /api/1.1/json/ticket/\<ticket_number>/?show_cf_changes=true
+Endpoint: /api/1.1/json/ticket//?show_cf_changes=true
 
 Method: GET
 
 Example Response:
 
-Without show_cf_changes=true parameter:
+Without _show_cf_changes=true _parameter:
 
 ![](https://hf-files-oregon.s3.amazonaws.com/hdpsupport_kb_attachments/2021/10-06/66abc178-32c9-4cb9-b0cb-bc11dea26924/image-20211006140403-2.png)
 
-With show_cf_changes=true parameter:
+With _show_cfchanges=true parameter:
 
 ![](https://hf-files-oregon.s3.amazonaws.com/hdpsupport_kb_attachments/2021/10-06/81f7c478-b2a5-4490-a440-332a33ade289/Screen_Shot_2021-10-06_at_1.52.58_PM.png)
+
+_Back to top_
 
 ## 4. Create Ticket
 
 Using this API endpoint, tickets can be created in all Public categories/Agents and Contacts visible categories
 
-### API Endpoint: /api/1.1/json/tickets/
+### \*\*API Endpoint: /api/1.1/json/tickets/\*\*
 
-Method:POST
+\*\*Method:POST\*\*
 
 Payload Fields
 
-| Field | description |  | Required |
-|---|---|---|---|
-| name | Name of the contact. |  | yes.<br>Required for new contacts only. For existing contacts, the ID of the contact can be passed in the client payload field. |
-| email | Email address of the contact |  | yes. Required for new contacts only. For existing contacts, the ID of the contact can be passed in the client payload field. |
-| phone | Phone number of the contact as a string |  | no |
-| subject | ticket subject |  | yes |
-| text | ticket message in plain text format |  | text / html is required |
-| html | ticket message in html |  | text / html is required |
-| category | ID of the category in which the ticket should be created. (this has to be a public category) |  | yes |
-| priority | --id of the priority of the ticket --defaults to the default priority |  | no |
-| assignee | id of the agent to assign the ticket to. To leave the ticket unassigned, use "assignee" : null |  | no |
-| tags | list of tags separated by commas. |  | no |
-| cc | list of email addresses, separated by commas |  | no |
-| bcc | list of email addresses, separated by commas |  | no |
-| created_at | ticket creation time allowed formats: yyyy-mm-ddThh:mm:ss yyyy-mm-ddThh:mm:ss yyyy-mm-ddThh:mm:ss.ms yyyy-mm-ddThh:mm:ss.ms |  | no |
-| due_date | allowed formats yyyy-mm-dd dd/mm/yyyy |  | no |
-| attachments | list of files to be uploaded Size limit: the total size of all the files combined should not exceed 25 mb Content type: In case attachments are given, the content type of the request should be multipart/form-data File types: There are no restrictions currently regarding file types. File encoding: If the file has an encoding associated with it, HappyFox will use that encoding when reading the file. If not it uses UTF-8 by default. There are no restrictions regarding the encoding of a file. |  | no |
-| visible_only_staff | true / false specify whether the ticket is private or not |  | no |
-| c-cf-\<id of custom field> | The \<id of the custom field> is to be fetched from the list contact custom fields (/api/json/1.1/json/user_custom_fields/) api endpoint only. Do not use the IDs from the urls from the agent portal as they are different.<br>Format<br>Text field: string<br>Number: integer / float with 2 decimal places Dropdown: the id of the choice<br>Multiple choice: list of ids of options<br>Date: yyyy-mm-dd |  | yes for mandatory custom fields |
-| t-cf-\<id of custom field> | The \<id of the custom field> is to be fetched from the list custom fields api endpoint(/api/json/1.1/json/ticket_custom_fields/) only. Do not use the IDs from the urls from the agent portal as they are different.<br>Format<br>Text field: string<br>Number: integer / float with 2 decimal places Dropdown: the id of the choice<br>Multiple choice: list of ids of options<br>Date: yyyy-mm-dd |  | yes for compulsory fields |
+| Field | description | Required |
+|---|---|---|
+| name | Name of the contact. | yes.<br>Required for new contacts only. For existing contacts, the ID of the contact can be passed in the _client _payload field. |
+| email | Email address of the contact | yes. Required for new contacts only. For existing contacts, the ID of the contact can be passed in the _client _payload field. |
+| phone | Phone number of the contact as a string | no |
+| subject | ticket subject | yes |
+| text | ticket message in plain text format | text / html is required |
+| html | ticket message in html | text / html is required |
+| category | ID of the category in which the ticket should be created. (this has to be a public category) | yes |
+| priority | --id of the priority of the ticket --defaults to the default priority | no |
+| assignee | id of the agent to assign the ticket to. To leave the ticket unassigned, use "assignee" : null | no |
+| tags | list of tags separated by commas. | no |
+| cc | list of email addresses, separated by commas | no |
+| bcc | list of email addresses, separated by commas | no |
+| created_at | ticket creation time allowed formats: yyyy-mm-ddThh:mm:ss yyyy-mm-ddThh:mm:ss yyyy-mm-ddThh:mm:ss.ms yyyy-mm-ddThh:mm:ss.ms | no |
+| due_date | allowed formats yyyy-mm-dd dd/mm/yyyy | no |
+| attachments | list of files to be uploaded Size limit: the total size of all the files combined should not exceed 25 mb Content type: In case attachments are given, the content type of the request should be multipart/form-data File types: There are no restrictions currently regarding file types. File encoding: If the file has an encoding associated with it, HappyFox will use that encoding when reading the file. If not it uses UTF-8 by default. There are no restrictions regarding the encoding of a file. | no |
+| visible_only_staff | true / false specify whether the ticket is private or not | no |
+| c-cf-\*\* | The is to be fetched from the list contact custom fields (/api/json/1.1/json/user_customfields/) api endpoint only. Do not use the IDs from the urls from the agent portal as they are different.<br>Format Textfield: string<br>Number: integer / float with 2 decimal places Dropdown: the id of the choice_ Multiple choice: list of ids of options<br>Date: yyyy-mm-dd | yes for mandatory custom fields |
+| t-cf-\*\* | The is to be fetched from the list custom fields api endpoint(/api/json/1.1/json/ticket_customfields/) only. Do not use the IDs from the urls from the agent portal as they are different.<br>Format Textfield: string<br>Number: integer / float with 2 decimal places Dropdown: the id of the choice_ Multiple choice: list of ids of options<br>Date: yyyy-mm-dd | yes for compulsory fields |
 
 ### Example payload
 
@@ -482,7 +505,7 @@ Ticket with attachments can be created by passing the payload as multi-part/form
 
 ```python
 import requests
-url = "https://<account_name>.happyfox.com/api/1.1/json/tickets/"
+url = "https://.happyfox.com/api/1.1/json/tickets/"
 payload={'category': '4',
 'name': 'Name',
 'text': 'Ticket creation message',
@@ -498,10 +521,9 @@ headers = {
 }
 response = requests.request("POST", url, headers=headers, data=payload, files=files)
 print(response.text)
-# To generate the BASIC_AUTH_STRING, please use the below code snippet
-#from requests.auth import _basic_auth_str
-#v1_api_key = <API_Key>
-#v1_auth_code = <AUTH_Code>
+# To generate the BASIC_AUTH_STRING, please use the below code snippet #from requests.auth import _basic_auth_str
+#v1_api_key =
+#v1_auth_code =
 #v1_auth_token = _basic_auth_str(v1_api_key, v1_auth_code)
 ```
 
@@ -512,63 +534,60 @@ print(response.text)
 ```json
 {
 "error": [
-   {
-       "field": "category",
-       "errors": [
-           "This field is required."
-       ]
-   }
+   {       "field": "category",       "errors": [           "This field is required."       ]   }
 ]
 }
 {
 "error": [
-   {
-       "field": "t-cf-3",
-       "errors": [
-           "This field is required"
-       ]
-   }
+   {       "field": "t-cf-3",       "errors": [           "This field is required"       ]   }
 ]
 }
 ```
 
+_Back to top_
+
 ## 5. Create multiple tickets
 
-### API Endpoint: /api/1.1/json/tickets/
+### \*\*API Endpoint: /api/1.1/json/tickets/\*\*
 
-Method:POST
+\*\*Method:POST\*\*
 
 ### Payload
 
-- The payload should be a list of ticket payloads.
-- For the payload structure of one ticket refer the Create Ticket section
-- A maximum of 100 tickets can be created in one request
+- The payload should be a JSON array
+- A maximum of 100 tickets can be created in one request. So the JSON array can contain 100 elements.
 - Response will be a list of dictionary, indicating successfully created tickets and payloads with validation errors (ref example below)
 - success - false indicates that the payload had validation errors
-- success - true indicates that the ticket got created successfully
+- success - true indicates that the ticket got created successfully.
+
+Example payload
+
+```json
+[
+{ "name" : "Alison", "email" : "allison@happyfox.com", "subject": "Delayed package", "text" : "Please check the delay in the order", "category": 15},
+{...},
+{...},
+...
+...
+...
+{...}
+]
+```
 
 ### Example response
 
 ```json
 [
 {
-   "display_id": "#DC00000011",
-   "id": 11,
-   "success": true
+   "display_id": "#DC00000011",   "id": 11,   "success": true
 },
 {
-   "success": false,
-   "error": [
-       {
-           "field": "category",
-           "errors": [
-               "This field is required."
-           ]
-       }
-   ]
+   "success": false,   "error": [       {           "field": "category",           "errors": [               "This field is required."           ]       }   ]
 }
 ]
 ```
+
+_Back to top_
 
 ## 6. Create an inline attachment to be added to the ticket body
 
@@ -578,7 +597,7 @@ Method:POST
 
 #### API Endpoint : /api/1.1/json/ticket-inline-attachment
 
-Method: POST
+\*\*Method: POST\*\*
 
 Payload Fields
 
@@ -596,11 +615,13 @@ Example success response (200)
 
 Please reach out to support@happyfox.com for an example code snippet (mention the coding language) that allows you to create ticket with inline and external attachments.
 
+\*\*Back to top\*\*
+
 ## 7. Fetch ticket attachment urls
 
-API Endpoints:
+\*\*API Endpoints: \*\*
 
-/api/1.1/json/ticket/\<ticket_number>/
+/api/1.1/json/ticket//
 
 /api/1.1/json/tickets/
 
@@ -610,21 +631,7 @@ The api response for these endpoints contain a field called attachments_count th
 
 ```json
 {
-...
-...
-...
-"attachments_count": 1,
-"last_updated_at": "2025-07-18 08:09:37",
-"priority": {
-"default": true,
-"id": 5,
-"name": "No Priority",
-"order": 1
-...
-...
-...
-
-}
+... ... ... "attachments_count": 1, "last_updated_at": "2025-07-18 08:09:37", "priority": { "default": true, "id": 5, "name": "No Priority", "order": 1 ... ... ... }
 ```
 
 The attachment urls are listed in the attachments array for every element present in the updates array for each ticket element in the data field. Each url has an expiry time of 5 mins. The attachment can be accessed directly using the link as the authentication code is embedded in the url for one time use.
@@ -652,35 +659,35 @@ Note: attachments, updates and data are payload fields in the api response.
 
 ## 8. Adding a Staff update
 
-API Endpoint: /api/1.1/json/ticket/\<ticket_number>/staff_update/
+\*\*API Endpoint:\*\* /api/1.1/json/ticket//staff_update/
 
-Method: POST
+\*\*Method: POST
 
-### Payload Fields
+### \*\*Payload Fields\*\*
 
-| Field | description | Required |
+| \*\*Field\*\* | \*\*description\*\* | \*\*Required\*\* |
 |---|---|---|
 | staff | ID of the agent who is adding the reply | yes |
 | cc | list of email addresses separated by commas | no |
 | bcc | list of email addresses separated by commas | no |
-| update_customer | - true / false.<br>- indicate whether to send the reply notification to the ticket contact<br>- defaults to false | no |
-| send_survey | - true / false<br>- indicate whether to launch survey<br>- defaults to false | no |
-| parent_update | - indicate the parent update in tickets created for facebook / twitter conversations | no |
-| last_staff_message | - the id of the last staff message (get this id from ticket -> updates -> message)<br>- this is used to specify an update which will be checked against the ticket’s last staff message for the purpose of agent collision | no |
+| update_customer | true / false. indicate whether to send the reply notification to the ticket contact defaults to false | no |
+| send_survey | true / false indicate whether to launch survey defaults to false | no |
+| parent_update | indicate the parent update in tickets created for facebook / twitter conversations | no |
+| last_staff_message | the id of the last staff message (get this id from ticket -> updates -> message) this is used to specify an update which will be checked against the ticket’s last staff message for the purpose of agent collision | no |
 | subject | change reply subject to be sent to the contact | no |
 | status | ID of the status. Changes status of the ticket | no |
 | priority | ID of the priority. Changes priority of the ticket | no |
 | assignee | ID of the assignee. Changes assignee of the ticket. To leave the ticket unassigned, use "assignee" : null | no |
 | time_spent | Integer. Adds time spent (in minutes) to the ticket | depends on category settings |
-| due_date | allowed formats<br>- yyyy-mm-dd<br>- dd/mm/yyyy | no |
+| due_date | allowed formats yyyy-mm-dd dd/mm/yyyy | no |
 | tags | list of tags separated by commas | no |
-| attachments | - list of files<br>- total size of all attachments should not exceed 25 mb | no |
+| attachments | list of files total size of all attachments should not exceed 25 mb | no |
 | html | agent reply in html format | no |
 | plaintext | agent reply in plain text format | no |
-| ccf-\<id of custom field> | Contact custom fields<br>Get the id of the custom fields from list contact custom fields api response<br>values format:<br>- text field: string<br>- number: integer / float with 2 decimal places<br>- dropdown: the id of the choice<br>- multiple choice: list of ids of options<br>- date: yyyy-mm-dd | no |
-| t-cf-\<id of custom field> | Ticket custom fields<br>Get the id of the custom fields from list contact custom fields api response<br>values format:<br>- text field: string<br>- number: integer / float with 2 decimal places<br>- dropdown: the id of the choice<br>- multiple choice: list of ids of options<br>- date: yyyy-mm-dd | yes for compulsory on complete fields if the status is moved from pending to closed status. |
+| ccf- | Contact custom fields Get the id of the custom fields from list contact custom fields api response values format: text field: string number: integer / float with 2 decimal places dropdown: the id of the choice multiple choice: list of ids of options date: yyyy-mm-dd | no |
+| t-cf- | Ticket custom fields Get the id of the custom fields from list contact custom fields api response values format: text field: string number: integer / float with 2 decimal places dropdown: the id of the choice multiple choice: list of ids of options \* date: yyyy-mm-dd | yes for compulsory on complete fields if the status is moved from pending to closed status. |
 
-### Example payload
+### \*\*Example payload\*\*
 
 ```json
 {
@@ -706,7 +713,9 @@ Example failure response
 }
 ```
 
-Note: Concurrent/parallel API calls to this endpoint, for any given particular ticket, is not supported.
+\*\* Note: \*\*Concurrent/parallel API calls to this endpoint, for any given particular ticket, is not supported.
+
+\*\*Back to top\*\*
 
 ## 8.1 Updating ticket properties
 
@@ -737,15 +746,17 @@ IDs of priority, status, assignee and agent/staff can be fetched by using the fo
 
 /api/1.1/json/statuses/
 
+\*\*Back to top\*\*
+
 ## 9. Adding a Staff private note
 
-### API Endpoint: /api/1.1/json/ticket/\<ticket_number>/staff_pvtnote/
+### \*\*API Endpoint: /api/1.1/json/ticket//staff_pvtnote/\*\*
 
-Method: POST
+\*\*Method: POST\*\*
 
-### Payload Fields
+### \*\*Payload Fields\*\*
 
-| Field | description | Required |
+| \*\*Field\*\* | \*\*description\*\* | \*\*Required\*\* |
 |---|---|---|
 | staff | ID of the agent adding the reply | yes |
 | alert | send private alert to:<br>'s' (all subscribers),<br>'c' (all agents in the ticket's category), or a specific agent ID | no |
@@ -758,16 +769,18 @@ Method: POST
 | attachments | list of files total size of all attachments should not exceed 25 MB | no |
 | html | agent's private note in html format | no |
 | plaintext | agent private note in plain text format | no |
-| ccf-\<id of custom field> | Contact custom fields Get the id of the custom fields from list contact custom fields api response Values format: text field: string number: integer / float with 2 decimal places dropdown: the id of the choice multiple choice: list of ids of options date: yyyy-mm-dd | no |
-| t-cf-\<id of custom field> | Ticket custom fields Get the id of the custom fields from list contact custom fields api response Values format: text field: string number: integer / float with 2 decimal places dropdown: the id of the choice multiple choice: list of ids of options \* date: yyyy-mm-dd | yes for compulsory on ticket completion fields if the status is moved to closed status. |
+| \*\*ccf-\*\* | Contact custom fields Get the id of the custom fields from list contact custom fields api response Values format: text field: string number: integer / float with 2 decimal places dropdown: the id of the choice multiple choice: list of ids of options date: yyyy-mm-dd | no |
+| \*\*t-cf-\*\* | Ticket custom fields Get the id of the custom fields from list contact custom fields api response Values format: text field: string number: integer / float with 2 decimal places dropdown: the id of the choice multiple choice: list of ids of options \* date: yyyy-mm-dd | yes for compulsory on ticket completion fields if the status is moved to closed status. |
+
+\*\*Back to top\*\*
 
 ## 10. Adding a Contact reply
 
-### API Endpoint: \</api/1.1/json/ticket/\<ticket_number>/user_reply/
+### \*\*API Endpoint: /user_reply/\*\*
 
-Method: POST
+\*\*Method: POST\*\*
 
-Sample payload:
+\*\*Sample payload: \*\*
 
 ```json
 {
@@ -778,46 +791,50 @@ Sample payload:
 }
 ```
 
-### Payload Fields
+### \*\*Payload Fields\*\*
 
-| Field | description | Required |
+| \*\*Field\*\* | \*\*description\*\* | \*\*Required\*\* |
 |---|---|---|
-| user | ID of the contact who is adding the reply | yes |
+| \*\*user\*\* | ID of the contact who is adding the reply | yes |
 | cc | list of email addresses separated by commas | no |
 | bcc | list of email addresses separated by commas | no |
 | attachments | list of files total size of all attachments should not exceed 25 MB | no |
 | text | Reply message in text format or html format | yes |
 
+\*\*Back to top\*\*
+
 ## 11.Edit custom fields values of a ticket
 
-### API Endpoint:
+### \*\*API Endpoint:\*\*
 
-/api/1.1/json/ticket/\<ticket_number>/update_custom_fields/
+/api/1.1/json/ticket//update_custom_fields/
 
-Method: POST
+\*\*Method: POST\*\*
 
-### Payload Fields
+### \*\*Payload Fields\*\*
 
-| Field | description | Required |
+| \*\*Field\*\* | \*\*description\*\* | \*\*Required\*\* |
 |---|---|---|
 | staff | ID of the agent | yes |
-| t-cf-\<id> | Ticket custom fields. Get the id of the custom fields from list contact custom fields api response values format: text field: string number: integer / float with 2 decimal places dropdown: the id of the choice multiple choice: list of ids of options \* date: yyyy-mm-dd | yes for compulsory fields |
+| t-cf- | Ticket custom fields. Get the id of the custom fields from list contact custom fields api response values format: text field: string number: integer / float with 2 decimal places dropdown: the id of the choice multiple choice: list of ids of options \* date: yyyy-mm-dd | yes for compulsory fields |
+
+\*\*Back to top\*\*
 
 ## 12. Update tags of a ticket
 
-### API Endpoint: /api/1.1/json/ticket/\<ticket_number>/update_tags/
+### \*\*API Endpoint: /api/1.1/json/ticket//update_tags/\*\*
 
-Method: POST
+\*\*Method: POST\*\*
 
-### Payload Fields
+### \*\*Payload Fields\*\*
 
-| Field | description | Required |
+| \*\*Field\*\* | \*\*description\*\* | \*\*Required\*\* |
 |---|---|---|
 | add | list of tags to add separated by commas | no |
 | remove | list of tags to remove separated by commas | no |
 | staff_id | ID of the agent making the update. To get the ID of the agents, please check /api/1.1/json/staff/ | yes, to show the agent name in the ticket |
 
-### Example Request
+### \*\*Example Request\*\*
 
 ```json
 {
@@ -829,20 +846,22 @@ Method: POST
 
 For a sample success response please refer ticket details response
 
+\*\*Back to top\*\*
+
 ## 13. Subscribe to ticket (agent only)
 
-### API Endpoint: /api/1.1/json/ticket/ticket_number/subscribe/
+### \*\*API Endpoint: /api/1.1/json/ticket/ticket_number/subscribe/\*\*
 
-Method: POST
+\*\*Method: POST\*\*
 
-### Payload Fields
+### \*\*Payload Fields\*\*
 
-| Field | description | Required |
+| \*\*Field\*\* | \*\*description\*\* | \*\*Required\*\* |
 |---|---|---|
 | staff_id | ID of the agent to be added as a subscriber to ticket. This can be fetched from /api/1.1/json/staff/ | yes |
 | data | list of ids of agents to be added as subscribers to ticket | no |
 
-### Example Request
+### \*\*Example Request\*\*
 
 ```json
 {
@@ -851,7 +870,7 @@ Method: POST
 }
 ```
 
-### Example success response
+### \*\*Example success response\*\*
 
 ```json
 {
@@ -859,19 +878,21 @@ Method: POST
 }
 ```
 
+\*\*Back to top\*\*
+
 ## 14. Unsubscribe from ticket (agent only)
 
-### API Endpoint: >/api/1.1/json/ticket/\<ticket_number>/unsubscribe/
+### \*\*API Endpoint: >/api/1.1/json/ticket//unsubscribe/\*\*
 
-Method: POST
+\*\*Method: POST\*\*
 
-### Payload Fields
+### \*\*Payload Fields\*\*
 
-| Field | description | Required |
+| \*\*Field\*\* | \*\*description\*\* | \*\*Required\*\* |
 |---|---|---|
 | staff_id | ID of the agent to be added as a subscriber to ticket - should be “ID of the agent to unsubscribe from a ticket”. This can be fetched from /api/1.1/json/staff/ | yes |
 
-### Example Request
+### \*\*Example Request\*\*
 
 ```json
 {
@@ -879,7 +900,7 @@ Method: POST
 }
 ```
 
-### Example for a successful response
+### \*\*Example for a successful response\*\*
 
 ```json
 {
@@ -887,15 +908,17 @@ Method: POST
 }
 ```
 
+\*\*Back to top\*\*
+
 ## 15. Forward ticket to an external email address
 
-### API Endpoint : /api/1.1/json/ticket/\<ticket_number>/forward/
+### \*\*API Endpoint : /api/1.1/json/ticket//forward/\*\*
 
-Method: POST
+\*\*Method: POST\*\*
 
-### Payload Fields
+### \*\*Payload Fields\*\*
 
-| Field | description | Required |
+| \*\*Field\*\* | \*\*description\*\* | \*\*Required\*\* |
 |---|---|---|
 | staff_id | ID of the agent who is forwarding the ticket. This can be fetched from /api/1.1/json/staff/ | yes |
 | to_include_ticket_contact | true / false | true / false |
@@ -911,7 +934,7 @@ Method: POST
 | attachments | list of files total size of all the attached files should not exceed 25 MB | no |
 | convert_replies_as_new_ticket | true / false | no. default value is true |
 
-### Example Request
+### \*\*Example Request\*\*
 
 ```json
 {
@@ -921,7 +944,7 @@ Method: POST
 }
 ```
 
-### Example successful response
+### \*\*Example successful response\*\*
 
 ```json
 {
@@ -929,26 +952,28 @@ Method: POST
 }
 ```
 
+\*\*Back to top\*\*
+
 ## 16. Move ticket to another Category
 
-### API Endpoint : /api/1.1/json/ticket/\<ticket_number>/move/
+### \*\*API Endpoint : /api/1.1/json/ticket//move/\*\*
 
-POST
+\*\*POST\*\*
 
-### Payload Fields
+### \*\*Payload Fields\*\*
 
-| Field | description | Required |
+| \*\*Field\*\* | \*\*description\*\* | \*\*Required\*\* |
 |---|---|---|
-| staff_id | ID of the agent who is changing the ticket category. This can be fetched from /api/1.1/json/staff/ | yes |
-| target_category_id | ID of the category to move the ticket to | yes |
-| move_note | Note to be added when moving the ticket | no |
-| assign_to | ID of the agent to whom the ticket has to be assigned to | no |
+| \*\*staff_id\*\* | ID of the agent who is changing the ticket category. This can be fetched from /api/1.1/json/staff/ | yes |
+| \*\*target_category_id\*\* | ID of the category to move the ticket to | yes |
+| \*\*move_note\*\* | Note to be added when moving the ticket | no |
+| \*\*assign_to\*\* | ID of the agent to whom the ticket has to be assigned to | no |
 
-### Note: The staff used for the above action should have the below permission enabled for their role.
+### \*\*Note: The staff used for the above action should have the below permission enabled for their role.\*\*
 
-![](https://hf-files-oregon.s3.amazonaws.com/hdpsupport_kb_attachments/2022/04-15/69484d25-856b-4c3c-b698-012a94ea70e6/image-20220415055415-1.png)
+\*\*![](https://hf-files-oregon.s3.amazonaws.com/hdpsupport_kb_attachments/2022/04-15/69484d25-856b-4c3c-b698-012a94ea70e6/image-20220415055415-1.png)\*\*
 
-### Example Request
+### \*\*Example Request\*\*
 
 ```json
 {
@@ -959,7 +984,7 @@ POST
 }
 ```
 
-### Example success response
+### \*\*Example success response\*\*
 
 ```json
 {
@@ -968,19 +993,21 @@ POST
 }
 ```
 
+\*\*Back to top\*\*
+
 ## 17. Delete ticket
 
-### API Endpoint : /api/1.1/json/ticket/\<ticket_number>/delete/
+### \*\*API Endpoint : /api/1.1/json/ticket//delete/\*\*
 
-Method: POST
+\*\*Method: POST\*\*
 
-### Payload Fields
+### \*\*Payload Fields\*\*
 
-| Field | description | Required |
+| \*\*Field\*\* | \*\*description\*\* | \*\*Required\*\* |
 |---|---|---|
 | staff_id | ID of the agent that is performing the category change. This can be fetched from /api/1.1/json/staff/ | yes |
 
-### Example request:
+### \*\*Example request:\*\*
 
 ```json
 {
@@ -988,13 +1015,15 @@ Method: POST
 }
 ```
 
-Example successful response:
+\*\*Example successful response:\*\*
 
 ```json
 {
 "deleted_ticket": "#DC00000005"
 }
 ```
+
+\*\*Back to top\*\*
 
 ## 18. Create ticket with attachments
 
@@ -1006,7 +1035,7 @@ Note: Ticket creation with attachments is supported only for HTTP POST, with mul
 
 API Endpoint: /api/1.1/json/ticket_custom_fields/
 
-Method: GET
+\*\*Method: GET\*\*
 
 Example response:
 
@@ -1134,48 +1163,47 @@ Example response:
 ]
 ```
 
-## 20. Fetch specific JSON fields
+\*\*20. Fetch specific JSON fields \*\*
 
-Specific JSON fields from the top-level of the JSON structure can be retrieved using this method. The names of the fields are passed as comma separated values to the fields parameter.
+Specific JSON fields from the top-level of the JSON structure can be retrieved using this method. The names of the fields are passed as comma separated values to the _fields _parameter.
 
-API Endpoint: /api/1.1/json/tickets/?fields=last_user_reply_at,last_staff_reply_at&size=50
+\*\*API Endpoint: \*\*/api/1.1/json/tickets/?fields=last_user_reply_at,last_staff_reply_at&size=50
 
 HTTP Method: GET
 
-Example: /api/json/1.1/tickets/?fields=id,last_user_reply_at,last_staff_reply_at
+\*\*Example: \*\*/api/json/1.1/tickets/?fields=id,last_user_reply_at,last_staff_reply_at
 
 Example response:
 
 ```json
 {
 "page_info":
-  { "count": 50,
-     "last_index": 440,
-     "page_count": 9,
-     "start_index": 1,
-     "end_index": 50
-  },
-
+{ "count": 50,
+"last_index": 440,
+"page_count": 9,
+"start_index": 1,
+"end_index": 50
+},
 "data":
-     [
-       {
-           "last_staff_reply_at": null,
-             "id": 5392,
-             "last_user_reply_at": "2025-07-15 17:39:35"
-        },
-       {
-         "last_staff_reply_at": "2025-07-15 09:38:39",
-          "id": 5391,
-         "last_user_reply_at": "2025-07-10 16:29:48" }
-        ,
-       {
-          "last_staff_reply_at": null,
-           "id": 5390,
-          "last_user_reply_at": "2025-07-10 16:25:18"
-       },
-         ...
-         ...
-         ...
-       ]
+[
+{
+"last_staff_reply_at": null,
+"id": 5392,
+"last_user_reply_at": "2025-07-15 17:39:35"
+},
+{
+"last_staff_reply_at": "2025-07-15 09:38:39",
+"id": 5391,
+"last_user_reply_at": "2025-07-10 16:29:48" }
+,
+{
+"last_staff_reply_at": null,
+"id": 5390,
+"last_user_reply_at": "2025-07-10 16:25:18"
+},
+     ...
+     ...
+     ...
+   ]
 }
 ```
