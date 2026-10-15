@@ -1,7 +1,8 @@
 """Sync HappyFox's REST API help articles into this directory as Markdown.
 
-Fetches the API index article and every article it links to from the public knowledge-base
-API, converts each HTML body to Markdown, writes `<id>-<slug>.md` and deletes any other file
+Reads the API section from the public knowledge-base API in one request and keeps the index
+article and every article it links to, fetching a linked article outside the section on its
+own. Converts each HTML body to Markdown, writes `<id>-<slug>.md` and deletes any other file
 here with a name of that form. Run `uv run Docs/sync.py`, then review what changed upstream
 with `git diff Docs/`.
 """
@@ -17,6 +18,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 BASE = "https://support.happyfox.com"
+SECTION_ID = 131
 INDEX_ID = 360
 OUT = Path(__file__).resolve().parent
 OWNED = re.compile(r"^\d+-[a-z0-9-]+\.md$")
@@ -366,10 +368,10 @@ def render(article: dict) -> str:
     return re.sub(r"\n{3,}", "\n\n", f"{head}\n\n{body}\n")
 
 
-def fetch(article_id: int) -> dict | None:
-    """Return one article from the public KB API, or None if it no longer exists."""
+def fetch(path: str) -> dict | None:
+    """Return one resource from the public KB API, or None if it no longer exists."""
     request = urllib.request.Request(
-        f"{BASE}/api/1.1/json/kb/article/{article_id}/",
+        f"{BASE}/api/1.1/json/{path}",
         headers={"Accept": "application/json", "User-Agent": "hfox-docs-sync"},
     )
     try:
@@ -382,7 +384,16 @@ def fetch(article_id: int) -> dict | None:
 
 
 def main() -> int:
-    index = fetch(INDEX_ID)
+    section = fetch(f"kb/section/{SECTION_ID}/")
+    if section is None:
+        print(f"error: section {SECTION_ID} not found", file=sys.stderr)
+        return 1
+    in_section = {article["id"]: article for article in section["articles"]}
+
+    def lookup(article_id: int) -> dict | None:
+        return in_section.get(article_id) or fetch(f"kb/article/{article_id}/")
+
+    index = lookup(INDEX_ID)
     if index is None:
         print(f"error: index article {INDEX_ID} not found", file=sys.stderr)
         return 1
@@ -390,7 +401,7 @@ def main() -> int:
     linked.pop(INDEX_ID, None)
     articles = [index]
     for article_id in linked:
-        article = fetch(article_id)
+        article = lookup(article_id)
         if article is None:
             print(f"warning: linked article {article_id} no longer exists", file=sys.stderr)
         else:
