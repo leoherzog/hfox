@@ -15,11 +15,12 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
 ]
 dependencies = [
     # main.py imports the private typer._click, so the next minor is excluded.
-    "typer>=0.27.2,<0.28",
-    "httpx2>=2.13.1,<3",
+    "typer>=0.27.3,<0.28",
+    "httpx2>=2.16.0,<3",
     "idna>=3.20",
     "rich>=15.0.0",
 ]
@@ -47,7 +48,7 @@ dev = [
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "pyyaml>=6.0.3",
-    "ruff>=0.16.9",
+    "ruff>=0.17.2",
 ]
 build = [
     "pyinstaller>=6.22.3",

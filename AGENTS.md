@@ -31,9 +31,9 @@ uv run Docs/sync.py      # refresh Docs/ from HappyFox's REST API help articles
 
 Use `python -m pytest`; the bare `pytest` shebang can break in a venv that was not freshly
 created. `.github/workflows/ci.yml` runs ruff and pytest on every push and pull request, on
-Linux, macOS and Windows with Python 3.11 to 3.14.
+Linux, macOS and Windows with Python 3.11 to 3.15.
 
-Typer is capped below the next minor (`typer>=0.27.2,<0.28`) because `cli/main.py` imports
+Typer is capped below the next minor (`typer>=0.27.3,<0.28`) because `cli/main.py` imports
 the private `typer._click`. Raise the cap only after checking that import.
 
 HTTP goes through `httpx2`, Pydantic's fork of httpx, capped below 3. It verifies TLS against
