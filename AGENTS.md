@@ -22,6 +22,7 @@ uv sync                  # create or update the virtualenv
 uv run hfox --help       # run the CLI from source
 uv run python -m pytest  # run the test suite
 uv run python -m pytest -q tests/test_client.py   # a single test file
+uv run python -m pytest --cov   # with line and branch coverage, as CI runs it
 uv run ruff check .      # lint
 uv run ruff check --fix . # autofix lint findings
 uv build                 # build sdist + wheel into dist/
@@ -31,7 +32,8 @@ uv run Docs/sync.py      # refresh Docs/ from HappyFox's REST API help articles
 
 Use `python -m pytest`; the bare `pytest` shebang can break in a venv that was not freshly
 created. `.github/workflows/ci.yml` runs ruff and pytest on every push and pull request, on
-Linux, macOS and Windows with Python 3.11 to 3.15.
+Linux, macOS and Windows with Python 3.11 to 3.15. Each job measures coverage and fails below
+`fail_under` in `pyproject.toml`.
 
 Typer is capped below the next minor (`typer>=0.27.3,<0.28`) because `cli/main.py` imports
 the private `typer._click`. Raise the cap only after checking that import.
@@ -620,7 +622,8 @@ command path, positional argument, key, slug, flag or env var is breaking.
   CliRunner input. Without it every confirm and login prompt takes the non-terminal path.
 - Subprocess tests build their environment with `conftest.subprocess_env(**extra)` and pass
   `stdin=subprocess.DEVNULL` unless they feed input, so the child sees the isolated home and
-  no terminal.
+  no terminal. The child is measured only while it inherits the `COVERAGE_*` variables, so
+  `subprocess_env` must keep them.
 - A new command needs a `--dry-run` test asserting method/URL/body, plus a unit test if it
   touches the client or encoding.
 - A destructive command needs tests for `--yes`, for the non-terminal `ValidationError`, for

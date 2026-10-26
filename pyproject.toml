@@ -54,6 +54,17 @@ build = [
     "pyinstaller>=6.22.3",
 ]
 
+[tool.coverage.run]
+source_pkgs = ["hfox"]
+branch = true
+# Many tests run the CLI in a child Python, which is measured only through this patch.
+patch = ["subprocess"]
+
+[tool.coverage.report]
+fail_under = 99
+show_missing = true
+skip_covered = true
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
