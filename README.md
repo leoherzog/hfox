@@ -259,10 +259,14 @@ JSON text too, while such a number in a cell of its own prints as `nan`, `inf` o
 |------|---------|
 | `0` | success |
 | `1` | HappyFox returned an error response, or part of a bulk request failed |
-| `2` | missing or rejected credentials |
+| `2` | missing credentials, or HTTP 401 or 403 |
 | `3` | bad arguments or input |
 | `4` | resource not found (HTTP 404) |
 | `5` | anything else: network, timeout, config file, cancelled prompt, internal |
+
+Some commands, such as `tickets move` and `assets delete`, also need a role permission on the
+acting agent. When one command exits 2 with HTTP 403 while `hfox auth status` still reports
+`"authenticated": true`, check that permission before logging in again.
 
 A failure prints one JSON object on stdout:
 

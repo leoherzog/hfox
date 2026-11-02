@@ -43,11 +43,12 @@ def _render_rows(
 ) -> None:
     """GET a reference list and render the rows matching `filters`.
 
-    `choices` shows custom-field choices as "text=id" in non-JSON formats, after filtering.
+    `choices` shows custom-field choices as "text=id" in table output, after filtering. CSV
+    and YAML keep the nested choices, since CSV is a contract format.
     """
     obj = get_ctx(ctx)
     rows = filter_rows(obj.call("GET", path), filters)
-    if choices and obj.fmt is not OutputFormat.JSON:
+    if choices and obj.fmt is OutputFormat.TABLE:
         rows = _flatten_choices(rows)
     obj.render_list(rows)
 

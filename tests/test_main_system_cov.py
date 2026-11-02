@@ -2,6 +2,8 @@
 and hfox.cli.system (read-only reference-data commands).
 """
 
+import csv
+import io
 import json
 import os
 import subprocess
@@ -368,14 +370,15 @@ _FIELDS = [
 
 
 @pytest.mark.parametrize("command", ["ticket-custom-fields", "contact-custom-fields"])
-def test_custom_field_choices_flattened_in_csv(mock_api, command):
+def test_custom_field_choices_written_as_json_in_csv(mock_api, command):
     mock_api(lambda req: httpx2.Response(200, json=_FIELDS))
     result = run("-f", "csv", "system", command)
     assert result.exit_code == 0
-    lines = result.stdout.splitlines()
-    assert lines[0] == "id,name,type,choices"
-    assert lines[1] == '61,Request Survey,choice,"No=2, Yes=1"'
-    assert lines[2] == "4,Account Number,text,"
+    rows = list(csv.reader(io.StringIO(result.stdout)))
+    assert rows[0] == ["id", "name", "type", "choices"]
+    assert rows[1][:3] == ["61", "Request Survey", "choice"]
+    assert json.loads(rows[1][3]) == _FIELDS[0]["choices"]
+    assert rows[2] == ["4", "Account Number", "text", ""]
 
 
 def test_custom_field_choices_flattened_in_table(mock_api):
@@ -446,12 +449,13 @@ def test_system_staff_email_filter_skips_null_email(mock_api):
 @pytest.mark.parametrize("command", ["ticket-custom-fields", "contact-custom-fields"])
 def test_custom_fields_name_filter_runs_before_flattening(mock_api, command):
     mock_api(lambda req: httpx2.Response(200, json=_FIELDS))
-    result = run("-f", "csv", "system", command, "--name", "survey")
+    result = run(
+        "-f", "table", "system", command, "--name", "survey", env_extra={"COLUMNS": "200"}
+    )
     assert result.exit_code == 0
-    assert result.stdout.splitlines() == [
-        "id,name,type,choices",
-        '61,Request Survey,choice,"No=2, Yes=1"',
-    ]
+    assert "Request Survey" in result.stdout
+    assert "No=2, Yes=1" in result.stdout
+    assert "Account Number" not in result.stdout
     result = run("system", command, "--name", "account")
     assert json.loads(result.stdout) == [_FIELDS[1]]
 

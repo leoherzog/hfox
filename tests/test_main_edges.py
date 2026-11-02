@@ -406,18 +406,21 @@ def test_csv_cell_with_deep_nesting(run_app, mock_api):
 
 
 # -- system custom-field rendering --------------------------------------------
-def test_custom_field_choices_flattened_in_yaml(mock_api):
+def test_custom_field_choices_kept_nested_in_yaml(mock_api):
     fields = [
-        {"id": 61, "choices": [{"text": "No", "id": 2}, {"text": "Yes", "id": 1}]},
+        {
+            "id": 61,
+            "choices": [
+                {"text": "No", "id": 2, "dependant_fields": []},
+                {"text": "Yes", "id": 1, "dependant_fields": [{"id": 9}]},
+            ],
+        },
         {"id": 4, "choices": None},
     ]
     mock_api(lambda req: httpx2.Response(200, json=fields))
     result = run("-f", "yaml", "system", "ticket-custom-fields")
     assert result.exit_code == 0, result.output
-    assert yaml.safe_load(result.stdout) == [
-        {"id": 61, "choices": "No=2, Yes=1"},
-        {"id": 4, "choices": None},
-    ]
+    assert yaml.safe_load(result.stdout) == fields
 
 
 def test_custom_fields_body_that_is_not_a_list_renders_unchanged(mock_api):
@@ -425,6 +428,12 @@ def test_custom_fields_body_that_is_not_a_list_renders_unchanged(mock_api):
     result = run("-f", "csv", "system", "ticket-custom-fields")
     assert result.exit_code == 0, result.output
     assert result.stdout.splitlines() == ["detail", "x"]
+    result = run(
+        "-f", "table", "system", "ticket-custom-fields", env_extra={"COLUMNS": "200"}
+    )
+    assert result.exit_code == 0, result.output
+    assert "detail" in result.stdout
+    assert "=" not in result.stdout
 
 
 def test_custom_field_rows_and_choices_of_unexpected_shape_pass_through(mock_api):
@@ -434,11 +443,18 @@ def test_custom_field_rows_and_choices_of_unexpected_shape_pass_through(mock_api
         "odd",
     ]
     mock_api(lambda req: httpx2.Response(200, json=body))
+    result = run(
+        "-f", "table", "system", "contact-custom-fields", env_extra={"COLUMNS": "200"}
+    )
+    assert result.exit_code == 0, result.output
+    assert "No=2, Other, 7" in result.stdout
+    assert "n/a" in result.stdout
+    assert "odd" in result.stdout
     result = run("-f", "csv", "system", "contact-custom-fields")
     assert result.exit_code == 0, result.output
     assert result.stdout.splitlines() == [
         "id,choices,value",
-        '1,"No=2, Other, 7",',
+        '1,"[{""text"": ""No"", ""id"": 2}, ""Other"", 7]",',
         "2,n/a,",
         ",,odd",
     ]

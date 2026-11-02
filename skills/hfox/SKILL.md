@@ -213,10 +213,15 @@ walk it ends is incomplete.
 |------|---------|-----------|
 | 0 | success | parse stdout |
 | 1 | HappyFox error response, or part of a bulk request failed | read `status_code` and `detail` |
-| 2 | missing or rejected credentials | ask the user to log in |
+| 2 | missing credentials, or HTTP 401 or 403 | read `detail`, then see below |
 | 3 | bad arguments or input | fix the command; do not retry unchanged |
 | 4 | not found | check the id |
 | 5 | network, timeout, config file, cancelled prompt or internal | read `type` |
+
+On exit 2, run `hfox auth status`. If it also exits 2, ask the user to log in. If it reports
+`"authenticated": true`, the credentials work, and a 403 from the failed command points to a
+role permission the acting agent lacks, such as the move permission of `tickets move`.
+Report that to the user instead of asking for a new login.
 
 A failure prints one JSON object on stdout:
 

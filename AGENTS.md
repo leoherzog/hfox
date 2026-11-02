@@ -579,8 +579,9 @@ Defined in `core/errors.py` (`ExitCode`); each `HfoxError` subclass carries its 
 `hint`, `retry_after`, `outcome_unknown`. `usage` is structural (unknown or misplaced flag,
 unknown command, missing argument, flag-shaped root option value); a value that fails a
 range, type or content check is `validation`, whichever layer rejects it. A failed `--staff`
-lookup is exit 3, since exit 4 means HTTP 404. `detail` content is diagnostic and not
-contract, apart from `staff_ids` on an ambiguous `--staff`.
+lookup is exit 3, since exit 4 means HTTP 404. HTTP 401 and 403 both raise `AuthError`,
+exit 2; moving 403 to another code is a breaking change. `detail` content is diagnostic and
+not contract, apart from `staff_ids` on an ambiguous `--staff`.
 
 `outcome_unknown` is true for a write that failed after the request may have left, and for a
 write answered with HTTP 500 or above; both carry `OUTCOME_UNKNOWN_HINT` from
