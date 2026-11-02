@@ -35,9 +35,10 @@ def _render(data, fmt) -> str:
 # --- OutputFormat.parse ------------------------------------------------------
 
 
-def test_parse_none_defaults_json():
-    assert OutputFormat.parse(None) is OutputFormat.JSON
-    assert OutputFormat.parse("") is OutputFormat.JSON
+@pytest.mark.parametrize("value", [None, "", " ", False, 0, []], ids=repr)
+def test_parse_rejects_a_value_that_names_no_format(value):
+    with pytest.raises(ValidationError, match="Unknown output format"):
+        OutputFormat.parse(value)
 
 
 def test_parse_yml_alias_maps_to_yaml():

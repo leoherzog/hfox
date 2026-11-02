@@ -21,9 +21,6 @@ from ._util import nonblank_or_none
 from .context import AppContext, as_hfox_error
 from .output import OutputFormat
 
-_FORMAT_NAMES = {*(f.value for f in OutputFormat), "yml"}
-_OTHER_FORMATS = _FORMAT_NAMES - {OutputFormat.JSON.value}
-
 # Declared by commands that take a staff identity, so the token scan cannot claim them.
 _PER_COMMAND_FLAGS = {"--staff", "--staff-id"}
 
@@ -120,8 +117,13 @@ def _early_ndjson(command, args: list[str]) -> bool:
             fmt = value
         elif name.startswith("-f") and not name.startswith("--"):
             fmt = name[2:]  # click reads `-ftable` as `-f table`
-    fmt = nonblank_or_none(fmt) or os.environ.get("HFOX_FORMAT") or ""
-    return page_all and fmt.strip().lower() not in _OTHER_FORMATS
+    if not page_all:
+        return False
+    fmt = nonblank_or_none(fmt) or os.environ.get("HFOX_FORMAT")
+    try:
+        return OutputFormat.parse(fmt) is OutputFormat.JSON
+    except ValidationError:
+        return True
 
 
 def _may_take_next(token: str) -> bool:
@@ -270,9 +272,9 @@ def _resolve_format(flag: str | None, config) -> OutputFormat:
     """
     flag = nonblank_or_none(flag)
     value = flag if flag else config.default_format
-    if value is None or value == "":
-        return OutputFormat.JSON
-    if str(value).strip().lower() not in _FORMAT_NAMES:
+    try:
+        return OutputFormat.parse(value)
+    except ValidationError:
         # load_config reads past a whitespace-only HFOX_FORMAT to the file value.
         if flag:
             source = "--format"
@@ -282,8 +284,7 @@ def _resolve_format(flag: str | None, config) -> OutputFormat:
             source = f"default_format in {config.dir / CONFIG_FILENAME}"
         raise ValidationError(
             f"Unknown output format {value!r} from {source}; expected json, table, csv or yaml."
-        )
-    return OutputFormat.parse(value)
+        ) from None
 
 
 def _fail(err: HfoxError, ndjson: bool) -> NoReturn:
@@ -339,7 +340,3 @@ def app() -> None:
         _fail(as_hfox_error(exc), command.ndjson)
     if isinstance(exit_code, int) and exit_code:
         raise SystemExit(exit_code)
-
-
-if __name__ == "__main__":
-    app()

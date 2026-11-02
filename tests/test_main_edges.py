@@ -164,15 +164,10 @@ def test_empty_env_format_leaves_the_config_file_as_the_named_source(run_app, tm
     assert "HFOX_FORMAT" not in payload["error"]
 
 
-@pytest.mark.parametrize("unset", [None, ""])
-def test_resolve_format_counts_none_and_empty_as_unset(unset):
-    assert main_mod._resolve_format(None, Config(default_format=unset)) is OutputFormat.JSON
-
-
 @pytest.mark.parametrize("blank", ["", " ", "  ", "\t", "\n", " "], ids=repr)
 def test_resolve_format_counts_a_blank_flag_as_not_given(blank):
     assert main_mod._resolve_format(blank, Config(default_format="table")) is OutputFormat.TABLE
-    assert main_mod._resolve_format(blank, Config(default_format=None)) is OutputFormat.JSON
+    assert main_mod._resolve_format(blank, Config()) is OutputFormat.JSON
 
 
 def test_resolve_format_keeps_a_padded_flag():

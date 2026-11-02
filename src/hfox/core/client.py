@@ -412,20 +412,24 @@ def _unwrap_page(
     return ([] if records is None else [records]), page_count
 
 
+def _row_key(body: dict[str, Any], root_key: str) -> str:
+    """Return the key an object page holds its rows under: `root_key`, or the reports key
+    `rows` when `root_key` is null or missing and `rows` is present.
+    """
+    return "rows" if body.get(root_key) is None and "rows" in body else root_key
+
+
 def _records(body: Any, root_key: str) -> Any:
     """Return the value a page body holds as its rows; a list when it holds a row list.
 
-    A bare list is its own rows. An object holds them under `root_key`, or under the reports
-    key `rows` when `root_key` is null or missing. Any other body holds None.
+    A bare list is its own rows, and an object holds them under `_row_key`. Any other body
+    holds None.
     """
     if isinstance(body, list):
         return body
     if not isinstance(body, dict):
         return None
-    records = body.get(root_key)
-    if records is None and "rows" in body:
-        records = body.get("rows")
-    return records
+    return body.get(_row_key(body, root_key))
 
 
 def _page_count(value: Any, path: str | None) -> int | None:

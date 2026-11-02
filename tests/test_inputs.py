@@ -2,6 +2,7 @@
 the credential content check.
 """
 
+import inspect
 import io
 import json
 import os
@@ -196,11 +197,19 @@ def test_read_json_parses_file_and_names_it_on_error(ctx, tmp_path):
 def test_read_text_file_does_not_read_stdin(monkeypatch):
     feed(monkeypatch, b"[1]")
     with pytest.raises(ValidationError, match="File not found: -"):
-        read_text_file("-")
+        read_text_file("-", forbidden=(), secrets=())
 
 
-def test_read_text_file_without_guard_arguments_reads_token_json(cfg_dir):
-    assert json.loads(read_text_file(str(cfg_dir / "token.json")))["api_key"] == FILE_KEY
+@pytest.mark.parametrize(
+    "helper",
+    [check_readable_path, open_guarded, check_no_secrets, read_text_file, util_mod.attach],
+    ids=lambda helper: helper.__name__,
+)
+def test_guard_arguments_have_no_default_so_no_caller_skips_the_guard(helper):
+    params = inspect.signature(helper).parameters
+    guards = [params[name] for name in ("forbidden", "secrets") if name in params]
+    assert guards
+    assert all(guard.default is inspect.Parameter.empty for guard in guards)
 
 
 # -- stdin --------------------------------------------------------------------
@@ -440,7 +449,7 @@ def test_guard_refuses_an_upper_cased_path(ctx, cfg_dir, read):
 def test_check_readable_path_returns_the_expanded_unresolved_path(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert check_readable_path("rel/x.txt", [tmp_path / "cfg"]) == Path("rel/x.txt")
-    assert check_readable_path("~/x.txt") == Path(os.environ["HOME"]) / "x.txt"
+    assert check_readable_path("~/x.txt", []) == Path(os.environ["HOME"]) / "x.txt"
 
 
 def _no_home(monkeypatch):
@@ -457,7 +466,7 @@ def test_unexpandable_tilde_path_is_used_as_written(ctx, tmp_path, monkeypatch):
     (tmp_path / "~draft.txt").write_bytes(b"body\n")
     (tmp_path / "~data.json").write_text("[1]", encoding="utf-8")
     _no_home(monkeypatch)
-    assert check_readable_path("~draft.txt") == Path("~draft.txt")
+    assert check_readable_path("~draft.txt", []) == Path("~draft.txt")
     assert ctx.read_text("~draft.txt", "--text-file") == "body\n"
     assert ctx.read_json("~data.json", "--file") == [1]
     assert ctx.attach({}, ["~draft.txt"])["files"] == [("attachments", ("~draft.txt", b"body\n"))]
@@ -491,13 +500,13 @@ def test_guard_holds_for_an_unexpandable_guarded_directory(tmp_path, monkeypatch
 
 def test_open_guarded_names_what_is_missing(tmp_path):
     with pytest.raises(ValidationError, match="Attachment not found: .*gone.bin"):
-        open_guarded(str(tmp_path / "gone.bin"), what="Attachment")
+        open_guarded(str(tmp_path / "gone.bin"), forbidden=(), what="Attachment")
 
 
 def test_open_guarded_returns_an_open_binary_handle(tmp_path):
     f = tmp_path / "a.bin"
     f.write_bytes(b"\x00\x01")
-    path, handle = open_guarded(str(f))
+    path, handle = open_guarded(str(f), forbidden=())
     with handle:
         assert path == f
         assert handle.read() == b"\x00\x01"
@@ -510,7 +519,7 @@ def test_check_no_secrets_message_never_holds_the_secret():
     assert str(exc.value) == "Refusing to send stdin: it contains HappyFox credentials."
     assert ENV_KEY not in json.dumps(exc.value.to_dict())
     check_no_secrets(b"nothing here", "stdin", [ENV_KEY])
-    check_no_secrets(b"anything", "stdin")
+    check_no_secrets(b"anything", "stdin", [])
 
 
 def _secret_ctx(monkeypatch, dry_run):

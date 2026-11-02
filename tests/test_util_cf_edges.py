@@ -56,9 +56,9 @@ def _read_json(path):
 
 
 READERS = {
-    "text": read_text_file,
+    "text": lambda path: read_text_file(path, forbidden=(), secrets=()),
     "json": _read_json,
-    "attach": lambda path: attach({}, [path]),
+    "attach": lambda path: attach({}, [path], forbidden=(), secrets=()),
 }
 reader = pytest.mark.parametrize("read", READERS.values(), ids=READERS.keys())
 
@@ -344,9 +344,9 @@ def test_read_text_file_applies_the_guard_and_the_credential_check(tmp_path):
     copy = tmp_path / "copy.json"
     copy.write_bytes((store / "token.json").read_bytes())
     with pytest.raises(ValidationError, match=REFUSED):
-        read_text_file(str(store / "token.json"), forbidden=[store])
+        read_text_file(str(store / "token.json"), forbidden=[store], secrets=())
     with pytest.raises(ValidationError, match=LEAKS):
-        read_text_file(str(copy), secrets=[SECRET])
+        read_text_file(str(copy), forbidden=(), secrets=[SECRET])
 
 
 # -- file state ---------------------------------------------------------------
@@ -443,7 +443,7 @@ def test_file_whose_status_cannot_be_read_is_refused_and_closed(tmp_path, monkey
     with monkeypatch.context() as patch:
         patch.setattr(os, "fstat", _io_error)
         with pytest.raises(ValidationError) as exc:
-            open_guarded(str(f))
+            open_guarded(str(f), forbidden=())
     assert str(f) in str(exc.value)
     assert exc.value.exit_code is ExitCode.VALIDATION
     assert _all_closed(handles)
@@ -453,12 +453,12 @@ def test_read_text_file_closes_the_file_after_a_read_and_after_a_read_error(tmp_
     f = tmp_path / "body.txt"
     f.write_bytes(b"body\n")
     handles = _record_opens(monkeypatch)
-    assert read_text_file(str(f)) == "body\n"
+    assert read_text_file(str(f), forbidden=(), secrets=()) == "body\n"
     assert _all_closed(handles)
     handles.clear()
     monkeypatch.setattr(util_mod, "_read_all", _io_error)
     with pytest.raises(ValidationError):
-        read_text_file(str(f))
+        read_text_file(str(f), forbidden=(), secrets=())
     assert _all_closed(handles)
 
 
@@ -467,16 +467,16 @@ def test_attach_closes_every_file_also_when_a_later_one_is_refused(tmp_path, mon
     a.write_bytes(b"first")
     b.write_bytes(b"second")
     handles = _record_opens(monkeypatch)
-    assert len(attach({}, [str(a), str(b)])["files"]) == 2
+    assert len(attach({}, [str(a), str(b)], forbidden=(), secrets=())["files"]) == 2
     assert _all_closed(handles)
     handles.clear()
     with pytest.raises(ValidationError):
-        attach({}, [str(a), str(tmp_path / "gone.bin")])
+        attach({}, [str(a), str(tmp_path / "gone.bin")], forbidden=(), secrets=())
     assert _all_closed(handles)
 
 
 # -- read errors --------------------------------------------------------------
-@pytest.mark.parametrize("read", [read_text_file, _read_json], ids=["text", "json"])
+@pytest.mark.parametrize("read", [READERS["text"], READERS["json"]], ids=["text", "json"])
 def test_read_error_is_a_validation_error_naming_the_file(tmp_path, monkeypatch, read):
     f = tmp_path / "flaky.json"
     f.write_text("[1]", encoding="utf-8")
@@ -501,14 +501,14 @@ def test_check_no_secrets_ignores_an_empty_secret():
 # -- attachments --------------------------------------------------------------
 def test_attach_with_an_empty_file_list_sends_the_json_body():
     body = {"subject": "s", "assignee": None}
-    assert attach(body, []) == {"json": body}
+    assert attach(body, [], forbidden=(), secrets=()) == {"json": body}
 
 
 def test_attach_sends_files_in_the_order_given(tmp_path):
     a, b = tmp_path / "a.bin", tmp_path / "b.bin"
     a.write_bytes(b"first")
     b.write_bytes(b"second")
-    assert attach({}, [str(b), str(a)])["files"] == [
+    assert attach({}, [str(b), str(a)], forbidden=(), secrets=())["files"] == [
         ("attachments", ("b.bin", b"second")),
         ("attachments", ("a.bin", b"first")),
     ]
@@ -526,7 +526,7 @@ def test_attach_multipart_sends_every_value_but_none_as_text(tmp_path):
         "no_ids": [],
         "custom_fields": {"5": 4, "6": [1, 2]},
     }
-    assert attach(body, [str(f)])["data"] == {
+    assert attach(body, [str(f)], forbidden=(), secrets=())["data"] == {
         "zero": "0",
         "ratio": "1.5",
         "blank": "",
@@ -542,7 +542,7 @@ def test_attach_guards_every_file_not_only_the_first(tmp_path, spell):
     clean = tmp_path / "clean.txt"
     clean.write_bytes(b"nothing here")
     with pytest.raises(ValidationError, match=REFUSED):
-        attach({}, [str(clean), str(store / "token.json")], forbidden=spell([store]))
+        attach({}, [str(clean), str(store / "token.json")], forbidden=spell([store]), secrets=())
 
 
 @spelled
@@ -551,7 +551,7 @@ def test_attach_checks_every_file_for_credentials(tmp_path, spell):
     clean.write_bytes(b"nothing here")
     leaky.write_bytes(b"key=" + SECRET.encode())
     with pytest.raises(ValidationError, match=LEAKS):
-        attach({}, [str(clean), str(leaky)], secrets=spell([SECRET]))
+        attach({}, [str(clean), str(leaky)], forbidden=(), secrets=spell([SECRET]))
 
 
 def test_attach_limit_applies_to_the_bytes_read_from_all_files_together(tmp_path, monkeypatch):
@@ -562,7 +562,7 @@ def test_attach_limit_applies_to_the_bytes_read_from_all_files_together(tmp_path
     monkeypatch.setattr(util_mod, "MAX_ATTACHMENT_BYTES", 4)
     monkeypatch.setattr(util_mod, "_read_all", lambda handle: b"123")
     with pytest.raises(ValidationError, match="limit"):
-        attach({}, [str(a), str(b)])
+        attach({}, [str(a), str(b)], forbidden=(), secrets=())
 
 
 # -- strict JSON --------------------------------------------------------------

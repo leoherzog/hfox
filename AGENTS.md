@@ -145,12 +145,13 @@ is `--query` on list verbs. `-v` is `--version`; there is no verbose or debug mo
 `--timeout` (`HFOX_TIMEOUT`) and `--max-retries` (`HFOX_MAX_RETRIES`) are Typer options with
 `envvar=`, not `Config` fields. The callback rejects a timeout that is not finite and above
 0, and `min=0` on `--max-retries` is the only guard against a negative value, which would
-make the client send nothing. `_resolve_format` raises `ValidationError` for an unknown
-format and names its source: `--format`, `HFOX_FORMAT` or `default_format` in the config file.
+make the client send nothing. `_resolve_format` checks the name through `OutputFormat.parse`
+and raises `ValidationError` for an unknown format naming its source: `--format`,
+`HFOX_FORMAT` or `default_format` in the config file.
 It passes the flag through `nonblank_or_none`, so an empty or whitespace-only `--format`
 counts as not given and is never the named source.
-Of the configured value only `None` and `""` count as unset, so `default_format = false`,
-`0` or `[]` is unknown.
+A configured value is always checked, since `load_config` falls back to `json` rather than
+leaving it unset, so `default_format = false`, `0` or `[]` is unknown.
 `load_config` drops a whitespace-only `HFOX_FORMAT` or `default_format` before it, and a
 whitespace-only `HFOX_FORMAT` is never the named source. It strips a set one, so the message
 echoes outer whitespace only for `--format`.
@@ -223,14 +224,15 @@ Helpers:
   `STDIN` is `"-"`. `stdin_is_tty()` is always called as `_util.stdin_is_tty()`, so tests can
   patch the module attribute. On Windows it also requires `GetConsoleMode` to succeed on the
   stdin handle, since `isatty()` is true for `NUL`.
-- Guarded reads, used only through `AppContext`: `check_readable_path(path, forbidden=())`
+- Guarded reads, used only through `AppContext`: `check_readable_path(path, forbidden)`
   refuses a path that resolves to a guarded directory or below one, comparing by file
-  identity and component-wise, never by string prefix. `open_guarded(path, *, forbidden=(),
+  identity and component-wise, never by string prefix. `open_guarded(path, *, forbidden,
   what="File")` adds the missing-file check, refuses a path that is not a regular file and
   refuses a hard link to a guarded `token.json`; the caller reads from the returned handle.
-  `check_no_secrets(data, source, secrets=())` refuses content holding a credential.
-  `read_text_file` combines them and decodes strict `utf-8-sig`; JSON is parsed by
-  `AppContext.read_json` through `parse_json`.
+  `check_no_secrets(data, source, secrets)` refuses content holding a credential.
+  `read_text_file(path, *, forbidden, secrets)` combines them and decodes strict
+  `utf-8-sig`; JSON is parsed by `AppContext.read_json` through `parse_json`. The guard
+  arguments have no default, so a caller cannot skip the guard by leaving them out.
   `_read_all(handle)` is the one read point and the patch point for read-error tests.
   `_expand(path)` expands `~` in a user-named path; one it cannot expand stays as written.
 - `filter_rows(body, {field: text}, *, root_key="data", paged=False)` keeps the rows of a bare
@@ -240,7 +242,7 @@ Helpers:
   unless `paged`, which reads rows as `client._unwrap_page` does so NDJSON pages match the
   flat list. `filter_help(field, *, paged=False)` is the flag's help text. `auth login` and
   `lookup_staff` share `fold` but match exactly.
-- `attach(body, attachments, *, field="attachments", forbidden=(), secrets=())` keeps a JSON
+- `attach(body, attachments, *, forbidden, secrets, field="attachments")` keeps a JSON
   body as given, so `compact()` the base body before merging custom fields. Multipart drops
   `None`, sends every other value as text and caps files at `MAX_ATTACHMENT_BYTES` in total.
 - `exit_on_failures(result, *, benign=None)`, called after rendering, exits 1 when any entry
@@ -256,7 +258,8 @@ Helpers:
   invalid-JSON and not-an-object errors name `flag`, so a `--contact-cf` call site passes
   `json_flag="--contact-cf-json"` and a `--contact-cf-json` one `flag="--contact-cf-json"`.
   `parse_asset_cf` takes bare ids only.
-- `cli/output.py`: `OutputFormat.parse` raises `ValidationError` for an unknown name.
+- `cli/output.py`: `OutputFormat.parse` raises `ValidationError` for an unknown name, `None`
+  and `""` included.
   `sanitize_text`, also named `sanitize_cell`, drops every `Cc` and `Cf` character except
   newline, tab, U+200C and U+200D. Table and CSV cells and headers pass through it, and so do
   `warn` and `info` messages and the text of `obj.confirm` and `obj.prompt`, on a terminal or
@@ -432,8 +435,9 @@ lines are formatting debris, not emphasis or content.
   params as given, raises the same errors and returns the raw body.
   `_unwrap_page(body, root_key, path=None)` returns the count
   as `int | None`, reads a whole float such as `3.0` as 3 and names `path` in the error.
-  `_records(body, root_key)` holds the row-key rule: a bare list, else the `root_key`
-  value, else the reports key `rows`. An
+  `_row_key(body, root_key)` and `_records(body, root_key)` hold the row-key rule: a bare
+  list, else the `root_key` value, else the reports key `rows`. `filter_rows` and
+  `render_list` call them rather than repeat it. An
   object without a row list whose count is absent, 0 or 1 is one page, and so are a bare
   list, a text body and an empty body. Every list verb passes its
   `--size`, default 10, so a `--page-all` walk reads 10 rows per page unless `--size 50` is

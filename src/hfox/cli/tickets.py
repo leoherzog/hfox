@@ -517,7 +517,7 @@ def update_cf(
     fields.update(parse_cf_json(cf_json, "t-cf-"))
     if not fields:
         raise ValidationError("Provide at least one --cf '<id>=<value>' or --cf-json.")
-    body = compact({"staff": obj.require_staff_id(staff_id, staff)})
+    body = {"staff": obj.require_staff_id(staff_id, staff)}
     body.update(fields)
     result = obj.call("POST", f"ticket/{ticket_id}/update_custom_fields/", json=body)
     obj.render(result)

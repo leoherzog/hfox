@@ -18,6 +18,7 @@ from typing import Any, BinaryIO
 
 import typer
 
+from ..core.client import _row_key
 from ..core.config import TOKEN_FILENAME
 from ..core.errors import HfoxError, ValidationError
 from . import output
@@ -213,7 +214,7 @@ def _is_within(path: Path, directory: Path) -> bool:
     return Path(os.path.normcase(path)).is_relative_to(Path(os.path.normcase(directory)))
 
 
-def check_readable_path(path: str, forbidden: Iterable[Path] = ()) -> Path:
+def check_readable_path(path: str, forbidden: Iterable[Path]) -> Path:
     """Return `path` with `~` expanded; raise ValidationError when it resolves to a
     `forbidden` directory or below one. Runs before any existence check.
     """
@@ -245,7 +246,7 @@ def _token_identities(forbidden: Iterable[Path]) -> set[tuple[int, int]]:
 
 
 def open_guarded(
-    path: str, *, forbidden: Iterable[Path] = (), what: str = "File"
+    path: str, *, forbidden: Iterable[Path], what: str = "File"
 ) -> tuple[Path, BinaryIO]:
     """Open a regular file for binary reading; return (path, handle), which the caller closes.
 
@@ -280,7 +281,7 @@ def open_guarded(
     return p, handle
 
 
-def check_no_secrets(data: bytes, source: str, secrets: Iterable[str] = ()) -> None:
+def check_no_secrets(data: bytes, source: str, secrets: Iterable[str]) -> None:
     """Raise ValidationError when `data` holds the UTF-8 bytes of any of `secrets`."""
     for secret in secrets:
         if secret and secret.encode("utf-8") in data:
@@ -294,7 +295,7 @@ def _read_all(handle: BinaryIO) -> bytes:
 
 
 def read_text_file(
-    path: str, *, forbidden: Iterable[Path] = (), secrets: Iterable[str] = ()
+    path: str, *, forbidden: Iterable[Path], secrets: Iterable[str]
 ) -> str:
     """Read a guarded file as strict UTF-8, dropping a BOM; content is otherwise unchanged.
 
@@ -324,9 +325,9 @@ def attach(
     body: dict[str, Any],
     attachments: list[str] | None,
     *,
+    forbidden: Iterable[Path],
+    secrets: Iterable[str],
     field: str = "attachments",
-    forbidden: Iterable[Path] = (),
-    secrets: Iterable[str] = (),
 ) -> dict[str, Any]:
     """Build AppContext.call kwargs: {"json": body}, or {"data", "files"} when files are given.
 
@@ -443,9 +444,7 @@ def filter_rows(
         return body
     key, rows = root_key, body
     if isinstance(body, dict):
-        # Same key rule as client._unwrap_page and render_list: root_key, then reports "rows".
-        if body.get(root_key) is None and "rows" in body:
-            key = "rows"
+        key = _row_key(body, root_key)
         rows = body.get(key)
         if paged and not isinstance(rows, list):
             rows = [] if rows is None else [rows]

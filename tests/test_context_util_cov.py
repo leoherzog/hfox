@@ -469,14 +469,15 @@ def test_validate_contact_ref_rejects_other_values(value):
 
 def test_attach_no_files_sends_body_as_given():
     body = {"subject": "s", "assignee": None}
-    assert attach(body, None) == {"json": {"subject": "s", "assignee": None}}
+    out = attach(body, None, forbidden=(), secrets=())
+    assert out == {"json": {"subject": "s", "assignee": None}}
 
 
 def test_attach_with_file_builds_multipart(tmp_path):
     f = tmp_path / "note.txt"
     f.write_bytes(b"hello")
     body = {"subject": "s", "tags": ["x", "y"], "flag": True, "n": 3, "t-cf-1": None}
-    out = attach(body, [str(f)])
+    out = attach(body, [str(f)], forbidden=(), secrets=())
     assert out["files"] == [("attachments", ("note.txt", b"hello"))]
     assert out["data"] == {
         "subject": "s",
@@ -489,14 +490,14 @@ def test_attach_with_file_builds_multipart(tmp_path):
 def test_attach_custom_field_name(tmp_path):
     f = tmp_path / "img.png"
     f.write_bytes(b"\x89PNG")
-    out = attach({}, [str(f)], field="file")
+    out = attach({}, [str(f)], field="file", forbidden=(), secrets=())
     assert out["files"][0][0] == "file"
 
 
 def test_attach_missing_file_raises(tmp_path):
     missing = tmp_path / "nope.bin"
     with pytest.raises(ValidationError) as exc:
-        attach({"a": 1}, [str(missing)])
+        attach({"a": 1}, [str(missing)], forbidden=(), secrets=())
     assert "Attachment not found" in str(exc.value)
     assert exc.value.exit_code is ExitCode.VALIDATION
 
@@ -510,7 +511,7 @@ def test_attach_unopenable_file_raises(tmp_path, monkeypatch):
 
     monkeypatch.setattr(type(f), "open", denied)
     with pytest.raises(ValidationError, match="Cannot read .*Permission denied"):
-        attach({}, [str(f)])
+        attach({}, [str(f)], forbidden=(), secrets=())
 
 
 def test_attach_unreadable_file_raises(tmp_path, monkeypatch):
@@ -522,7 +523,7 @@ def test_attach_unreadable_file_raises(tmp_path, monkeypatch):
 
     monkeypatch.setattr(util_mod, "_read_all", denied)
     with pytest.raises(ValidationError, match="Cannot read .*Input/output error"):
-        attach({}, [str(f)])
+        attach({}, [str(f)], forbidden=(), secrets=())
 
 
 def test_attach_rechecks_total_on_the_bytes_read(tmp_path, monkeypatch):
@@ -532,7 +533,7 @@ def test_attach_rechecks_total_on_the_bytes_read(tmp_path, monkeypatch):
     monkeypatch.setattr(util_mod, "MAX_ATTACHMENT_BYTES", 4)
     monkeypatch.setattr(util_mod, "_read_all", lambda handle: b"12345")
     with pytest.raises(ValidationError, match="Attachments total 5 bytes; the limit is 4"):
-        attach({}, [str(f)])
+        attach({}, [str(f)], forbidden=(), secrets=())
 
 
 def test_attach_total_at_limit_is_allowed(tmp_path):
@@ -541,7 +542,7 @@ def test_attach_total_at_limit_is_allowed(tmp_path):
     b.write_bytes(b"")
     os.truncate(a, MAX_ATTACHMENT_BYTES - 10)
     os.truncate(b, 10)
-    out = attach({}, [str(a), str(b)])
+    out = attach({}, [str(a), str(b)], forbidden=(), secrets=())
     assert len(out["files"]) == 2
 
 
@@ -557,7 +558,7 @@ def test_attach_total_over_limit_raises_before_reading(tmp_path, monkeypatch):
 
     monkeypatch.setattr(util_mod, "_read_all", no_read)
     with pytest.raises(ValidationError) as exc:
-        attach({}, [str(a), str(b)])
+        attach({}, [str(a), str(b)], forbidden=(), secrets=())
     assert "25,000,000" in str(exc.value)
     assert MAX_ATTACHMENT_BYTES == 25_000_000
 

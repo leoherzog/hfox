@@ -257,11 +257,11 @@ def test_app_success_path(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# main.py :: __main__ guard, exercised via a subprocess running app()
+# python -m hfox, exercised via a subprocess running app()
 # ---------------------------------------------------------------------------
 def test_module_run_as_script_version():
     proc = subprocess.run(
-        [sys.executable, "-m", "hfox.cli.main", "--version"],
+        [sys.executable, "-m", "hfox", "--version"],
         env=subprocess_env(**ENV),
         stdin=subprocess.DEVNULL,
         capture_output=True,
@@ -274,7 +274,7 @@ def test_module_run_as_script_version():
 @pytest.mark.parametrize(("encoding", "fox"), [("utf-8", True), ("cp1252", False)])
 def test_help_shows_fox_only_when_stdout_can_encode_it(encoding, fox):
     proc = subprocess.run(
-        [sys.executable, "-m", "hfox.cli.main", "--help"],
+        [sys.executable, "-m", "hfox", "--help"],
         env=subprocess_env(**ENV, PYTHONIOENCODING=encoding, PYTHONUTF8="0"),
         stdin=subprocess.DEVNULL,
         capture_output=True,

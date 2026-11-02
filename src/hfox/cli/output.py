@@ -32,11 +32,13 @@ class OutputFormat(StrEnum):
     YAML = "yaml"
 
     @classmethod
-    def parse(cls, value: str | None) -> OutputFormat:
-        if not value:
-            return cls.JSON
-        normalized = value.strip().lower()
-        if normalized in ("yml",):
+    def parse(cls, value: object) -> OutputFormat:
+        """Return the format `value` names, ignoring case and outer whitespace; `yml` is YAML.
+
+        Raises ValidationError for any other value, None and "" included.
+        """
+        normalized = str(value).strip().lower()
+        if normalized == "yml":
             return cls.YAML
         try:
             return cls(normalized)

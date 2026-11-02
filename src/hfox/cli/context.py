@@ -17,6 +17,7 @@ from ..core.client import (
     DEFAULT_TIMEOUT,
     MAX_RETRIES,
     HappyFoxClient,
+    _records,
     first_page_params,
     request_url,
 )
@@ -340,16 +341,11 @@ class AppContext:
 
     def render_list(self, body: Any, *, root_key: str = "data") -> None:
         """Render a listing: JSON keeps the {page_info, data} envelope; others render the rows."""
-        if isinstance(body, list):
-            self.render(body)
-            return
         if self.fmt is OutputFormat.JSON:
             self.render(body)
             return
-        records = body.get(root_key) if isinstance(body, dict) else None
-        if records is None and isinstance(body, dict) and "rows" in body:
-            records = body["rows"]
-        self.render(records if records is not None else body)
+        records = _records(body, root_key)
+        self.render(body if records is None else records)
 
     def success(self, message: str) -> None:
         if not self.quiet:
