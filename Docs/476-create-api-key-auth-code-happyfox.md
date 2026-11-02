@@ -1,12 +1,12 @@
 # How to create an API Key and Auth Code in HappyFox?
 
-Source: https://support.happyfox.com/kb/article/476-create-api-key-auth-code-happyfox/ (last updated 2020-10-05 08:45:07 UTC)
+Source: https://support.happyfox.com/kb/article/476-create-api-key-auth-code-happyfox/ (last updated 2026-10-29 10:08:06 UTC)
 
 There are several third-party applications with which you can integrate your HappyFox account with, using an API key and the Auth code of that particular key.
 
 Follow the below steps on how to create an API key and a respective Auth code:
 
-1. Log in to your HappyFox account and head on over to Apps >> Goodies >> API and click "Enable".![](https://hf-files-oregon.s3.amazonaws.com/hdpsupport_kb_attachments/2018/09-11/6b2e6ae4-6393-4e18-89f3-3e42ae20a9fc/Mda2d97adaedb9319825828b8fcbcca5b1536651720020.png)
+1. Log in to your HappyFox account and head on over to Apps >> Goodies >> API and click "Enable".
 2. When the page loads, you'll be able to see the list of API keys already configured, along with its status.
 
 ![](https://hf-files-oregon.s3.amazonaws.com/hdpsupport_kb_attachments/2020/10-05/79207c79-fd6d-4c2d-9e68-ea9508096eb4/Screenshot_2020-10-05_at_2.07.10_PM.png)
