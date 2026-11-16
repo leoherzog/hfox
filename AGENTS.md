@@ -310,15 +310,16 @@ Helpers:
 - Validate path ids with the `_util` validators or `int` with `min=1`. An option that takes
   an id is `int` with `min=1`; one that also takes a keyword (`tickets list --status`,
   `note --alert`) goes through `validate_id_text`. `--staff-id` and `--time-spent` are
-  `min=0`. `--size` is 1–50 and `--page` at least 1. Required strings use `require_nonblank`.
+  `min=0`. `--size` is 1–50 and `--page` at least 1. A required one-line string goes through
+  `strip_or_reject`, and a required body through `require_nonblank`.
   A flag that takes only a comma-separated id list ends in `-ids` (`--staff-ids`,
   `--attachment-ids`, `--contact-ids`) and goes through `require_ids` or `split_csv_ints`.
   The `tickets list` filters `--status` and `--category` keep the API's parameter names.
   `--category` goes through `split_csv_ints`, is sent as a repeated `category` parameter and
   is not sent when blank.
-- **Staff pair:** a command that needs or names a staff identity declares both
 - **Boolean pairs** are `--x/--no-x`, as in `--login/--no-login`. No pair uses another
   negation.
+- **Staff pair:** a command that needs or names a staff identity declares both
   `staff: str = typer.Option(None, "--staff", help=STAFF_HELP)` and
   `staff_id: int = typer.Option(None, "--staff-id", min=0, help=STAFF_ID_HELP)` and calls
   `obj.require_staff_id(staff_id, staff)`. No other flag spelling names the actor. Only

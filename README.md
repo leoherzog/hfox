@@ -377,11 +377,11 @@ assignee. `contacts create` and `create-bulk` also edit the contact with the sam
 reset custom fields they do not send. `contacts create` and `update` take `--login` or
 `--no-login` to allow or block portal login.
 
-An empty or whitespace-only value exits 3 on `--due-date`, `--created-at`,
-`reply --subject`, `note --alert` and `move --note`; on `--name`, `--email` and `--phone` of
-`tickets create` and `contacts update`; on `contacts create --email` and `--phone`; on
-`assets update --name` and `--display-id`; and on `contacts groups create --description` and
-`--domains`. Apart from `--note`, these values are sent without outer whitespace. `--staff-ids`
+An empty or whitespace-only value exits 3 on `--subject`, `--due-date`, `--created-at`,
+`note --alert` and `move --note`; on `--name`, `--email` and `--phone` of `tickets create`,
+`contacts create` and `contacts update`; on `--name` and `--display-id` of `assets create`
+and `update`; and on `contacts groups create --name`, `--description` and `--domains`.
+Apart from `--note`, these values are sent without outer whitespace. `--staff-ids`
 and `--attachment-ids`, when given, exit 3 unless they list an id. An empty value clears on
 `contacts groups update --description` and `--domains`, and `assets update --contact-ids ''`
 and `--contact-group-ids ''` send an empty list.

@@ -905,6 +905,16 @@ def test_groups_remove_contacts_not_in_group_is_benign(mock_api):
     assert result.stderr == ""
 
 
+def test_contacts_create_name_is_sent_without_outer_whitespace():
+    p = preview("--dry-run", "contacts", "create", "--name", "  Leia  ", "--email", "l@x.org")
+    assert p["body"]["name"] == "Leia"
+
+
+def test_groups_create_name_is_sent_without_outer_whitespace():
+    p = preview("--dry-run", "contacts", "groups", "create", "--name", "  VIP  ")
+    assert p["body"]["name"] == "VIP"
+
+
 @pytest.mark.parametrize("flag", ["--enable-login", "--disable-login"])
 def test_contacts_update_has_one_login_flag_pair(flag):
     result = run("--dry-run", "contacts", "update", "55", flag)

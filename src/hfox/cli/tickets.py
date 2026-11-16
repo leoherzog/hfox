@@ -194,7 +194,7 @@ def create_ticket(
 ):
     """Create a ticket for a new or existing contact."""
     obj = get_ctx(ctx)
-    require_nonblank(subject, "--subject")
+    subject = strip_or_reject(subject, "--subject")
     _check_unassign(unassign, assignee, attachment)
     text = nonblank_or_none(obj.text_input(text, text_file, "--text"))
     html = nonblank_or_none(obj.text_input(html, html_file, "--html"))
@@ -645,7 +645,7 @@ def forward(
     recipients = comma_join(split_csv(to))
     if recipients is None:
         raise ValidationError("--to must list at least one address.")
-    require_nonblank(subject, "--subject")
+    subject = strip_or_reject(subject, "--subject")
     message = obj.text_input(message, message_file, "--message")
     if message is None:
         raise ValidationError("Provide the forward message with --message or --message-file.")

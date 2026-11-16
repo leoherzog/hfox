@@ -411,6 +411,29 @@ def test_assets_create_requires_staff_id(mock_api):
     assert captured == []
 
 
+def test_assets_create_validates_before_resolving_staff(mock_api):
+    captured = mock_api(lambda r: httpx2.Response(200, json=[]))
+    env = {k: v for k, v in ENV.items() if k != "HFOX_STAFF_ID"}
+    result = runner.invoke(
+        cli,
+        ["assets", "create", "--name", "X", "--display-id", "D", "--cf", "bad",
+         "--staff", "jane@acme.com"],
+        env=env,
+    )
+    assert isinstance(result.exception, ValidationError)
+    assert "custom field" in str(result.exception)
+    assert captured == []
+
+
+def test_assets_create_sends_name_and_display_id_without_outer_whitespace():
+    result = run(
+        "--dry-run", "assets", "create", "--name", "  MBP  ", "--display-id", "  LAP-1  "
+    )
+    assert result.exit_code == 0, result.stdout
+    body = json.loads(result.stdout)["body"]
+    assert (body["name"], body["display_id"]) == ("MBP", "LAP-1")
+
+
 # --------------------------------------------------------------------------- #
 # --staff and --staff-id
 # --------------------------------------------------------------------------- #

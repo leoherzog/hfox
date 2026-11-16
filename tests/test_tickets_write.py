@@ -231,6 +231,22 @@ def test_create_blank_subject_is_rejected():
     )
 
 
+def test_create_subject_is_sent_without_outer_whitespace():
+    p = preview(
+        "--dry-run", "tickets", "create", "--subject", "  Down  ", "--category", "3",
+        "--contact-id", "5", "--text", "body",
+    )
+    assert p["body"]["subject"] == "Down"
+
+
+def test_forward_subject_is_sent_without_outer_whitespace():
+    p = preview(
+        "--dry-run", "tickets", "forward", "5", "--to", "a@x.org", "--subject", "  Fwd  ",
+        "--message", "see below",
+    )
+    assert p["body"]["subject"] == "Fwd"
+
+
 @pytest.mark.parametrize("flag", ["--cf-json", "--contact-cf-json"])
 def test_create_null_value_rejects_attachment(flag, tmp_path):
     f = tmp_path / "a.txt"

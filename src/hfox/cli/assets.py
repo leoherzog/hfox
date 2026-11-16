@@ -117,20 +117,22 @@ def create_asset(
 ) -> None:
     """Create an asset."""
     obj = get_ctx(ctx)
+    name = strip_or_reject(name, "--name")
     _check_name(name)
-    require_nonblank(display_id, "--display-id")
+    display_id = strip_or_reject(display_id, "--display-id")
     linked_contacts = require_ids(contact_ids, "--contact-ids")
     linked_groups = require_ids(contact_group_ids, "--contact-group-ids")
-    created_by = obj.require_staff_id(staff_id, staff)
+    new_contacts = _parse_new_contacts(new_contacts_json)
+    custom_fields = _custom_fields(cf, cf_json)
     body = compact(
         {
             "name": name,
             "display_id": display_id,
-            "created_by": created_by,
+            "created_by": obj.require_staff_id(staff_id, staff),
             "contact_ids": linked_contacts,
             "contact_group_ids": linked_groups,
-            "contacts": _parse_new_contacts(new_contacts_json),
-            "custom_fields": _custom_fields(cf, cf_json),
+            "contacts": new_contacts,
+            "custom_fields": custom_fields,
         }
     )
     params = compact({"asset_type": asset_type})

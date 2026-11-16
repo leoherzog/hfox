@@ -167,11 +167,11 @@ A path must name a regular file. A directory, FIFO, device or process substituti
 - Custom fields: `--cf <id>=<value>`, repeatable; `--cf '6=[3,4]'` sends a list of option
   ids; `--cf-json '{"5": ""}'` sends values as given. A `null` value cannot be combined
   with `--attachment`. A field given twice keeps the last value, and `007` names field 7.
-- An empty or whitespace-only value exits 3 on `--due-date`, `--created-at`,
-  `reply --subject`, `note --alert`, `move --note`, `--staff-ids` and `--attachment-ids`;
-  on `--name`, `--email` and `--phone` of `tickets create` and `contacts update`; on
-  `contacts create --email` and `--phone`; on `assets update --name` and `--display-id`; and
-  on `contacts groups create --description` and `--domains`. An empty value clears on
+- An empty or whitespace-only value exits 3 on `--subject`, `--due-date`, `--created-at`,
+  `note --alert`, `move --note`, `--staff-ids` and `--attachment-ids`; on `--name`,
+  `--email` and `--phone` of `tickets create`, `contacts create` and `contacts update`; on
+  `--name` and `--display-id` of `assets create` and `update`; and on
+  `contacts groups create --name`, `--description` and `--domains`. An empty value clears on
   `contacts groups update --description` and `--domains`, and
   `assets update --contact-ids ''` and `--contact-group-ids ''` send an empty list.
   When given, `--tags`, `--cc`, `--bcc`, `tags --add` and `tags --remove` exit 3 unless

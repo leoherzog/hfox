@@ -13,7 +13,6 @@ from ._util import (
     exit_on_failures,
     filter_help,
     filter_rows,
-    require_nonblank,
     split_csv,
     split_csv_ints,
     strip_or_none,
@@ -118,7 +117,7 @@ def create_contact(
 ) -> None:
     """Add a contact, or edit the one with the same email. Unsent custom fields are reset."""
     obj = get_ctx(ctx)
-    require_nonblank(name, "--name")
+    name = strip_or_reject(name, "--name")
     number = _single_phone(phone)
     email = strip_or_reject(email, "--email")
     if email is None and number is None:
@@ -249,7 +248,7 @@ def create_group(
 ) -> None:
     """Create a contact group."""
     obj = get_ctx(ctx)
-    require_nonblank(name, "--name")
+    name = strip_or_reject(name, "--name")
     body = compact(
         {
             "name": name,
