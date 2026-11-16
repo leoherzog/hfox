@@ -317,6 +317,8 @@ Helpers:
   `--category` goes through `split_csv_ints`, is sent as a repeated `category` parameter and
   is not sent when blank.
 - **Staff pair:** a command that needs or names a staff identity declares both
+- **Boolean pairs** are `--x/--no-x`, as in `--login/--no-login`. No pair uses another
+  negation.
   `staff: str = typer.Option(None, "--staff", help=STAFF_HELP)` and
   `staff_id: int = typer.Option(None, "--staff-id", min=0, help=STAFF_ID_HELP)` and calls
   `obj.require_staff_id(staff_id, staff)`. No other flag spelling names the actor. Only

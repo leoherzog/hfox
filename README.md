@@ -374,7 +374,8 @@ argument or flag that takes an id exits 3 for `0`, except `--staff-id`. `tickets
 changes status, priority, assignee, due date, tags, time spent and custom fields without
 posting a message. `--unassign` on `create`, `reply`, `note` and `update` sends a null
 assignee. `contacts create` and `create-bulk` also edit the contact with the same email and
-reset custom fields they do not send.
+reset custom fields they do not send. `contacts create` and `update` take `--login` or
+`--no-login` to allow or block portal login.
 
 An empty or whitespace-only value exits 3 on `--due-date`, `--created-at`,
 `reply --subject`, `note --alert` and `move --note`; on `--name`, `--email` and `--phone` of

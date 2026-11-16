@@ -55,10 +55,10 @@ def _single_phone(values: list[str] | None) -> str | None:
     return strip_or_reject(values[0] if values else None, "--phone")
 
 
-def _login_flag(enable_login: bool | None) -> str | None:
-    if enable_login is None:
+def _login_flag(login: bool | None) -> str | None:
+    if login is None:
         return None
-    return "TRUE" if enable_login else "FALSE"
+    return "TRUE" if login else "FALSE"
 
 
 def _domains(value: str | None) -> str | None:
@@ -110,8 +110,8 @@ def create_contact(
     phone_type: str = typer.Option(
         None, "--phone-type", help="Phone type: mo, w, m, h or o (default)."
     ),
-    enable_login: bool = typer.Option(
-        None, "--enable-login/--disable-login", help="Enable or disable portal login."
+    login: bool = typer.Option(
+        None, "--login/--no-login", help="Allow or block portal login."
     ),
     cf: list[str] = typer.Option(None, "--cf", help=CF_HELP),
     cf_json: str = typer.Option(None, "--cf-json", help=CF_JSON_HELP),
@@ -130,7 +130,7 @@ def create_contact(
     body = {"name": name, "email": email}
     if number is not None:
         body["phones"] = [{"type": phone_type or "o", "number": number, "is_primary": True}]
-    body.update(compact({"is_login_enabled": _login_flag(enable_login)}))
+    body.update(compact({"is_login_enabled": _login_flag(login)}))
     body.update(parse_cf_options(cf, prefix="c-cf-"))
     body.update(parse_cf_json(cf_json, "c-cf-"))
     result = obj.call("POST", "users/", json=body)
@@ -141,7 +141,7 @@ def create_contact(
 def update_contact(
     ctx: typer.Context,
     contact_id: str = typer.Argument(
-        ..., help="Contact id; an email address is documented only with --enable-login."
+        ..., help="Contact id; an email address is documented only with --login."
     ),
     name: str = typer.Option(None, "--name", help="New name."),
     email: str = typer.Option(None, "--email", help="New email address."),
@@ -157,8 +157,8 @@ def update_contact(
     ),
     cf: list[str] = typer.Option(None, "--cf", help=CF_HELP),
     cf_json: str = typer.Option(None, "--cf-json", help=CF_JSON_HELP),
-    enable_login: bool = typer.Option(
-        None, "--enable-login/--disable-login", help="Enable or disable portal login."
+    login: bool = typer.Option(
+        None, "--login/--no-login", help="Allow or block portal login."
     ),
 ) -> None:
     """Edit a contact. Only the fields you pass are sent; unsent custom fields may still reset."""
@@ -180,7 +180,7 @@ def update_contact(
             "name": strip_or_reject(name, "--name"),
             "email": strip_or_reject(email, "--email"),
             "phones": phones,
-            "is_login_enabled": _login_flag(enable_login),
+            "is_login_enabled": _login_flag(login),
         }
     )
     body.update(parse_cf_options(cf, prefix="c-cf-"))

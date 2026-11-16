@@ -212,10 +212,10 @@ def test_contacts_create_no_phone_omits_phones_uses_cf_json():
 
 
 # -- contacts update -------------------------------------------------------
-def test_contacts_update_enable_login_maps_to_TRUE():
+def test_contacts_update_login_maps_to_TRUE():
     p = preview(
         "--dry-run", "contacts", "update", "55",
-        "--name", "Jane", "--enable-login",
+        "--name", "Jane", "--login",
     )
     assert p["method"] == "POST"
     assert p["url"].endswith("/user/55/")
@@ -223,10 +223,10 @@ def test_contacts_update_enable_login_maps_to_TRUE():
     assert p["body"]["is_login_enabled"] == "TRUE"
 
 
-def test_contacts_update_disable_login_sends_false():
+def test_contacts_update_no_login_sends_false():
     p = preview(
         "--dry-run", "contacts", "update", "55",
-        "--email", "new@x.org", "--disable-login",
+        "--email", "new@x.org", "--no-login",
     )
     assert p["body"]["is_login_enabled"] == "FALSE"
     assert p["body"]["email"] == "new@x.org"
@@ -726,8 +726,8 @@ def test_contacts_send_the_id_without_leading_zeros(verb):
     assert p["url"].endswith("/api/1.1/json/user/7/")
 
 
-def test_contacts_update_by_email_disable_login():
-    p = preview("--dry-run", "contacts", "update", "a@x.com", "--disable-login")
+def test_contacts_update_by_email_no_login():
+    p = preview("--dry-run", "contacts", "update", "a@x.com", "--no-login")
     assert p["method"] == "POST"
     assert p["url"].endswith("/user/a@x.com/")
     assert p["body"] == {"is_login_enabled": "FALSE"}
@@ -770,8 +770,8 @@ def test_contacts_create_phone_type_without_phone_fails(mock_api):
 def test_contacts_create_login_flags():
     base = ("--dry-run", "contacts", "create", "--name", "J", "--email", "j@x.org")
     assert "is_login_enabled" not in preview(*base)["body"]
-    assert preview(*base, "--enable-login")["body"]["is_login_enabled"] == "TRUE"
-    assert preview(*base, "--disable-login")["body"]["is_login_enabled"] == "FALSE"
+    assert preview(*base, "--login")["body"]["is_login_enabled"] == "TRUE"
+    assert preview(*base, "--no-login")["body"]["is_login_enabled"] == "FALSE"
 
 
 def test_contacts_create_cf_keys_allow_only_contact_prefix(mock_api):
@@ -903,3 +903,10 @@ def test_groups_remove_contacts_not_in_group_is_benign(mock_api):
     result = run("contacts", "groups", "remove-contacts", "3", "--contact-ids", "3")
     assert result.exit_code == 0, result.stderr
     assert result.stderr == ""
+
+
+@pytest.mark.parametrize("flag", ["--enable-login", "--disable-login"])
+def test_contacts_update_has_one_login_flag_pair(flag):
+    result = run("--dry-run", "contacts", "update", "55", flag)
+    assert result.exit_code == 2
+    assert "No such option" in result.output
