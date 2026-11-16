@@ -1,6 +1,6 @@
 # API Reference: Contacts and Contact Groups
 
-Source: https://support.happyfox.com/kb/article/1092-contacts-and-contact-groups-api-endpoints/ (last updated 2026-03-11 10:38:50 UTC)
+Source: https://support.happyfox.com/kb/article/1092-contacts-and-contact-groups-api-endpoints/ (last updated 2026-11-16 08:09:24 UTC)
 
 API provided by the HappyFox helpdesk is a RESTful web service. It supports operations like creating a ticket, adding updates to a ticket, listing tickets and users of the Helpdesk. It supports JSON, Form Url encoded and Multipart Form Data formats as payload.
 
@@ -105,6 +105,7 @@ For HTTP POST methods, please ensure the IDs of the custom fields are as per /ap
            ],
            "created_at": null,
            "updated_at": null,
+           "last_login_at": null,
            "pending_tickets_count": 2,
            "contact_groups": [
                {
@@ -150,6 +151,7 @@ Search fields:
 - phone
 - updated_since
 - created_since
+- last_login_before
 
 Notes for search fields:
 
@@ -161,6 +163,7 @@ Notes for search fields:
 Example search url:
 
 > https://customerservice.happyfox.com/api/1.1/users/?q=name:adam email:adam@example.com
+> https://customerservice.happyfox.com/api/1.1/users/?q=last_login_before:2026-07-26
 
 ## 3. Contact detail page
 
@@ -187,6 +190,7 @@ Example Response:
    "phones": [],
    "created_at": null,
    "updated_at": null,
+   "last_login_at": null,
    "pending_tickets_count": 1,
    "contact_groups": [
        {

@@ -175,8 +175,9 @@ On `tickets list` and `contacts list`, `-q` means `--query`:
 
 - Tickets: text or filters such as `status:"In Progress","New"`; a comma means any-of and a
   space replaces the docs' `+`. Multi-word text is ANDed, which HappyFox does not document.
-- Contacts: `field:value` filters on `name`, `email`, `phone`, `updated_since` or
-  `created_since`, ANDed when space-separated. Omit `+` from phone numbers.
+- Contacts: `field:value` filters on `name`, `email`, `phone`, `updated_since`,
+  `created_since` or `last_login_before`, ANDed when space-separated. Omit `+` from phone
+  numbers.
 
 `--status`, `--sort` and `-q` are sent without outer whitespace, and a blank one is not sent.
 

@@ -65,8 +65,8 @@ def list_contacts(
         "--query",
         "-q",
         help=(
-            "field:value filters on name, email, phone, updated_since or created_since, "
-            "ANDed when space-separated; omit '+' from phone numbers."
+            "field:value filters on name, email, phone, updated_since, created_since or "
+            "last_login_before, ANDed when space-separated; omit '+' from phone numbers."
         ),
     ),
     page: int = typer.Option(1, "--page", min=1, help="Page number to fetch."),
