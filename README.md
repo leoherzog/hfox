@@ -204,7 +204,7 @@ takes the agent whose whole email, or failing that whole name, equals the text, 
 case. No match, several matches and a value made of digits exit 3. The lookup is a read, so
 it is also sent under `--dry-run` and needs credentials.
 
-`--assignee` and `--agents` take staff ids; `--alert` takes `s`, `c` or a staff id. None
+`--assignee` and `--staff-ids` take staff ids; `--alert` takes `s`, `c` or a staff id. None
 accepts an email or name. Find the ids with `hfox system staff`.
 
 ## Input from files and stdin
@@ -377,8 +377,8 @@ An empty or whitespace-only value exits 3 on `--due-date`, `--created-at`,
 `reply --subject`, `note --alert` and `move --note`; on `--name`, `--email` and `--phone` of
 `tickets create` and `contacts update`; on `contacts create --email` and `--phone`; on
 `assets update --name` and `--display-id`; and on `contacts groups create --description` and
-`--domains`. Apart from `--note`, these values are sent without outer whitespace. `--agents`
-and `--ticket-attachments`, when given, exit 3 unless they list an id. An empty value clears on
+`--domains`. Apart from `--note`, these values are sent without outer whitespace. `--staff-ids`
+and `--attachment-ids`, when given, exit 3 unless they list an id. An empty value clears on
 `contacts groups update --description` and `--domains`, and `assets update --contact-ids ''`
 and `--contact-group-ids ''` send an empty list.
 When given, `--tags`, `--cc`, `--bcc`, `tags --add` and `tags --remove` exit 3 unless they

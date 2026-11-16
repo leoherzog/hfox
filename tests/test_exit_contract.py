@@ -94,7 +94,7 @@ def test_local_filter_without_page_all_exits_3():
 def test_missing_required_staff_id_exits_3():
     env = {k: v for k, v in ENV.items() if k != "HFOX_STAFF_ID"}
     proc = run_app(
-        ["--dry-run", "tickets", "subscribe", "42", "--agents", "3"],
+        ["--dry-run", "tickets", "subscribe", "42", "--staff-ids", "3"],
         base_env=env,
     )
     assert proc.returncode == 3

@@ -248,7 +248,7 @@ def test_unknown_staff_is_rejected_without_a_write(mock_api):
 
 def test_subscribe_staff_names_the_agent_added(mock_api):
     captured = staff_api(mock_api)
-    result = run("tickets", "subscribe", "42", "--staff", "alice@x.org", "--agents", "3,4")
+    result = run("tickets", "subscribe", "42", "--staff", "alice@x.org", "--staff-ids", "3,4")
     assert result.exit_code == 0, result.output
     assert json.loads(captured[1].content) == {"staff_id": 1, "data": [3, 4]}
 

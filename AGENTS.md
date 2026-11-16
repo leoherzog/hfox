@@ -308,12 +308,15 @@ Helpers:
   an id is `int` with `min=1`; one that also takes a keyword (`tickets list --status`,
   `note --alert`) goes through `validate_id_text`. `--staff-id` and `--time-spent` are
   `min=0`. `--size` is 1–50 and `--page` at least 1. Required strings use `require_nonblank`.
+  A flag that takes only a comma-separated id list ends in `-ids` (`--staff-ids`,
+  `--attachment-ids`, `--contact-ids`) and goes through `require_ids` or `split_csv_ints`.
+  `tickets list --status` also takes keywords, so it keeps the API's name.
 - **Staff pair:** a command that needs or names a staff identity declares both
   `staff: str = typer.Option(None, "--staff", help=STAFF_HELP)` and
   `staff_id: int = typer.Option(None, "--staff-id", min=0, help=STAFF_ID_HELP)` and calls
   `obj.require_staff_id(staff_id, staff)`. No other flag spelling names the actor. Only
   `tickets subscribe` and `unsubscribe` write their own help, since their pair is not the
-  actor. Of the flags that name another agent, `--assignee` and `--agents` take staff ids
+  actor. Of the flags that name another agent, `--assignee` and `--staff-ids` take staff ids
   and `--alert` takes `s`, `c` or a staff id. None accepts an email or name.
 - **Destructive commands** take `yes: bool = typer.Option(False, "--yes", "-y", help=YES_HELP)`
   and call `obj.confirm(message, yes=yes)`. The order is validate, resolve staff, confirm,

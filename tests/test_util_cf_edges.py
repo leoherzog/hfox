@@ -266,14 +266,14 @@ def test_strip_or_reject_rejects_a_blank_value_naming_the_flag(value):
 
 @pytest.mark.parametrize(("value", "ids"), [(None, None), ("3", [3]), (" 3 , 004,", [3, 4])])
 def test_require_ids_returns_the_ids_and_passes_a_missing_value(value, ids):
-    assert util_mod.require_ids(value, "--agents") == ids
+    assert util_mod.require_ids(value, "--staff-ids") == ids
 
 
 @pytest.mark.parametrize("value", ["", "  ", " , "])
 def test_require_ids_rejects_a_list_without_an_id_naming_the_flag(value):
     with pytest.raises(ValidationError) as exc:
-        util_mod.require_ids(value, "--agents")
-    assert str(exc.value) == "--agents needs at least one id."
+        util_mod.require_ids(value, "--staff-ids")
+    assert str(exc.value) == "--staff-ids needs at least one id."
 
 
 # -- the Windows console probe ------------------------------------------------

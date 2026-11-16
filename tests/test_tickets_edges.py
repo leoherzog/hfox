@@ -276,8 +276,8 @@ INVALID = [
     (("forward", "5", "--to", "a@x.org", "--subject", "s"), "--message"),
     (("unsubscribe", "DC5"), "DC5"),
     (("delete", "DC5", "--yes"), "DC5"),
-    (("subscribe", "5", "--agents", "x"), "integers"),
-    ((*FORWARD[1:], "--ticket-attachments", "x"), "integers"),
+    (("subscribe", "5", "--staff-ids", "x"), "integers"),
+    ((*FORWARD[1:], "--attachment-ids", "x"), "integers"),
 ]
 
 
@@ -304,8 +304,8 @@ LINE_FLAGS = [
 ]
 LINE_IDS = [f"{argv[1]} {flag}" for argv, flag, _, _ in LINE_FLAGS]
 ID_LISTS = [
-    (SUBSCRIBE, "--agents", "data"),
-    (FORWARD, "--ticket-attachments", "ticket_attachments"),
+    (SUBSCRIBE, "--staff-ids", "data"),
+    (FORWARD, "--attachment-ids", "ticket_attachments"),
 ]
 ID_LIST_IDS = [f"{argv[1]} {flag}" for argv, flag, _ in ID_LISTS]
 
@@ -422,7 +422,7 @@ def test_tags_sends_only_the_list_given(flags, fields):
     assert p["body"] == {**fields, "staff_id": 1}
 
 
-def test_subscribe_without_agents_omits_data():
+def test_subscribe_without_staff_ids_omits_data():
     p = preview("tickets", "subscribe", "5")
     assert p["method"] == "POST"
     assert p["url"].endswith("/ticket/5/subscribe/")

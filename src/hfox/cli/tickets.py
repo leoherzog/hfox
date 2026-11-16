@@ -570,14 +570,14 @@ def subscribe(
     staff_id: int = typer.Option(
         None, "--staff-id", min=0, help="Agent id to subscribe (defaults to your staff id)."
     ),
-    agents: str = typer.Option(
-        None, "--agents", help="More agent ids to subscribe, comma-separated."
+    staff_ids: str = typer.Option(
+        None, "--staff-ids", help="More agent ids to subscribe, comma-separated."
     ),
 ):
     """Subscribe agents to a ticket."""
     obj = get_ctx(ctx)
     ticket_id = validate_ticket_id(ticket_id)
-    agent_ids = require_ids(agents, "--agents")
+    agent_ids = require_ids(staff_ids, "--staff-ids")
     body = compact({"staff_id": obj.require_staff_id(staff_id, staff), "data": agent_ids})
     result = obj.call("POST", f"ticket/{ticket_id}/subscribe/", json=body)
     obj.render(result)
@@ -633,8 +633,8 @@ def forward(
         "--convert-replies/--no-convert-replies",
         help="Convert replies into a new ticket.",
     ),
-    ticket_attachments: str = typer.Option(
-        None, "--ticket-attachments", help="Comma-separated existing attachment ids to include."
+    attachment_ids: str = typer.Option(
+        None, "--attachment-ids", help="Comma-separated ids of attachments already on the ticket."
     ),
     attachment: list[str] = typer.Option(
         None, "--attachment", help="File path to attach (repeatable)."
@@ -651,7 +651,7 @@ def forward(
     if message is None:
         raise ValidationError("Provide the forward message with --message or --message-file.")
     require_nonblank(message, "--message")
-    attachment_ids = require_ids(ticket_attachments, "--ticket-attachments")
+    ticket_attachments = require_ids(attachment_ids, "--attachment-ids")
     body = compact(
         {
             "to": recipients,
@@ -665,7 +665,7 @@ def forward(
             "send_all_messages": send_all_messages,
             "include_pvt_notes": include_private_notes or None,
             "convert_replies_as_new_ticket": convert_replies,
-            "ticket_attachments": attachment_ids,
+            "ticket_attachments": ticket_attachments,
         }
     )
     result = obj.call("POST", f"ticket/{ticket_id}/forward/", **obj.attach(body, attachment))

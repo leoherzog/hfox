@@ -72,7 +72,7 @@ def test_dry_run_ticket_reply_contact_cf_uses_ccf_prefix():
 # -- tickets subscribe -------------------------------------------------
 def test_dry_run_ticket_subscribe_int_array_data():
     p = preview(
-        "--dry-run", "tickets", "subscribe", "42", "--agents", "3,4,5",
+        "--dry-run", "tickets", "subscribe", "42", "--staff-ids", "3,4,5",
     )
     assert p["method"] == "POST"
     assert p["url"].endswith("/ticket/42/subscribe/")

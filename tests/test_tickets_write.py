@@ -712,18 +712,18 @@ def test_time_spent_of_0_is_sent(argv):
 @pytest.mark.parametrize(
     "argv",
     [
-        ("tickets", "subscribe", "5", "--agents"),
+        ("tickets", "subscribe", "5", "--staff-ids"),
         ("tickets", "forward", "5", "--to", "a@x.org", "--subject", "s", "--message", "m",
-         "--ticket-attachments"),
+         "--attachment-ids"),
     ],
-    ids=["subscribe --agents", "forward --ticket-attachments"],
+    ids=["subscribe --staff-ids", "forward --attachment-ids"],
 )
 def test_id_list_with_a_zero_is_rejected(argv, value):
     assert "at least 1" in rejected("--dry-run", *argv, value)
 
 
 def test_id_list_with_an_overlong_id_is_a_validation_error():
-    message = rejected("--dry-run", "tickets", "subscribe", "5", "--agents", "9" * 5000)
+    message = rejected("--dry-run", "tickets", "subscribe", "5", "--staff-ids", "9" * 5000)
     assert message == "Expected comma-separated ids; one has too many digits."
 
 

@@ -399,7 +399,7 @@ def test_tags_without_add_or_remove_is_validation_error():
 # -- subscribe / unsubscribe: real POST render -----
 def test_subscribe_posts_and_renders(mock_api):
     captured = mock_api(ok_json({"subscribed": [3, 4]}))
-    result = run("tickets", "subscribe", "42", "--agents", "3,4")
+    result = run("tickets", "subscribe", "42", "--staff-ids", "3,4")
     assert result.exit_code == 0
     req = captured[0]
     assert req.url.path.endswith("/ticket/42/subscribe/")
@@ -434,7 +434,7 @@ def test_forward_posts_full_body_and_renders(mock_api):
         "tickets", "forward", "42",
         "--to", "a@x.org,b@x.org", "--subject", "FWD", "--message", "see this",
         "--cc", "c@x.org", "--to-include-contact", "--include-private-notes",
-        "--no-convert-replies", "--ticket-attachments", "11,12",
+        "--no-convert-replies", "--attachment-ids", "11,12",
     )
     assert result.exit_code == 0
     req = captured[0]
