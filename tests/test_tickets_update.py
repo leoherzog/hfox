@@ -141,7 +141,7 @@ def test_update_posts_and_renders(mock_api):
     assert json.loads(result.stdout) == {"id": 42, "status": 3}
 
 
-@pytest.mark.parametrize("extra", [[], ["--tags", " , "], ["--cf-json", "{}"]])
+@pytest.mark.parametrize("extra", [[], ["--cf-json", "{}"]])
 def test_update_without_a_property_is_rejected_before_staff(extra):
     exc = rejected("--dry-run", "tickets", "update", "42", *extra, env=NO_STAFF)
     assert str(exc) == "Provide at least one property to change."

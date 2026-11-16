@@ -122,7 +122,7 @@ def test_null_value_rejects_attachment(verb, flag, tmp_path):
 
 
 @pytest.mark.parametrize("verb", ["reply", "note"])
-@pytest.mark.parametrize("extra", [[], ["--tags", " , "], ["--cf-json", "{}"]])
+@pytest.mark.parametrize("extra", [[], ["--cf-json", "{}"]])
 def test_update_without_body_or_property_is_rejected(verb, extra):
     assert "property" in rejected("--dry-run", "tickets", verb, "5", *extra)
 
@@ -147,11 +147,53 @@ def test_note_custom_field_alone_is_a_property():
     assert p["body"] == {"staff": 1, "t-cf-10": None}
 
 
-@pytest.mark.parametrize("verb", ["reply", "note"])
-def test_blank_tags_are_omitted(verb):
-    p = preview("--dry-run", "tickets", verb, "5", "--text", "hi", "--tags", " , ")
-    assert p["method"] == "POST"
-    assert p["body"] == {"staff": 1, "plaintext": "hi"}
+# Each ticket verb with its required arguments, and the comma-separated flags it takes.
+LIST_FLAGS = [
+    (CREATE[1:], ("--tags", "--cc", "--bcc")),
+    (("tickets", "reply", "5", "--text", "hi"), ("--tags", "--cc", "--bcc")),
+    (("tickets", "note", "5", "--text", "hi"), ("--tags",)),
+    (("tickets", "update", "5", "--status", "3"), ("--tags",)),
+    (("tickets", "user-reply", "5", "--contact-id", "7", "--text", "hi"), ("--cc", "--bcc")),
+    (
+        ("tickets", "forward", "5", "--to", "a@x.org", "--subject", "s", "--message", "m"),
+        ("--cc", "--bcc"),
+    ),
+    (("tickets", "tags", "5", "--add", "a"), ("--remove",)),
+    (("tickets", "tags", "5", "--remove", "a"), ("--add",)),
+]
+NOUNS = {"--tags": "tag", "--cc": "address", "--bcc": "address", "--add": "tag", "--remove": "tag"}
+
+
+@pytest.mark.parametrize(
+    ("args", "flag"),
+    [
+        pytest.param(args, flag, id=f"{args[1]}{flag}")
+        for args, flags in LIST_FLAGS
+        for flag in flags
+    ],
+)
+@pytest.mark.parametrize("value", ["", "  ", " , ", ","])
+def test_blank_list_flag_is_rejected_before_staff(args, flag, value):
+    result = runner.invoke(
+        cli, ["--dry-run", *args, flag, value], env={**ENV, "HFOX_STAFF_ID": None}
+    )
+    assert isinstance(result.exception, ValidationError), result.exception
+    assert str(result.exception) == f"{flag} needs at least one {NOUNS[flag]}."
+    assert result.stdout == ""
+
+
+@pytest.mark.parametrize(
+    ("args", "flag"),
+    [
+        pytest.param(args, flag, id=f"{args[1]}{flag}")
+        for args, flags in LIST_FLAGS
+        for flag in flags
+    ],
+)
+def test_list_flag_is_trimmed_and_joined(args, flag):
+    p = preview("--dry-run", *args, flag, " a , ,b ")
+    key = {"--add": "add", "--remove": "remove"}.get(flag, flag.lstrip("-"))
+    assert p["body"][key] == "a,b"
 
 
 # -- create -----------------------------------------------------------------

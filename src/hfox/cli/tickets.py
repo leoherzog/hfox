@@ -18,6 +18,7 @@ from ._util import (
     exit_on_failures,
     nonblank_or_none,
     parse_json,
+    require_csv,
     require_ids,
     require_nonblank,
     split_csv,
@@ -208,9 +209,9 @@ def create_ticket(
             "category": category,
             "priority": priority,
             "assignee": assignee,
-            "tags": comma_join(split_csv(tags)),
-            "cc": comma_join(split_csv(cc)),
-            "bcc": comma_join(split_csv(bcc)),
+            "tags": require_csv(tags, "--tags", "tag"),
+            "cc": require_csv(cc, "--cc", "address"),
+            "bcc": require_csv(bcc, "--bcc", "address"),
             "created_at": strip_or_reject(created_at, "--created-at"),
             "due_date": strip_or_reject(due_date, "--due-date"),
             "visible_only_staff": visible_only_staff or None,
@@ -329,9 +330,9 @@ def reply(
             "assignee": assignee,
             "time_spent": time_spent,
             "due_date": strip_or_reject(due_date, "--due-date"),
-            "tags": comma_join(split_csv(tags)),
-            "cc": comma_join(split_csv(cc)),
-            "bcc": comma_join(split_csv(bcc)),
+            "tags": require_csv(tags, "--tags", "tag"),
+            "cc": require_csv(cc, "--cc", "address"),
+            "bcc": require_csv(bcc, "--bcc", "address"),
             "subject": strip_or_reject(subject, "--subject"),
             "update_customer": update_customer or None,
             "send_survey": send_survey or None,
@@ -405,7 +406,7 @@ def note(
             "assignee": assignee,
             "time_spent": time_spent,
             "due_date": strip_or_reject(due_date, "--due-date"),
-            "tags": comma_join(split_csv(tags)),
+            "tags": require_csv(tags, "--tags", "tag"),
         }
     )
     if unassign:
@@ -448,8 +449,8 @@ def user_reply(
         {
             "user": contact_id,
             "text": text,
-            "cc": comma_join(split_csv(cc)),
-            "bcc": comma_join(split_csv(bcc)),
+            "cc": require_csv(cc, "--cc", "address"),
+            "bcc": require_csv(bcc, "--bcc", "address"),
         }
     )
     result = obj.call(
@@ -487,7 +488,7 @@ def update(
             "assignee": assignee,
             "time_spent": time_spent,
             "due_date": strip_or_reject(due_date, "--due-date"),
-            "tags": comma_join(split_csv(tags)),
+            "tags": require_csv(tags, "--tags", "tag"),
         }
     )
     if unassign:
@@ -535,8 +536,8 @@ def tags(
     """Add and/or remove tags on a ticket."""
     obj = get_ctx(ctx)
     ticket_id = validate_ticket_id(ticket_id)
-    add_tags = comma_join(split_csv(add))
-    remove_tags = comma_join(split_csv(remove))
+    add_tags = require_csv(add, "--add", "tag")
+    remove_tags = require_csv(remove, "--remove", "tag")
     if not (add_tags or remove_tags):
         raise ValidationError("Provide tags to --add and/or --remove.")
     body = compact(
@@ -647,8 +648,8 @@ def forward(
             "to": recipients,
             "subject": subject,
             "message": message,
-            "cc": comma_join(split_csv(cc)),
-            "bcc": comma_join(split_csv(bcc)),
+            "cc": require_csv(cc, "--cc", "address"),
+            "bcc": require_csv(bcc, "--bcc", "address"),
             "staff_id": obj.require_staff_id(staff_id, staff),
             "to_include_ticket_contact": to_include_contact or None,
             "cc_include_ticket_contact": cc_include_contact or None,

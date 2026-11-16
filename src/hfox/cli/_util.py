@@ -119,6 +119,18 @@ def require_ids(value: str | None, flag: str) -> list[int] | None:
     return ids
 
 
+def require_csv(value: str | None, flag: str, noun: str) -> str | None:
+    """Return the trimmed parts of an optional comma-separated flag, joined by commas.
+
+    Returns None when it was not given; raises ValidationError naming `flag` when the value
+    lists no `noun`, as with "" or " , ".
+    """
+    parts = split_csv(value)
+    if value is not None and parts is None:
+        raise ValidationError(f"{flag} needs at least one {noun}.")
+    return comma_join(parts)
+
+
 def require_nonblank(value: str | None, flag: str) -> str:
     """Return `value` unchanged; raise ValidationError if it is missing or whitespace-only."""
     if value is None or value.strip() == "":

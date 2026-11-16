@@ -169,6 +169,8 @@ A path must name a regular file. A directory, FIFO, device or process substituti
   on `contacts groups create --description` and `--domains`. An empty value clears on
   `contacts groups update --description` and `--domains`, and
   `assets update --contact-ids ''` and `--contact-group-ids ''` send an empty list.
+  When given, `--tags`, `--cc`, `--bcc`, `tags --add` and `tags --remove` exit 3 unless
+  they list a value, so `--tags ' , '` is refused.
 - `contacts create` and `create-bulk` edit the contact that already has that email and
   reset every custom field they do not send.
 

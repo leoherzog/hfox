@@ -210,7 +210,9 @@ Helpers:
   `split_csv("a,b")`→`["a","b"]`, `None` when blank; `split_csv_ints("1,2")`→`[1,2]`, ASCII
   digits naming ids of at least 1, `[]` when blank, `None` for `None`.
   `require_ids(value, flag)` returns the same ids and raises `<flag> needs at least one id.`
-  for a given value that lists none. `nonblank_or_none`
+  for a given value that lists none. `require_csv(value, flag, noun)` returns
+  `comma_join(split_csv(value))` and raises `<flag> needs at least one <noun>.` the same way,
+  so `""` and `" , "` are refused. `nonblank_or_none`
   returns `None` for a blank value, and `strip_or_none(value)` also strips a set one.
   `strip_or_reject(value, flag)` keeps `None`, raises `<flag> must not be blank.` for a blank
   value and returns any other value stripped. `require_nonblank`, `validate_ticket_id`,
@@ -319,13 +321,14 @@ Helpers:
   `obj.read_json(file, "--file")`, which accepts `-`. `--cf-json`, `--contact-cf-json` and
   `--new-contacts-json` are inline only.
 - **Blank values:** an optional one-line string in a write body goes through
-  `strip_or_reject(value, "--x")`, and an optional id list through `require_ids(value,
-  "--x")` unless a blank value clears. An optional body read through `obj.text_input` gets
+  `strip_or_reject(value, "--x")`, an optional id list through `require_ids(value,
+  "--x")` unless a blank value clears, and an optional comma-separated text list through
+  `require_csv(value, "--x", noun)`. An optional body read through `obj.text_input` gets
   its own blank check, as `tickets move --note` does with `require_nonblank`. All of them
   run before `obj.require_staff_id`. A blank value clears on `contacts groups update
   --description` and `--domains`, and sends `[]` on `assets update --contact-ids` and
   `--contact-group-ids`. A list filter or sort value goes through `strip_or_none`.
-- Comma-join `tags`/`cc`/`bcc` inputs with `comma_join(split_csv(...))`;
+- Comma-join `tags`/`cc`/`bcc` inputs with `require_csv(...)`;
   send list-of-ids body fields (subscribe `data`, group `contacts`, forward
   `ticket_attachments`, asset `contact_ids`/`contact_group_ids`) as JSON int arrays via
   `split_csv_ints` or `require_ids`. Multipart sends a list as JSON text in one field.

@@ -376,6 +376,8 @@ An empty or whitespace-only value exits 3 on `--due-date`, `--created-at`,
 and `--ticket-attachments`, when given, exit 3 unless they list an id. An empty value clears on
 `contacts groups update --description` and `--domains`, and `assets update --contact-ids ''`
 and `--contact-group-ids ''` send an empty list.
+When given, `--tags`, `--cc`, `--bcc`, `tags --add` and `tags --remove` exit 3 unless they
+list a value, so `--tags ' , '` is refused.
 
 ## Examples
 
