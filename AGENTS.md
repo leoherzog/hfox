@@ -520,9 +520,9 @@ used as written, outer whitespace included. A whitespace-only `HFOX_TIMEOUT` or
 URL error names the source whose value is in use.
 A configured staff id that is not a whole number exits 3 in commands that need one.
 
-Never log or echo `api_key`/`auth_code`. `auth status` masks the key, and no `auth` payload
-holds a secret. hfox-authored auth JSON names `config_dir`, never a file path, and
-`default_staff_id` is an int or null.
+Never log or echo `api_key`/`auth_code`. `Config` leaves both out of its repr, `auth status`
+masks the key, and no `auth` payload holds a secret. hfox-authored auth JSON names
+`config_dir`, never a file path, and `default_staff_id` is an int or null.
 
 **File guard.** `guarded_dirs(active)` lists the active directory, the env-resolved one and
 the XDG or home default, so `--config-dir` cannot move the guard off the real directory. An

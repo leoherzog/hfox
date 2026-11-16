@@ -334,8 +334,9 @@ class Config:
 
     subdomain: str | None = None
     region: str = DEFAULT_REGION
-    api_key: str | None = None
-    auth_code: str | None = None
+    # Kept out of the repr, so a logged or printed Config never shows a secret.
+    api_key: str | None = field(default=None, repr=False)
+    auth_code: str | None = field(default=None, repr=False)
     default_format: str = DEFAULT_FORMAT
     default_staff_id: int | None = None
     # A malformed configured staff id, raised only by commands that need one.

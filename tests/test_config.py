@@ -1009,3 +1009,10 @@ def test_save_settings_incoming_scalars(tmp_path):
         "flag": True,
         "default_staff_id": 7,
     }
+
+
+def test_config_repr_holds_no_secret():
+    text = repr(Config(subdomain="acme", api_key="key-1234567890", auth_code="code-0987654321"))
+    assert "acme" in text
+    assert "key-1234567890" not in text
+    assert "code-0987654321" not in text
