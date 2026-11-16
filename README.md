@@ -145,7 +145,8 @@ value.
 
 A global option that takes a value refuses one that starts with `-`, in the `--opt=value`
 form too, so `hfox --staff --dry-run tickets list` exits 3 with type `usage` instead of
-reading `--dry-run` as the staff name.
+reading `--dry-run` as the staff name. A numeric option keeps a negative number, which fails
+its range check with type `validation`.
 
 An unknown format from `--format`, `HFOX_FORMAT` or `default_format` exits 3. An empty or
 whitespace-only `--format` counts as not given. In `config.toml`

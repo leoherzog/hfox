@@ -77,7 +77,7 @@ flag after the resource exits 3 with `"type": "usage"`.
 
 `-q` is `--query` on `tickets list` and `contacts list`, not `--quiet`. A global option that
 takes a value refuses one starting with `-`, so `hfox --staff --dry-run ...` exits 3 with
-`"type": "usage"`.
+`"type": "usage"`. A numeric option keeps a negative number and fails its range check.
 
 ## Look up ids first
 
