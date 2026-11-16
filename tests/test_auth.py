@@ -707,8 +707,24 @@ def test_status_malformed_env_staff_id_is_null_plus_error(mock_api, cfg_dir, mon
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["default_staff_id"] is None
-    assert "HFOX_STAFF_ID" in payload["default_staff_id_error"]
+    assert payload["default_staff_id_error"] == {
+        "error": "HFOX_STAFF_ID must be a non-negative integer, got '1.5'.",
+        "type": "validation",
+        "exit_code": 3,
+    }
     assert list(payload) == [*STATUS_KEYS, "default_staff_id_error"]
+
+
+def test_status_error_keys_share_the_error_object_shape(mock_api, cfg_dir, monkeypatch):
+    saved(cfg_dir)
+    mock_api(lambda r: httpx2.Response(500, json={"error": "down"}))
+    monkeypatch.setenv("HFOX_STAFF_ID", "x")
+    result = runner.invoke(cli, ["auth", "status"])
+    payload = json.loads(result.stdout)
+    for key in ("default_staff_id_error", "check_error"):
+        error = payload[key]
+        assert list(error)[:3] == ["error", "type", "exit_code"], key
+        assert isinstance(error["error"], str) and isinstance(error["exit_code"], int), key
 
 
 @pytest.mark.parametrize("status", [401, 403])

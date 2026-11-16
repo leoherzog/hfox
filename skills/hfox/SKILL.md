@@ -42,7 +42,9 @@ Check the session with `hfox auth status`, which sends one request and prints on
 Exit 0 with `"authenticated": true` means the credentials work. Exit 2 with
 `"authenticated": false` means they are missing, or rejected when `check_error.type` is
 `auth`. Any other nonzero exit means the check could not finish: `authenticated` is `null`
-and `check_error` says why.
+and `check_error` says why. A `default_staff_id_error`, an error object like `check_error`,
+means `HFOX_STAFF_ID` or the saved default is not a whole number, so a command that needs a
+staff identity exits 3 unless given `--staff` or `--staff-id`.
 
 Never print, log or echo the API key or auth code. No flag takes them; supply them through
 `HFOX_API_KEY` and `HFOX_AUTH_CODE`, for a single command or a login:

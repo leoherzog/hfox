@@ -324,7 +324,9 @@ def test_status_reports_malformed_staff_id(tmp_path, monkeypatch, mock_api):
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["default_staff_id"] is None
-    assert "config.toml" in payload["default_staff_id_error"]
+    error = payload["default_staff_id_error"]
+    assert (error["type"], error["exit_code"]) == ("validation", 3)
+    assert "config.toml" in error["error"]
 
 
 def test_login_persists_normalized_base_url(monkeypatch, tmp_path):

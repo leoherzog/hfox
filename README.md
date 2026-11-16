@@ -61,8 +61,11 @@ It is `false`, with exit 2, when the credentials are missing or HappyFox rejects
 `null` when the check cannot finish, as with a network error, a rate limit or a `staff/`
 answer that is not a list, and the exit code is that error's.
 
-A failed check adds `check_error`, the error object. `auth logout --dry-run` removes nothing
-and prints `{dry_run, would_remove, config_dir}` as JSON, whatever `--format` says.
+A failed check adds `check_error`, the error object. A default staff id from `HFOX_STAFF_ID`
+or `config.toml` that is not a whole number leaves `default_staff_id` null and adds
+`default_staff_id_error`, an error object of type `validation`; it does not change the exit
+code. `auth logout --dry-run` removes nothing and prints `{dry_run, would_remove, config_dir}`
+as JSON, whatever `--format` says.
 
 ### Configuration
 
@@ -324,8 +327,8 @@ tell the two apart by `method`. Every dry run prints JSON, whatever `--format` s
 
 `auth login` prints `authenticated`, `subdomain`, `region`, `base_url`, `default_staff_id`
 and `config_dir`. `auth status` prints `config_dir`, `subdomain`, `region`, `base_url`,
-`authenticated`, `default_staff_id` and the masked `api_key`, plus `default_staff_id_error`
-and `check_error` when set. `auth logout` prints `removed` and `config_dir`. In `login`,
+`authenticated`, `default_staff_id` and the masked `api_key`, plus the error objects
+`default_staff_id_error` and `check_error` when set. `auth logout` prints `removed` and `config_dir`. In `login`,
 `default_staff_id` is the value saved to `config.toml`; in `status` it is the value in
 effect after `HFOX_STAFF_ID`.
 

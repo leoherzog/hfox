@@ -557,7 +557,9 @@ warning names `hfox auth logout` for a `token.json` value and the `config.toml` 
 `--dry-run` prints its preview and exits 0. `authenticated` is true for a list and false,
 with exit 2, for missing credentials, which send nothing, or an `AuthError`. It is null for
 any other `HfoxError`, including a 2xx body that is not a list, which exits 5. A failed
-check adds `check_error` and exits with that error's code. `logout --dry-run` renders
+check adds `check_error` and exits with that error's code. A `Config.staff_id_error` sets
+`default_staff_id` to null and adds `default_staff_id_error` without changing the exit code.
+Both keys hold `HfoxError.to_dict()` of the real exception. `logout --dry-run` renders
 `{dry_run, would_remove, config_dir}` through `output.render(..., OutputFormat.JSON)`,
 whatever `--format` says, with `would_remove` from `token_exists`.
 

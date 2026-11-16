@@ -255,7 +255,7 @@ def status(ctx: typer.Context) -> None:
         "api_key": _mask(cfg.api_key),
     }
     if cfg.staff_id_error is not None:
-        payload["default_staff_id_error"] = str(cfg.staff_id_error)
+        payload["default_staff_id_error"] = cfg.staff_id_error.to_dict()
     if not cfg.is_authenticated:
         obj.render(payload)
         output.warn("Not authenticated. Run `hfox auth login`.")
