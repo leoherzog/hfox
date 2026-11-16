@@ -1,5 +1,5 @@
 """Root app edges: stream setup, format sources, paging flags, short global flag placement,
-entry points, system rendering.
+entry points, custom-field list rendering.
 """
 
 import io
@@ -279,7 +279,9 @@ def _walk(command, path=()):
 def test_every_bare_group_prints_its_help_and_exits_0(run_app):
     root = typer.main.get_command(cli)
     groups = [path for path, command in _walk(root) if path and hasattr(command, "commands")]
-    assert {("system",), ("auth",), ("contacts", "groups")} <= set(groups)
+    expected = {("system",), ("auth",), ("contacts", "groups")}
+    expected |= {("tickets", "custom-fields"), ("contacts", "custom-fields")}
+    assert expected <= set(groups)
     for path in groups:
         code, out, _ = run_app(*path)
         assert code == 0, path
@@ -400,7 +402,7 @@ def test_csv_cell_with_deep_nesting(run_app, mock_api):
     assert out == f"id,deep\r\n1,{DEEP_NULL}\r\n"
 
 
-# -- system custom-field rendering --------------------------------------------
+# -- custom-field list rendering ----------------------------------------------
 def test_custom_field_choices_kept_nested_in_yaml(mock_api):
     fields = [
         {
@@ -413,18 +415,18 @@ def test_custom_field_choices_kept_nested_in_yaml(mock_api):
         {"id": 4, "choices": None},
     ]
     mock_api(lambda req: httpx2.Response(200, json=fields))
-    result = run("-f", "yaml", "system", "ticket-custom-fields")
+    result = run("-f", "yaml", "tickets", "custom-fields", "list")
     assert result.exit_code == 0, result.output
     assert yaml.safe_load(result.stdout) == fields
 
 
 def test_custom_fields_body_that_is_not_a_list_renders_unchanged(mock_api):
     mock_api(lambda req: httpx2.Response(200, json={"detail": "x"}))
-    result = run("-f", "csv", "system", "ticket-custom-fields")
+    result = run("-f", "csv", "tickets", "custom-fields", "list")
     assert result.exit_code == 0, result.output
     assert result.stdout.splitlines() == ["detail", "x"]
     result = run(
-        "-f", "table", "system", "ticket-custom-fields", env_extra={"COLUMNS": "200"}
+        "-f", "table", "tickets", "custom-fields", "list", env_extra={"COLUMNS": "200"}
     )
     assert result.exit_code == 0, result.output
     assert "detail" in result.stdout
@@ -439,13 +441,13 @@ def test_custom_field_rows_and_choices_of_unexpected_shape_pass_through(mock_api
     ]
     mock_api(lambda req: httpx2.Response(200, json=body))
     result = run(
-        "-f", "table", "system", "contact-custom-fields", env_extra={"COLUMNS": "200"}
+        "-f", "table", "contacts", "custom-fields", "list", env_extra={"COLUMNS": "200"}
     )
     assert result.exit_code == 0, result.output
     assert "No=2, Other, 7" in result.stdout
     assert "n/a" in result.stdout
     assert "odd" in result.stdout
-    result = run("-f", "csv", "system", "contact-custom-fields")
+    result = run("-f", "csv", "contacts", "custom-fields", "list")
     assert result.exit_code == 0, result.output
     assert result.stdout.splitlines() == [
         "id,choices,value",

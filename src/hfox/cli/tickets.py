@@ -1,4 +1,6 @@
-"""`hfox tickets`: list, read, create and act on tickets, and replace custom-field choices."""
+"""`hfox tickets`: list, read, create and act on tickets; the `custom-fields` sub-app lists
+ticket custom fields and replaces their choices.
+"""
 
 from __future__ import annotations
 
@@ -28,7 +30,14 @@ from ._util import (
     validate_id_text,
     validate_ticket_id,
 )
-from .cf import CF_HELP, CF_JSON_HELP, parse_cf_json, parse_cf_options
+from .cf import (
+    CF_HELP,
+    CF_JSON_HELP,
+    FIELD_NAME_HELP,
+    parse_cf_json,
+    parse_cf_options,
+    render_field_list,
+)
 from .context import get_ctx
 
 app = typer.Typer(no_args_is_help=True, help="Manage tickets.")
@@ -43,7 +52,7 @@ CHOICES_FILE_HELP = (
     "JSON choices; each existing choice keeps its id, a new one has id null, and an "
     "existing choice not listed is deleted. '-' reads stdin."
 )
-CHOICE_ID_HINT = "Use the id from `hfox system ticket-custom-fields`, or null for a new choice."
+CHOICE_ID_HINT = "Use the id from `hfox tickets custom-fields list`, or null for a new choice."
 
 # Keys that make a staff reply or note change the ticket without a message.
 _PROPERTY_KEYS = ("status", "priority", "assignee", "time_spent", "due_date", "tags")
@@ -747,8 +756,23 @@ def _check_choices(payload: Any) -> list[dict[str, Any]]:
     return choices
 
 
-@app.command("set-cf-choices")
-def set_cf_choices(
+custom_fields = typer.Typer(
+    no_args_is_help=True, help="Read ticket custom fields and replace their choices."
+)
+app.add_typer(custom_fields, name="custom-fields")
+
+
+@custom_fields.command("list")
+def list_custom_fields(
+    ctx: typer.Context,
+    name: str = typer.Option(None, "--name", help=FIELD_NAME_HELP),
+):
+    """List ticket custom fields and their choice ids."""
+    render_field_list(get_ctx(ctx), "ticket_custom_fields/", name)
+
+
+@custom_fields.command("set-choices")
+def set_choices(
     ctx: typer.Context,
     field_id: int = typer.Argument(..., min=1, help="Ticket custom field id."),
     file: str = typer.Option(None, "--file", help=CHOICES_FILE_HELP),

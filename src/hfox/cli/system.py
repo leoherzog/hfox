@@ -6,13 +6,10 @@ is undocumented), so each command is a single GET and its --name/--email flags f
 
 from __future__ import annotations
 
-from typing import Any
-
 import typer
 
 from ._util import filter_help, filter_rows
 from .context import get_ctx
-from .output import OutputFormat
 
 app = typer.Typer(
     no_args_is_help=True,
@@ -22,35 +19,10 @@ app = typer.Typer(
 _NAME_HELP = filter_help("name")
 
 
-def _flatten_choices(rows: Any) -> Any:
-    """Replace each field's choices with "text=id" pairs, dropping nested dependant fields."""
-    if not isinstance(rows, list):
-        return rows
-    out = []
-    for row in rows:
-        if isinstance(row, dict) and isinstance(row.get("choices"), list):
-            pairs = [
-                f"{c.get('text')}={c.get('id')}" if isinstance(c, dict) else str(c)
-                for c in row["choices"]
-            ]
-            row = {**row, "choices": ", ".join(pairs)}
-        out.append(row)
-    return out
-
-
-def _render_rows(
-    ctx: typer.Context, path: str, filters: dict[str, str | None], *, choices: bool = False
-) -> None:
-    """GET a reference list and render the rows matching `filters`.
-
-    `choices` shows custom-field choices as "text=id" in table output, after filtering. CSV
-    and YAML keep the nested choices, since CSV is a contract format.
-    """
+def _render_rows(ctx: typer.Context, path: str, filters: dict[str, str | None]) -> None:
+    """GET a reference list and render the rows matching `filters`."""
     obj = get_ctx(ctx)
-    rows = filter_rows(obj.call("GET", path), filters)
-    if choices and obj.fmt is OutputFormat.TABLE:
-        rows = _flatten_choices(rows)
-    obj.render_list(rows)
+    obj.render_list(filter_rows(obj.call("GET", path), filters))
 
 
 @app.command("categories")
@@ -91,21 +63,3 @@ def statuses(
 ):
     """List ticket statuses with their ids."""
     _render_rows(ctx, "statuses/", {"name": name})
-
-
-@app.command("ticket-custom-fields")
-def ticket_custom_fields(
-    ctx: typer.Context,
-    name: str = typer.Option(None, "--name", help=_NAME_HELP),
-):
-    """List ticket custom fields and their choice ids."""
-    _render_rows(ctx, "ticket_custom_fields/", {"name": name}, choices=True)
-
-
-@app.command("contact-custom-fields")
-def contact_custom_fields(
-    ctx: typer.Context,
-    name: str = typer.Option(None, "--name", help=_NAME_HELP),
-):
-    """List contact custom fields and their choice ids."""
-    _render_rows(ctx, "user_custom_fields/", {"name": name}, choices=True)

@@ -100,11 +100,11 @@ src/hfox/
     ├── context.py        # AppContext (ctx.obj): the contract every command uses
     ├── output.py         # OutputFormat + json/table/csv/yaml rendering, sanitizing, stderr
     ├── auth.py           # `hfox auth` login/status/logout
-    ├── cf.py             # custom-field parsing (t-cf-/c-cf-/ccf-/asset)
+    ├── cf.py             # custom-field parsing (t-cf-/c-cf-/ccf-/asset), field listings
     ├── _util.py          # validation, CSV/JSON parsing, guarded file reads, attach(),
     │                     #   bulk results, filters, shared help text
-    ├── tickets.py        # `hfox tickets`  (one module per resource)
-    ├── contacts.py       # `hfox contacts` (+ `groups` sub-app)
+    ├── tickets.py        # `hfox tickets`  (+ `custom-fields` sub-app); one module per resource
+    ├── contacts.py       # `hfox contacts` (+ `groups`, `custom-fields` sub-apps)
     ├── assets.py         # `hfox assets`   (+ `types`, `custom-fields` sub-apps)
     └── system.py         # `hfox system`   (read-only reference data)
 ```
@@ -259,7 +259,9 @@ Helpers:
   empty-value error names `json_flag`, and the
   invalid-JSON and not-an-object errors name `flag`, so a `--contact-cf` call site passes
   `json_flag="--contact-cf-json"` and a `--contact-cf-json` one `flag="--contact-cf-json"`.
-  `parse_asset_cf` takes bare ids only.
+  `parse_asset_cf` takes bare ids only. `render_field_list(obj, path, name)` is the body of
+  the ticket and contact `custom-fields list` verbs: one GET, the local `--name` filter, then
+  `flatten_choices` turns each field's choices into `text=id` pairs for table output only.
 - `cli/output.py`: `OutputFormat.parse` raises `ValidationError` for an unknown name, `None`
   and `""` included.
   `sanitize_text`, also named `sanitize_cell`, drops every `Cc` and `Cf` character except
@@ -336,7 +338,7 @@ Helpers:
 - Raise the `core.errors` classes, with `hint=` when the fix is one command or flag away.
 - Keep stdout pure data: status and warnings go to stderr (`obj.success`, `output.warn`,
   `output.info`). `output.warn` ignores `--quiet`; use it for a message the user must see,
-  such as the `set-cf-choices --yes` summary.
+  such as the `custom-fields set-choices --yes` summary.
 - Local filters go only on listings whose endpoint has no server-side search; `tickets list`
   and `contacts list` use `-q`. The flag is long-only and named after the top-level string
   field it matches. A single-GET listing wraps `obj.call` in `filter_rows` before any
@@ -404,7 +406,7 @@ lines are formatting debris, not emphasis or content.
   For the same reason a ticket command that takes `--attachment` and a source of null, such
   as `--cf-json`, calls `_check_null(body, attachment)` in `cli/tickets.py` before
   `obj.attach`: `create` directly, `reply` and `note` through `_check_update`.
-- **Custom-field choices replace the list:** `tickets set-cf-choices` sends PUT
+- **Custom-field choices replace the list:** `tickets custom-fields set-choices` sends PUT
   `ticket_custom_field/<id>/` with `{"choices": [...]}`. A choice keeps its `id`, a new one
   has `id` null, and an existing choice left out is deleted. hfox requires the `id` key on
   every choice and rejects duplicates; other keys such as `dependant_fields` pass through.
@@ -654,5 +656,6 @@ command path, positional argument, key, slug, flag or env var is breaking.
 
 ## Scope
 
-Shipped: tickets including custom-field choice management, contacts/groups,
-assets/types/custom-fields, system reference data, auth. `system` stays read-only.
+Shipped: tickets, contacts/groups, assets/types, a `custom-fields` sub-group on each of the
+three, system reference data, auth. Custom-field definitions belong to their resource's
+`custom-fields` sub-group, never to `system`, which stays read-only.

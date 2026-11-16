@@ -1,17 +1,24 @@
-"""Custom-field option parsing and help text for ticket, contact and asset writes."""
+"""Custom-field option parsing and help text for ticket, contact and asset writes, and the
+ticket and contact custom-field listings.
+"""
 
 from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..core.errors import ValidationError
-from ._util import _DIGITS, parse_json
+from ._util import _DIGITS, filter_help, filter_rows, parse_json
+from .output import OutputFormat
+
+if TYPE_CHECKING:
+    from .context import AppContext
 
 # Rich markup would swallow an unescaped [a,b].
 CF_HELP = "Custom field '<id>=<value>' (repeatable); '<id>=\\[a,b]' sends a list."
 CF_JSON_HELP = "Custom fields as JSON {id: value}, sent uncoerced."
+FIELD_NAME_HELP = filter_help("name")
 
 _NUMBER = re.compile(r"-?(0|[1-9][0-9]*)(\.[0-9]+)?")
 
@@ -114,3 +121,31 @@ def parse_cf_json(
     if not isinstance(parsed, dict):
         raise ValidationError(f"{flag} must be an object mapping field id -> value.")
     return {_field_key(key, prefix, allowed): value for key, value in parsed.items()}
+
+
+def flatten_choices(rows: Any) -> Any:
+    """Replace each field's choices with "text=id" pairs, dropping nested dependant fields."""
+    if not isinstance(rows, list):
+        return rows
+    out = []
+    for row in rows:
+        if isinstance(row, dict) and isinstance(row.get("choices"), list):
+            pairs = [
+                f"{c.get('text')}={c.get('id')}" if isinstance(c, dict) else str(c)
+                for c in row["choices"]
+            ]
+            row = {**row, "choices": ", ".join(pairs)}
+        out.append(row)
+    return out
+
+
+def render_field_list(obj: AppContext, path: str, name: str | None) -> None:
+    """GET the custom-field list at `path` and render the fields whose name contains `name`.
+
+    Table output shows the choices as "text=id", after filtering. CSV and YAML keep the nested
+    choices, since CSV is a contract format.
+    """
+    rows = filter_rows(obj.call("GET", path), {"name": name})
+    if obj.fmt is OutputFormat.TABLE:
+        rows = flatten_choices(rows)
+    obj.render_list(rows)

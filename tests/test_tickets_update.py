@@ -1,4 +1,4 @@
-"""`tickets update`, `tickets set-cf-choices` and the staff flag pair on ticket verbs."""
+"""`tickets update`, `tickets custom-fields set-choices` and the staff flag pair on ticket verbs."""
 
 import json
 import sys
@@ -43,6 +43,7 @@ STAFF_VERBS = [
 ]
 STAFF_IDS = [verb[0] for verb, _key in STAFF_VERBS]
 
+SET_CHOICES = ("tickets", "custom-fields", "set-choices")
 CHOICES = [
     {"id": 11, "text": "Option 1", "dependant_fields": []},
     {"id": 12, "text": "Option 2 (Edited)", "dependant_fields": []},
@@ -260,48 +261,48 @@ def test_delete_resolves_staff_before_the_prompt(mock_api, tty):
     assert [r.method for r in captured] == ["GET"]
 
 
-# -- tickets set-cf-choices ---------------------------------------------------
-def test_set_cf_choices_dry_run_from_inline_array():
-    p = preview("tickets", "set-cf-choices", "7", "--choices-json", json.dumps(CHOICES))
+# -- tickets custom-fields set-choices ----------------------------------------
+def test_set_choices_dry_run_from_inline_array():
+    p = preview(*SET_CHOICES, "7", "--choices-json", json.dumps(CHOICES))
     assert p["method"] == "PUT"
     assert p["url"].endswith("/api/1.1/json/ticket_custom_field/7/")
     assert p["params"] is None
     assert p["body"] == {"choices": CHOICES}
 
 
-def test_set_cf_choices_dry_run_from_inline_object():
+def test_set_choices_dry_run_from_inline_object():
     raw = json.dumps({"choices": CHOICES})
-    p = preview("tickets", "set-cf-choices", "7", "--choices-json", raw)
+    p = preview(*SET_CHOICES, "7", "--choices-json", raw)
     assert p["method"] == "PUT"
     assert p["body"] == {"choices": CHOICES}
 
 
 @pytest.mark.parametrize("wrap", [False, True], ids=["array", "object"])
-def test_set_cf_choices_dry_run_from_file(tmp_path, wrap):
+def test_set_choices_dry_run_from_file(tmp_path, wrap):
     f = tmp_path / "choices.json"
     f.write_text(json.dumps({"choices": CHOICES} if wrap else CHOICES))
-    p = preview("tickets", "set-cf-choices", "7", "--file", str(f))
+    p = preview(*SET_CHOICES, "7", "--file", str(f))
     assert p["method"] == "PUT"
     assert p["url"].endswith("/ticket_custom_field/7/")
     assert p["body"] == {"choices": CHOICES}
 
 
 @pytest.mark.parametrize("wrap", [False, True], ids=["array", "object"])
-def test_set_cf_choices_dry_run_from_stdin(wrap):
+def test_set_choices_dry_run_from_stdin(wrap):
     raw = json.dumps({"choices": CHOICES} if wrap else CHOICES)
-    p = preview("tickets", "set-cf-choices", "7", "--file", "-", input=raw)
+    p = preview(*SET_CHOICES, "7", "--file", "-", input=raw)
     assert p["method"] == "PUT"
     assert p["url"].endswith("/ticket_custom_field/7/")
     assert p["body"] == {"choices": CHOICES}
 
 
-def test_set_cf_choices_allows_an_empty_list():
-    p = preview("tickets", "set-cf-choices", "7", "--choices-json", "[]")
+def test_set_choices_allows_an_empty_list():
+    p = preview(*SET_CHOICES, "7", "--choices-json", "[]")
     assert p["body"] == {"choices": []}
 
 
-def test_set_cf_choices_needs_no_staff_identity():
-    p = preview("tickets", "set-cf-choices", "7", "--choices-json", "[]", env=NO_STAFF)
+def test_set_choices_needs_no_staff_identity():
+    p = preview(*SET_CHOICES, "7", "--choices-json", "[]", env=NO_STAFF)
     assert p["body"] == {"choices": []}
 
 
@@ -325,69 +326,69 @@ def test_set_cf_choices_needs_no_staff_identity():
         ("x", "JSON array"),
     ],
 )
-def test_set_cf_choices_rejects_bad_payloads(mock_api, choices, word):
+def test_set_choices_rejects_bad_payloads(mock_api, choices, word):
     captured = mock_api(lambda req: httpx2.Response(200, json={}))
-    exc = rejected("tickets", "set-cf-choices", "7", "--yes", "--choices-json", json.dumps(choices))
+    exc = rejected(*SET_CHOICES, "7", "--yes", "--choices-json", json.dumps(choices))
     assert word in str(exc)
     assert captured == []
 
 
 @pytest.mark.parametrize("choice", [{"text": "A"}, {"id": 0, "text": "A"}])
-def test_set_cf_choices_id_errors_carry_the_hint(choice):
+def test_set_choices_id_errors_carry_the_hint(choice):
     exc = rejected(
-        "--dry-run", "tickets", "set-cf-choices", "7", "--choices-json", json.dumps([choice])
+        "--dry-run", *SET_CHOICES, "7", "--choices-json", json.dumps([choice])
     )
     assert exc.hint == (
-        "Use the id from `hfox system ticket-custom-fields`, or null for a new choice."
+        "Use the id from `hfox tickets custom-fields list`, or null for a new choice."
     )
 
 
-def test_set_cf_choices_two_new_choices_are_not_duplicates():
+def test_set_choices_two_new_choices_are_not_duplicates():
     choices = [{"id": None, "text": "A"}, {"id": None, "text": "B"}]
-    p = preview("tickets", "set-cf-choices", "7", "--choices-json", json.dumps(choices))
+    p = preview(*SET_CHOICES, "7", "--choices-json", json.dumps(choices))
     assert p["body"] == {"choices": choices}
 
 
-def test_set_cf_choices_rejects_both_sources(tmp_path):
+def test_set_choices_rejects_both_sources(tmp_path):
     f = tmp_path / "choices.json"
     f.write_text("[]")
     exc = rejected(
-        "--dry-run", "tickets", "set-cf-choices", "7", "--file", str(f), "--choices-json", "[]"
+        "--dry-run", *SET_CHOICES, "7", "--file", str(f), "--choices-json", "[]"
     )
     assert "exactly one of --file or --choices-json" in str(exc)
 
 
-def test_set_cf_choices_rejects_no_source():
-    exc = rejected("--dry-run", "tickets", "set-cf-choices", "7")
+def test_set_choices_rejects_no_source():
+    exc = rejected("--dry-run", *SET_CHOICES, "7")
     assert "exactly one of --file or --choices-json" in str(exc)
 
 
-def test_set_cf_choices_rejects_bad_json():
-    exc = rejected("--dry-run", "tickets", "set-cf-choices", "7", "--choices-json", "[")
+def test_set_choices_rejects_bad_json():
+    exc = rejected("--dry-run", *SET_CHOICES, "7", "--choices-json", "[")
     assert "Invalid JSON in --choices-json" in str(exc)
 
 
-def test_set_cf_choices_file_in_config_dir_is_rejected(tmp_path):
+def test_set_choices_file_in_config_dir_is_rejected(tmp_path):
     cfg = tmp_path / "cfg"
     cfg.mkdir()
     (cfg / "payload.json").write_text("[]")
     exc = rejected(
-        "--dry-run", "tickets", "set-cf-choices", "7", "--file", str(cfg / "payload.json")
+        "--dry-run", *SET_CHOICES, "7", "--file", str(cfg / "payload.json")
     )
     assert "Refusing to read" in str(exc)
 
 
-def test_set_cf_choices_field_id_zero_exits_3(monkeypatch, capsys):
+def test_set_choices_field_id_zero_exits_3(monkeypatch, capsys):
     code, payload, _err = run_main(
-        monkeypatch, capsys, "--dry-run", "tickets", "set-cf-choices", "0", "--choices-json", "[]"
+        monkeypatch, capsys, "--dry-run", *SET_CHOICES, "0", "--choices-json", "[]"
     )
     assert code == 3
     assert payload["type"] == "validation"
 
 
-def test_set_cf_choices_yes_warns_the_counts_and_puts(mock_api):
+def test_set_choices_yes_warns_the_counts_and_puts(mock_api):
     captured = mock_api(lambda req: httpx2.Response(200, json={"id": 7, "choices": CHOICES}))
-    result = run("tickets", "set-cf-choices", "7", "-y", "--choices-json", json.dumps(CHOICES))
+    result = run(*SET_CHOICES, "7", "-y", "--choices-json", json.dumps(CHOICES))
     assert result.exit_code == 0, result.output
     assert SUMMARY in result.stderr.replace("\n", " ")
     assert len(captured) == 1
@@ -397,10 +398,10 @@ def test_set_cf_choices_yes_warns_the_counts_and_puts(mock_api):
     assert json.loads(result.stdout) == {"id": 7, "choices": CHOICES}
 
 
-def test_set_cf_choices_prompt_shows_the_counts(mock_api, tty):
+def test_set_choices_prompt_shows_the_counts(mock_api, tty):
     captured = mock_api(lambda req: httpx2.Response(200, json={"id": 7}))
     result = run(
-        "tickets", "set-cf-choices", "7", "--choices-json", json.dumps(CHOICES), input="y\n"
+        *SET_CHOICES, "7", "--choices-json", json.dumps(CHOICES), input="y\n"
     )
     assert result.exit_code == 0, result.output
     assert SUMMARY in result.stderr.replace("\n", " ")
@@ -409,20 +410,20 @@ def test_set_cf_choices_prompt_shows_the_counts(mock_api, tty):
     assert [r.method for r in captured] == ["PUT"]
 
 
-def test_set_cf_choices_decline_sends_nothing(mock_api, tty):
+def test_set_choices_decline_sends_nothing(mock_api, tty):
     captured = mock_api(lambda req: httpx2.Response(200, json={}))
     result = run(
-        "tickets", "set-cf-choices", "7", "--choices-json", json.dumps(CHOICES), input="n\n"
+        *SET_CHOICES, "7", "--choices-json", json.dumps(CHOICES), input="n\n"
     )
     assert isinstance(result.exception, CancelledError), result.exception
     assert result.stdout == ""
     assert captured == []
 
 
-def test_set_cf_choices_without_terminal_exits_3(mock_api, monkeypatch, capsys):
+def test_set_choices_without_terminal_exits_3(mock_api, monkeypatch, capsys):
     captured = mock_api(lambda req: httpx2.Response(200, json={}))
     code, payload, _err = run_main(
-        monkeypatch, capsys, "tickets", "set-cf-choices", "7", "--choices-json", json.dumps(CHOICES)
+        monkeypatch, capsys, *SET_CHOICES, "7", "--choices-json", json.dumps(CHOICES)
     )
     assert code == 3
     assert payload["type"] == "validation"
@@ -432,10 +433,10 @@ def test_set_cf_choices_without_terminal_exits_3(mock_api, monkeypatch, capsys):
 
 
 @pytest.mark.parametrize("extra", [[], ["--yes"]])
-def test_set_cf_choices_dry_run_never_prompts_or_warns(monkeypatch, extra):
+def test_set_choices_dry_run_never_prompts_or_warns(monkeypatch, extra):
     no_prompt(monkeypatch)
     result = run(
-        "--dry-run", "tickets", "set-cf-choices", "7", *extra,
+        "--dry-run", *SET_CHOICES, "7", *extra,
         "--choices-json", json.dumps(CHOICES),
     )
     assert result.exit_code == 0, result.output
@@ -443,10 +444,10 @@ def test_set_cf_choices_dry_run_never_prompts_or_warns(monkeypatch, extra):
     assert result.stderr == ""
 
 
-def test_set_cf_choices_from_stdin_with_yes_puts(mock_api):
+def test_set_choices_from_stdin_with_yes_puts(mock_api):
     captured = mock_api(lambda req: httpx2.Response(200, json={"id": 7}))
     result = run(
-        "tickets", "set-cf-choices", "7", "--yes", "--file", "-", input=json.dumps(CHOICES)
+        *SET_CHOICES, "7", "--yes", "--file", "-", input=json.dumps(CHOICES)
     )
     assert result.exit_code == 0, result.output
     assert json.loads(captured[0].content) == {"choices": CHOICES}

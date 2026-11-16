@@ -36,6 +36,7 @@ SUBSCRIBE = ("tickets", "subscribe", "5")
 FORWARD = ("tickets", "forward", "5", "--to", "a@x.org", "--subject", "s", "--message", "m")
 MOVE = ("tickets", "move", "5", "--to-category", "2")
 
+SET_CHOICES = ("tickets", "custom-fields", "set-choices")
 CHOICES = [
     {"id": 11, "text": "Option 1", "dependant_fields": []},
     {"id": 12, "text": "Option 2 (Edited)", "dependant_fields": []},
@@ -475,7 +476,7 @@ def test_delete_takes_the_short_yes_flag(mock_api):
     assert json.loads(captured[0].content) == {"staff_id": 1}
 
 
-# -- set-cf-choices -----------------------------------------------------------
+# -- tickets custom-fields set-choices ----------------------------------------
 @pytest.mark.parametrize(
     ("second", "named"),
     [
@@ -487,35 +488,35 @@ def test_delete_takes_the_short_yes_flag(mock_api):
     ],
     ids=["not-object", "blank-text", "no-id", "invalid-id", "duplicate"],
 )
-def test_set_cf_choices_error_names_the_offending_choice(second, named):
+def test_set_choices_error_names_the_offending_choice(second, named):
     choices = [{"id": 11, "text": "A"}, second]
     assert named in rejected(
-        "--dry-run", "tickets", "set-cf-choices", "7", "--choices-json", json.dumps(choices)
+        "--dry-run", *SET_CHOICES, "7", "--choices-json", json.dumps(choices)
     )
 
 
-def test_set_cf_choices_sends_only_the_choices_of_a_field_object():
+def test_set_choices_sends_only_the_choices_of_a_field_object():
     field = {"id": 7, "name": "Drop Down Field", "type": "choice", "choices": CHOICES}
-    p = preview("tickets", "set-cf-choices", "7", "--choices-json", json.dumps(field))
+    p = preview(*SET_CHOICES, "7", "--choices-json", json.dumps(field))
     assert p["method"] == "PUT"
     assert p["url"].endswith("/ticket_custom_field/7/")
     assert p["body"] == {"choices": CHOICES}
 
 
-def test_set_cf_choices_yes_summary_ignores_quiet(mock_api):
+def test_set_choices_yes_summary_ignores_quiet(mock_api):
     captured = mock_api(lambda req: httpx2.Response(200, json={"id": 7}))
     result = run(
-        "--quiet", "tickets", "set-cf-choices", "7", "--yes", "--choices-json", json.dumps(CHOICES)
+        "--quiet", *SET_CHOICES, "7", "--yes", "--choices-json", json.dumps(CHOICES)
     )
     assert result.exit_code == 0, result.output
     assert COUNTS in result.stderr.replace("\n", " ")
     assert [r.method for r in captured] == ["PUT"]
 
 
-def test_set_cf_choices_prompt_states_the_summary_once(mock_api, tty):
+def test_set_choices_prompt_states_the_summary_once(mock_api, tty):
     captured = mock_api(lambda req: httpx2.Response(200, json={"id": 7}))
     result = run(
-        "tickets", "set-cf-choices", "7", "--choices-json", json.dumps(CHOICES), input="y\n"
+        *SET_CHOICES, "7", "--choices-json", json.dumps(CHOICES), input="y\n"
     )
     assert result.exit_code == 0, result.output
     assert result.stderr.replace("\n", " ").count(COUNTS) == 1

@@ -1,5 +1,6 @@
-"""Coverage for hfox.cli.main (root callback, global flags, version, app() wrapper)
-and hfox.cli.system (read-only reference-data commands).
+"""Coverage for hfox.cli.main (root callback, global flags, version, app() wrapper),
+hfox.cli.system (read-only reference-data commands) and the ticket and contact custom-field
+lists.
 """
 
 import csv
@@ -344,23 +345,28 @@ def test_fox_only_on_root_usage_line():
 
 
 # ---------------------------------------------------------------------------
-# system.py :: each read-only reference-data command
+# Single-GET reference lists: each `system` command and the custom-field lists.
 # The documented responses are bare JSON arrays; priorities/ documents none.
 # ---------------------------------------------------------------------------
+TICKET_FIELDS = ("tickets", "custom-fields", "list")
+CONTACT_FIELDS = ("contacts", "custom-fields", "list")
+FIELD_LISTS = pytest.mark.parametrize("command", [TICKET_FIELDS, CONTACT_FIELDS], ids=" ".join)
+
+
 @pytest.mark.parametrize(
     "command, path, sample",
     [
-        ("categories", "/categories/", [{"id": 1, "name": "Sales"}]),
-        ("priorities", "/priorities/", [{"id": 6, "name": "High"}]),
-        ("staff", "/staff/", [{"id": 2, "name": "Alice"}]),
-        ("statuses", "/statuses/", [{"id": 3, "name": "Open"}]),
-        ("ticket-custom-fields", "/ticket_custom_fields/", [{"id": 4, "name": "Priority"}]),
-        ("contact-custom-fields", "/user_custom_fields/", [{"id": 5, "name": "Company"}]),
+        (("system", "categories"), "/categories/", [{"id": 1, "name": "Sales"}]),
+        (("system", "priorities"), "/priorities/", [{"id": 6, "name": "High"}]),
+        (("system", "staff"), "/staff/", [{"id": 2, "name": "Alice"}]),
+        (("system", "statuses"), "/statuses/", [{"id": 3, "name": "Open"}]),
+        (TICKET_FIELDS, "/ticket_custom_fields/", [{"id": 4, "name": "Priority"}]),
+        (CONTACT_FIELDS, "/user_custom_fields/", [{"id": 5, "name": "Company"}]),
     ],
 )
-def test_system_command_hits_endpoint_and_renders(mock_api, command, path, sample):
+def test_reference_list_hits_endpoint_and_renders(mock_api, command, path, sample):
     captured = mock_api(lambda req: httpx2.Response(200, json=sample))
-    result = run("system", command)
+    result = run(*command)
     assert result.exit_code == 0
     assert len(captured) == 1
     assert captured[0].method == "GET"
@@ -417,10 +423,10 @@ _FIELDS = [
 ]
 
 
-@pytest.mark.parametrize("command", ["ticket-custom-fields", "contact-custom-fields"])
+@FIELD_LISTS
 def test_custom_field_choices_written_as_json_in_csv(mock_api, command):
     mock_api(lambda req: httpx2.Response(200, json=_FIELDS))
-    result = run("-f", "csv", "system", command)
+    result = run("-f", "csv", *command)
     assert result.exit_code == 0
     rows = list(csv.reader(io.StringIO(result.stdout)))
     assert rows[0] == ["id", "name", "type", "choices"]
@@ -432,9 +438,7 @@ def test_custom_field_choices_written_as_json_in_csv(mock_api, command):
 def test_custom_field_choices_flattened_in_table(mock_api):
     many = [{"text": f"Option {i}", "id": 100 + i} for i in range(10)]
     mock_api(lambda req: httpx2.Response(200, json=[{"id": 5, "choices": many}]))
-    result = run(
-        "-f", "table", "system", "ticket-custom-fields", env_extra={"COLUMNS": "400"}
-    )
+    result = run("-f", "table", *TICKET_FIELDS, env_extra={"COLUMNS": "400"})
     assert result.exit_code == 0
     assert "Option 9=109" in result.stdout
     assert "dependant" not in result.stdout
@@ -442,7 +446,7 @@ def test_custom_field_choices_flattened_in_table(mock_api):
 
 def test_custom_field_choices_kept_nested_in_json(mock_api):
     mock_api(lambda req: httpx2.Response(200, json=_FIELDS))
-    result = run("system", "contact-custom-fields")
+    result = run(*CONTACT_FIELDS)
     assert json.loads(result.stdout) == _FIELDS
 
 
@@ -464,23 +468,23 @@ def test_system_staff_filters_client_side(mock_api):
 
 
 # ---------------------------------------------------------------------------
-# system.py :: local --name/--email filters
+# Local --name/--email filters on the single-GET reference lists
 # ---------------------------------------------------------------------------
-SYSTEM_COMMANDS = [
-    ("categories", "/categories/"),
-    ("priorities", "/priorities/"),
-    ("staff", "/staff/"),
-    ("statuses", "/statuses/"),
-    ("ticket-custom-fields", "/ticket_custom_fields/"),
-    ("contact-custom-fields", "/user_custom_fields/"),
+REFERENCE_LISTS = [
+    (("system", "categories"), "/categories/"),
+    (("system", "priorities"), "/priorities/"),
+    (("system", "staff"), "/staff/"),
+    (("system", "statuses"), "/statuses/"),
+    (TICKET_FIELDS, "/ticket_custom_fields/"),
+    (CONTACT_FIELDS, "/user_custom_fields/"),
 ]
 _LEVELS = [{"id": 1, "name": "High"}, {"id": 2, "name": "Low"}]
 
 
-@pytest.mark.parametrize("command, path", SYSTEM_COMMANDS)
-def test_system_name_filter_is_local(mock_api, command, path):
+@pytest.mark.parametrize("command, path", REFERENCE_LISTS)
+def test_reference_list_name_filter_is_local(mock_api, command, path):
     captured = mock_api(lambda req: httpx2.Response(200, json=_LEVELS))
-    result = run("system", command, "--name", "hi")
+    result = run(*command, "--name", "hi")
     assert result.exit_code == 0
     assert json.loads(result.stdout) == [{"id": 1, "name": "High"}]
     assert captured[0].url.path.endswith(path)
@@ -494,26 +498,24 @@ def test_system_staff_email_filter_skips_null_email(mock_api):
     assert json.loads(result.stdout) == []
 
 
-@pytest.mark.parametrize("command", ["ticket-custom-fields", "contact-custom-fields"])
+@FIELD_LISTS
 def test_custom_fields_name_filter_runs_before_flattening(mock_api, command):
     mock_api(lambda req: httpx2.Response(200, json=_FIELDS))
-    result = run(
-        "-f", "table", "system", command, "--name", "survey", env_extra={"COLUMNS": "200"}
-    )
+    result = run("-f", "table", *command, "--name", "survey", env_extra={"COLUMNS": "200"})
     assert result.exit_code == 0
     assert "Request Survey" in result.stdout
     assert "No=2, Yes=1" in result.stdout
     assert "Account Number" not in result.stdout
-    result = run("system", command, "--name", "account")
+    result = run(*command, "--name", "account")
     assert json.loads(result.stdout) == [_FIELDS[1]]
 
 
 @pytest.mark.parametrize("fmt", ["json", "table", "csv", "yaml"])
-@pytest.mark.parametrize("command", [command for command, _ in SYSTEM_COMMANDS])
-def test_system_filter_zero_matches(mock_api, command, fmt):
-    body = _FIELDS if command.endswith("custom-fields") else _LEVELS
+@pytest.mark.parametrize("command", [command for command, _ in REFERENCE_LISTS], ids=" ".join)
+def test_reference_list_filter_zero_matches(mock_api, command, fmt):
+    body = _FIELDS if "custom-fields" in command else _LEVELS
     mock_api(lambda req: httpx2.Response(200, json=body))
-    result = run("-f", fmt, "system", command, "--name", "urgent")
+    result = run("-f", fmt, *command, "--name", "urgent")
     assert result.exit_code == 0
     if fmt == "json":
         assert json.loads(result.stdout) == []

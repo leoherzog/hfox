@@ -181,11 +181,11 @@ On `tickets list` and `contacts list`, `-q` means `--query`:
 
 `--status`, `--sort` and `-q` are sent without outer whitespace, and a blank one is not sent.
 
-Endpoints without server-side search take local filters instead. Every `system` command and
-`contacts groups list` take `--name`, and `system staff` also takes `--email`. A filter keeps
-rows whose field contains the text, ignoring case; every filter must match, and a missing or
-non-text field never matches. Filters are never sent to HappyFox, and no match prints an empty
-listing with exit `0`.
+Endpoints without server-side search take local filters instead. Every `system` command,
+`contacts groups list` and the ticket and contact `custom-fields list` take `--name`, and
+`system staff` also takes `--email`. A filter keeps rows whose field contains the text,
+ignoring case; every filter must match, and a missing or non-text field never matches. Filters
+are never sent to HappyFox, and no match prints an empty listing with exit `0`.
 
 `assets list`, `assets types list` and `assets custom-fields list` take `--page` and `--size`.
 They take `--name` only with the global `--page-all`, since one page would miss matches. Each
@@ -215,9 +215,9 @@ Message bodies can come from a file: `--text-file` and `--html-file` on `tickets
 each other, and a file or stdin body that is empty or whitespace only exits 3.
 
 The JSON `--file` flags of `tickets create-bulk`, `contacts create-bulk` and
-`tickets set-cf-choices` accept `-` as well. Only one input per invocation may read stdin.
-Files and stdin are read as strict UTF-8, and a leading byte order mark is dropped.
-`--attachment` always names a file.
+`tickets custom-fields set-choices` accept `-` as well. Only one input per invocation may
+read stdin. Files and stdin are read as strict UTF-8, and a leading byte order mark is
+dropped. `--attachment` always names a file.
 
 A path must name a regular file. A directory, FIFO, device or process substitution exits 3
 with "is not a regular file", and a missing path exits 3 with "not found".
@@ -228,10 +228,10 @@ whose content holds the configured API key or auth code. Both checks run under `
 
 ## Confirmation
 
-`tickets delete`, `assets delete` and `tickets set-cf-choices` ask before acting, on stderr.
-`--yes` skips the question, and `--dry-run` never asks. When stdin is not a terminal the
-command exits 3 unless `--yes` is given. Declining, or pressing Ctrl-C at the prompt, prints
-an error of type `cancelled` and exits 5.
+`tickets delete`, `assets delete` and `tickets custom-fields set-choices` ask before acting,
+on stderr. `--yes` skips the question, and `--dry-run` never asks. When stdin is not a
+terminal the command exits 3 unless `--yes` is given. Declining, or pressing Ctrl-C at the
+prompt, prints an error of type `cancelled` and exits 5.
 
 ## Output
 
@@ -355,13 +355,14 @@ The names `--columns`, `--profile` and `HFOX_PROFILE` are reserved.
 hfox auth      login | status | logout
 hfox tickets   list | get | create | create-bulk | inline-attachment | reply | note | user-reply
                update | update-cf | tags | subscribe | unsubscribe | forward | move | delete
-               set-cf-choices
+hfox tickets custom-fields  list | set-choices
 hfox contacts  list | get | create | update | create-bulk
-hfox contacts groups   list | get | create | update | add-contacts | remove-contacts
+hfox contacts groups         list | get | create | update | add-contacts | remove-contacts
+hfox contacts custom-fields  list
 hfox assets    list | get | create | update | delete
 hfox assets types          list | get
 hfox assets custom-fields  list | get
-hfox system    categories | priorities | staff | statuses | ticket-custom-fields | contact-custom-fields
+hfox system    categories | priorities | staff | statuses
 ```
 
 Ticket commands take the numeric ticket id, not the display id, and read `007` as `7`.
@@ -388,7 +389,7 @@ list a value, so `--tags ' , '` is refused.
 ```bash
 # Reference data (ids you need elsewhere)
 hfox -f table system priorities
-hfox -f table system ticket-custom-fields    # choices shown as text=id
+hfox -f table tickets custom-fields list     # choices shown as text=id
 hfox system staff --email jane@               # find a staff id
 
 # Tickets
@@ -439,27 +440,27 @@ An all-blank value such as `--cf 5=` exits 3. `--cf-json '{"5": ""}'` sends valu
 `tickets create`, `reply` and `note` reject a `null` value combined with `--attachment`, and
 take contact fields through `--contact-cf` and `--contact-cf-json`.
 
-Keys are numeric ids from `hfox system ticket-custom-fields`, `contact-custom-fields` or
-`hfox assets custom-fields list`, not agent-portal URLs. A key may carry its endpoint's
+Keys are numeric ids from `hfox tickets custom-fields list`, `contacts custom-fields list`
+or `assets custom-fields list`, not agent-portal URLs. A key may carry its endpoint's
 prefix (`t-cf-5`); any other key exits 3, and so does an id of `0`. An id is sent without
 leading zeros, so `007` and `t-cf-007` name field 7. A field given twice keeps the last
 value: `--cf` in the order given, then `--cf-json`, `--contact-cf` and `--contact-cf-json`.
 
 ### Custom-field choices
 
-`tickets set-cf-choices <field_id>` replaces the whole choice list of a ticket dropdown or
-multiple-option field. The choices come from `--file`, stdin or `--choices-json`, as a JSON
-array or as an object `{"choices": [...]}`.
+`tickets custom-fields set-choices <field_id>` replaces the whole choice list of a ticket
+dropdown or multiple-option field. The choices come from `--file`, stdin or
+`--choices-json`, as a JSON array or as an object `{"choices": [...]}`.
 
 ```bash
-hfox system ticket-custom-fields | jq '.[] | select(.id == 7) | .choices' > choices.json
+hfox tickets custom-fields list | jq '.[] | select(.id == 7) | .choices' > choices.json
 # edit choices.json, then:
-hfox tickets set-cf-choices 7 --file choices.json
+hfox tickets custom-fields set-choices 7 --file choices.json
 ```
 
 Every choice needs a non-blank `text` and an `id`. An existing choice keeps its id, a new one
 has `"id": null`, and an existing choice left out of the list is deleted.
-`hfox system ticket-custom-fields` lists each field's choices in the shape this command
+`hfox tickets custom-fields list` lists each field's choices in the shape this command
 takes, so start from that list. Keep each existing choice's `dependant_fields` as read and
 give a new one `[]`; whether HappyFox keeps a choice's dependent fields when that key is
 missing is unverified. The command states how many choices are kept and how many are new

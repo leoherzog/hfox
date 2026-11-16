@@ -1,4 +1,6 @@
-"""Manage HappyFox contacts (the users endpoint) and contact groups (the `groups` sub-app)."""
+"""Manage HappyFox contacts (the users endpoint) and contact groups (the `groups` sub-app), and
+read contact custom fields (the `custom-fields` sub-app).
+"""
 
 from __future__ import annotations
 
@@ -18,10 +20,19 @@ from ._util import (
     strip_or_reject,
     validate_contact_ref,
 )
-from .cf import CF_HELP, CF_JSON_HELP, parse_cf_json, parse_cf_options
+from .cf import (
+    CF_HELP,
+    CF_JSON_HELP,
+    FIELD_NAME_HELP,
+    parse_cf_json,
+    parse_cf_options,
+    render_field_list,
+)
 from .context import get_ctx
 
-app = typer.Typer(no_args_is_help=True, help="Manage contacts and contact groups.")
+app = typer.Typer(
+    no_args_is_help=True, help="Manage contacts and contact groups; read contact custom fields."
+)
 
 # Documented phone types: mobile, work, main, home, other.
 PHONE_TYPES = ("mo", "w", "m", "h", "o")
@@ -313,3 +324,16 @@ def remove_contacts(
     result = obj.call("POST", f"contact_group/{group_id}/delete_contacts/", json=body)
     obj.render(result)
     exit_on_failures(result, benign=NOT_IN_GROUP)
+
+
+custom_fields = typer.Typer(no_args_is_help=True, help="Read contact custom fields.")
+app.add_typer(custom_fields, name="custom-fields")
+
+
+@custom_fields.command("list")
+def list_custom_fields(
+    ctx: typer.Context,
+    name: str = typer.Option(None, "--name", help=FIELD_NAME_HELP),
+) -> None:
+    """List contact custom fields and their choice ids."""
+    render_field_list(get_ctx(ctx), "user_custom_fields/", name)
