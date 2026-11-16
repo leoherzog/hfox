@@ -313,7 +313,9 @@ Helpers:
   `min=0`. `--size` is 1–50 and `--page` at least 1. Required strings use `require_nonblank`.
   A flag that takes only a comma-separated id list ends in `-ids` (`--staff-ids`,
   `--attachment-ids`, `--contact-ids`) and goes through `require_ids` or `split_csv_ints`.
-  `tickets list --status` also takes keywords, so it keeps the API's name.
+  The `tickets list` filters `--status` and `--category` keep the API's parameter names.
+  `--category` goes through `split_csv_ints`, is sent as a repeated `category` parameter and
+  is not sent when blank.
 - **Staff pair:** a command that needs or names a staff identity declares both
   `staff: str = typer.Option(None, "--staff", help=STAFF_HELP)` and
   `staff_id: int = typer.Option(None, "--staff-id", min=0, help=STAFF_ID_HELP)` and calls

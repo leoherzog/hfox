@@ -181,7 +181,8 @@ On `tickets list` and `contacts list`, `-q` means `--query`:
   `created_since` or `last_login_before`, ANDed when space-separated. Omit `+` from phone
   numbers.
 
-`--status`, `--sort` and `-q` are sent without outer whitespace, and a blank one is not sent.
+`--status` and `--category` each take a comma-separated list. They, `--sort` and `-q` are
+sent without outer whitespace, and a blank one is not sent.
 
 Endpoints without server-side search take local filters instead. Every `system` command,
 `contacts groups list` and the ticket and contact `custom-fields list` take `--name`, and

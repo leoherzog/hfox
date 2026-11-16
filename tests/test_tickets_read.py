@@ -41,12 +41,19 @@ def run_app(*args):
     )
 
 
-def test_list_repeats_category_key():
-    p = preview("tickets", "list", "--category", "34", "--category", "5")
+@pytest.mark.parametrize("value", ["34,5", " 34 , 5 ,", "034,005"])
+def test_list_repeats_category_key(value):
+    p = preview("tickets", "list", "--category", value)
     assert p["method"] == "GET"
     assert "/tickets/?category=34&category=5&page=1&size=10" in p["url"]
     assert p["params"]["category"] == [34, 5]
     assert p["body"] is None
+
+
+@pytest.mark.parametrize("value", ["", "  ", " , "])
+def test_list_blank_category_is_not_sent(value):
+    p = preview("tickets", "list", "--category", value)
+    assert "category" not in p["params"]
 
 
 def test_list_query_is_sent_verbatim_with_status_all():
@@ -156,6 +163,7 @@ def test_list_size_50_is_allowed():
         ["--size", "0"],
         ["--page", "0"],
         ["--category", "0"],
+        ["--category", "3,0"],
         ["--category", "Sales"],
     ],
 )

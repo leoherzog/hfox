@@ -24,6 +24,7 @@ from ._util import (
     require_ids,
     require_nonblank,
     split_csv,
+    split_csv_ints,
     strip_or_none,
     strip_or_reject,
     text_file_help,
@@ -90,9 +91,7 @@ def list_tickets(
     status: str = typer.Option(
         None, "--status", help="Status id, '_all' or '_pending'; -q defaults to '_all'."
     ),
-    category: list[int] = typer.Option(
-        None, "--category", min=1, help="Category id (repeatable)."
-    ),
+    category: str = typer.Option(None, "--category", help="Category ids, comma-separated."),
     query: str = typer.Option(
         None,
         "--query",
@@ -124,7 +123,7 @@ def list_tickets(
     params = compact(
         {
             "status": status,
-            "category": category or None,
+            "category": split_csv_ints(category) or None,
             "q": query,
             "sort": strip_or_none(sort),
             "minify_response": minify or None,
