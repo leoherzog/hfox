@@ -29,6 +29,7 @@ dependencies = [
 Homepage = "https://github.com/leoherzog/hfox"
 Source = "https://github.com/leoherzog/hfox"
 Issues = "https://github.com/leoherzog/hfox/issues"
+Changelog = "https://github.com/leoherzog/hfox/blob/main/CHANGELOG.md"
 
 [project.scripts]
 hfox = "hfox.cli.main:app"

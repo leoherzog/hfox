@@ -48,6 +48,8 @@ Publishing a GitHub release runs `.github/workflows/release.yml`. The tag must b
 canonical PEP 440 public version (`v1.0.0`, `v1.0.0rc1`); any other tag fails the stamping
 step. Source keeps the placeholders `version = "0.0.0"` in `pyproject.toml` and
 `__version__ = "dev"`, so `hfox --version` reports `dev` for any build that is not a release.
+Before tagging, add the version's section to `CHANGELOG.md`; the release notes are that
+section.
 
 `binaries` and `dist` run in parallel, then `assets`, then `pypi`:
 
