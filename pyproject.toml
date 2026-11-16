@@ -19,8 +19,8 @@ classifiers = [
 ]
 dependencies = [
     # main.py imports the private typer._click, so the next minor is excluded.
-    "typer>=0.27.3,<0.28",
-    "httpx2>=2.16.0,<3",
+    "typer>=0.28.0,<0.29",
+    "httpx2>=2.16.2,<3",
     "idna>=3.20",
     "rich>=15.0.0",
 ]
@@ -45,10 +45,10 @@ include = ["src", "tests", "README.md", "LICENSE", "pyproject.toml"]
 
 [dependency-groups]
 dev = [
-    "pytest>=9.1.1",
+    "pytest>=9.2.0",
     "pytest-cov>=7.1.0",
     "pyyaml>=6.0.3",
-    "ruff>=0.17.2",
+    "ruff>=0.17.5",
 ]
 build = [
     "pyinstaller>=6.22.3",

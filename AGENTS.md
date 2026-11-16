@@ -35,7 +35,7 @@ created. `.github/workflows/ci.yml` runs ruff and pytest on every push and pull 
 Linux, macOS and Windows with Python 3.11 to 3.15. Each job measures coverage and fails below
 `fail_under` in `pyproject.toml`.
 
-Typer is capped below the next minor (`typer>=0.27.3,<0.28`) because `cli/main.py` imports
+Typer is capped below the next minor (`typer>=0.28.0,<0.29`) because `cli/main.py` imports
 the private `typer._click`. Raise the cap only after checking that import.
 
 HTTP goes through `httpx2`, Pydantic's fork of httpx, capped below 3. It verifies TLS against
