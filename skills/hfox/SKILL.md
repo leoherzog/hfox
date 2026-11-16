@@ -70,7 +70,7 @@ flag after the resource exits 3 with `"type": "usage"`.
 |------|-----|
 | `-f, --format json\|table\|csv\|yaml` | keep the default `json` when parsing |
 | `--dry-run` | print the request instead of sending it |
-| `--page-all`, `--page-limit N`, `--page-delay MS` | walk pages; JSON output becomes NDJSON |
+| `--page-all`, `--page-limit N`, `--page-delay SECONDS` | walk pages; JSON output becomes NDJSON |
 | `--staff TEXT`, `--staff-id N` | acting staff for writes |
 | `--timeout SECONDS`, `--max-retries N` | timeout for each connect, read or write, and retry count |
 | `--quiet` | drop status lines and retry notices |
@@ -260,8 +260,8 @@ Two signals decide whether to retry:
   and neither does a write that failed before the request left.
 - `rate_limited` means HappyFox returned 429 after hfox used up its retries and refuses
   every request until the throttle ends. Wait `retry_after` seconds when it is present.
-  Without it, wait at least a minute and slow down, raising `--page-delay` on a `--page-all`
-  walk, since an API key can carry a lower limit over a longer interval.
+  Without it, wait at least a minute and slow down, raising `--page-delay`, in seconds, on a
+  `--page-all` walk, since an API key can carry a lower limit over a longer interval.
 
 hfox already retries 429 and network errors, so do not add your own retry loop. When
 HappyFox names a wait, hfox sleeps up to 600 seconds per retry. If your tool calls time out

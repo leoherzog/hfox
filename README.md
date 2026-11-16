@@ -127,7 +127,7 @@ Global flags go before the resource: `hfox -f table tickets list`, not `hfox tic
 | `-f, --format {json\|table\|csv\|yaml}` | output format (default `json`) |
 | `--dry-run` | print the exact request without sending it |
 | `--page-all` | fetch up to `--page-limit` pages from `--page`; JSON output becomes NDJSON |
-| `--page-limit N` / `--page-delay MS` | bound `--page-all` (default 10 pages / 100 ms) |
+| `--page-limit N` / `--page-delay SECONDS` | bound `--page-all` (default 10 pages / 0.1 s) |
 | `--staff TEXT` / `--staff-id N` | acting staff for write actions, by email or name, or by id |
 | `--timeout SECONDS` | per-attempt timeout for connecting and for each read or write (default 30) |
 | `--max-retries N` | retries after HTTP 429 or a network error (default 5) |
@@ -160,7 +160,8 @@ HappyFox allows each account 500 GET and 300 POST requests a minute, and an API 
 carry a lower limit over its own interval. Past a limit it answers every request with 429
 until the throttle ends. hfox then waits the longer of the seconds named in a `Retry-After`
 header and in the response body, up to 600 seconds per retry, and otherwise backs off
-exponentially. Raise `--page-delay` to keep a long `--page-all` walk under the key's limit.
+exponentially. Raise `--page-delay`, in seconds, to keep a long `--page-all` walk under the
+key's limit.
 
 ## Listing and search
 

@@ -208,7 +208,7 @@ class HappyFoxClient:
         params: dict[str, Any] | None = None,
         root_key: str = "data",
         page_limit: int = 10,
-        page_delay_ms: int = 100,
+        page_delay_s: float = 0.1,
         size: int = MAX_PAGE_SIZE,
         on_truncated: Callable[[int, int], None] | None = None,
     ) -> Iterator[Any]:
@@ -221,7 +221,7 @@ class HappyFoxClient:
             params=params,
             root_key=root_key,
             page_limit=page_limit,
-            page_delay_ms=page_delay_ms,
+            page_delay_s=page_delay_s,
             size=size,
             on_truncated=on_truncated,
         ):
@@ -235,7 +235,7 @@ class HappyFoxClient:
         params: dict[str, Any] | None = None,
         root_key: str = "data",
         page_limit: int = 10,
-        page_delay_ms: int = 100,
+        page_delay_s: float = 0.1,
         size: int = MAX_PAGE_SIZE,
         on_truncated: Callable[[int, int], None] | None = None,
     ) -> Iterator[Any]:
@@ -266,8 +266,8 @@ class HappyFoxClient:
                     on_truncated(page, page_count)
                 return
             page += 1
-            if page_delay_ms > 0:
-                self._sleep(page_delay_ms / 1000.0)
+            if page_delay_s > 0:
+                self._sleep(page_delay_s)
 
     def get_all(self, path: str, *, root_key: str = "data", **walk: Any) -> Any:
         """Walk the pages as `paginate_pages` does and return their records as one list.

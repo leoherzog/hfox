@@ -206,8 +206,9 @@ def main(
     page_limit: int = typer.Option(
         10, "--page-limit", min=1, help="Max pages to fetch with --page-all."
     ),
-    page_delay: int = typer.Option(
-        100, "--page-delay", min=0, help="Delay in ms between paginated requests."
+    page_delay: float = typer.Option(
+        0.1, "--page-delay", metavar="SECONDS",
+        help="Delay in seconds between paginated requests.",
     ),
     staff: str = typer.Option(
         None, "--staff",
@@ -246,6 +247,8 @@ def main(
         raise ValidationError("--staff and --staff-id are mutually exclusive.")
     if timeout is not None and not (math.isfinite(timeout) and timeout > 0):
         raise ValidationError("--timeout must be a positive number of seconds.")
+    if not (math.isfinite(page_delay) and page_delay >= 0):
+        raise ValidationError("--page-delay must be a non-negative number of seconds.")
     config = load_config(config_dir)
     output_format = _resolve_format(fmt, config)
     ctx.command.ndjson = page_all and output_format is OutputFormat.JSON
@@ -256,7 +259,7 @@ def main(
         dry_run=dry_run,
         page_all=page_all,
         page_limit=page_limit,
-        page_delay_ms=page_delay,
+        page_delay_s=page_delay,
         quiet=quiet,
         staff_id_override=staff_id,
         staff_override=staff,

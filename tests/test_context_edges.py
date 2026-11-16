@@ -280,14 +280,14 @@ THREE_PAGES = [[{"id": 1}], [{"id": 2}], [{"id": 3}]]
 
 def test_page_walk_reads_rows_under_a_custom_root_key(mock_api):
     captured = mock_api(paged("items", ITEM_PAGES))
-    ctx = make_ctx(page_all=True, page_delay_ms=0, fmt=OutputFormat.CSV)
+    ctx = make_ctx(page_all=True, page_delay_s=0, fmt=OutputFormat.CSV)
     assert ctx.paginate("things/", root_key="items") == ITEM_PAGES[0] + ITEM_PAGES[1]
     assert [req.url.params["page"] for req in captured] == ["1", "2"]
 
 
 def test_ndjson_filter_reads_rows_under_a_custom_root_key(mock_api, capsys):
     mock_api(paged("items", ITEM_PAGES))
-    ctx = make_ctx(page_all=True, page_delay_ms=0)
+    ctx = make_ctx(page_all=True, page_delay_s=0)
     with pytest.raises(typer.Exit) as exc:
         ctx.paginate("things/", root_key="items", filters={"name": "laptop"})
     assert exc.value.exit_code == 0
@@ -315,7 +315,7 @@ FLAT = [OutputFormat.TABLE, OutputFormat.CSV, OutputFormat.YAML]
 @pytest.mark.parametrize("fmt", FLAT)
 def test_page_all_returns_an_only_page_without_a_row_list_as_one_page_does(mock_api, fmt, body):
     captured = mock_api(lambda req: serve(body))
-    walked = make_ctx(page_all=True, page_delay_ms=0, fmt=fmt).paginate("tickets/")
+    walked = make_ctx(page_all=True, page_delay_s=0, fmt=fmt).paginate("tickets/")
     assert walked == make_ctx(fmt=fmt).paginate("tickets/")
     assert walked == body
     assert len(captured) == 2
@@ -346,7 +346,7 @@ def test_page_all_prints_an_only_page_without_a_row_list_as_its_ndjson_line(mock
 )
 def test_page_all_returns_the_rows_of_an_only_page_that_holds_a_row_list(mock_api, body):
     mock_api(lambda req: serve(body))
-    ctx = make_ctx(page_all=True, page_delay_ms=0, fmt=OutputFormat.TABLE)
+    ctx = make_ctx(page_all=True, page_delay_s=0, fmt=OutputFormat.TABLE)
     assert ctx.paginate("tickets/") == ([{"id": 1}] if body == [{"id": 1}] else [])
 
 
@@ -366,7 +366,7 @@ def test_page_all_keeps_earlier_rows_when_the_last_page_holds_no_row_list(
 ):
     first = {"page_info": {"page_count": 2}, "data": [{"id": 1}, {"id": 2}]}
     captured = mock_api(lambda req: serve(first if req.url.params["page"] == "1" else last))
-    ctx = make_ctx(page_all=True, page_delay_ms=0, fmt=fmt)
+    ctx = make_ctx(page_all=True, page_delay_s=0, fmt=fmt)
     assert ctx.paginate("tickets/") == [{"id": 1}, {"id": 2}, *rows]
     assert len(captured) == 2
 
@@ -375,10 +375,10 @@ def test_page_all_keeps_earlier_rows_when_the_last_page_holds_no_row_list(
 def test_filter_finds_no_row_in_an_only_page_without_a_row_list(mock_api, capsys, body):
     mock_api(lambda req: serve(body))
     for fmt in FLAT:
-        ctx = make_ctx(page_all=True, page_delay_ms=0, fmt=fmt)
+        ctx = make_ctx(page_all=True, page_delay_s=0, fmt=fmt)
         assert ctx.paginate("assets/", filters={"name": "x"}) == []
     with pytest.raises(typer.Exit) as exc:
-        make_ctx(page_all=True, page_delay_ms=0).paginate("assets/", filters={"name": "x"})
+        make_ctx(page_all=True, page_delay_s=0).paginate("assets/", filters={"name": "x"})
     assert exc.value.exit_code == 0
     assert ndjson(capsys.readouterr().out) == [
         {**body, "data": []} if isinstance(body, dict) else []
@@ -395,11 +395,11 @@ def test_filter_over_an_only_page_without_a_row_list_renders_an_empty_result(moc
     assert (filtered.stdout, filtered.stderr) == (empty.stdout, empty.stderr)
 
 
-@pytest.mark.parametrize(("delay_ms", "slept"), [(250, [0.25, 0.25]), (0, [])])
-def test_page_delay_is_slept_between_pages(monkeypatch, delay_ms, slept):
+@pytest.mark.parametrize(("delay", "slept"), [(0.25, [0.25, 0.25]), (0, [])])
+def test_page_delay_is_slept_between_pages(monkeypatch, delay, slept):
     sleeps = []
     install_client(monkeypatch, paged("data", THREE_PAGES), sleeps=sleeps)
-    ctx = make_ctx(page_all=True, page_delay_ms=delay_ms, fmt=OutputFormat.CSV)
+    ctx = make_ctx(page_all=True, page_delay_s=delay, fmt=OutputFormat.CSV)
     assert ctx.paginate("tickets/") == [{"id": 1}, {"id": 2}, {"id": 3}]
     assert sleeps == slept
 
@@ -417,7 +417,7 @@ def test_ndjson_error_line_exits_with_the_code_of_its_error(
 
     mock_api(handler)
     with pytest.raises(typer.Exit) as exc:
-        make_ctx(page_all=True, page_delay_ms=0).paginate("tickets/")
+        make_ctx(page_all=True, page_delay_s=0).paginate("tickets/")
     assert exc.value.exit_code == exit_code
     page, error = ndjson(capsys.readouterr().out)
     assert page["data"] == [{"id": 1}]
@@ -432,7 +432,7 @@ def test_unexpected_exception_mid_walk_is_an_internal_ndjson_line(mock_api, caps
 
     mock_api(handler)
     with pytest.raises(typer.Exit) as exc:
-        make_ctx(page_all=True, page_delay_ms=0).paginate("tickets/")
+        make_ctx(page_all=True, page_delay_s=0).paginate("tickets/")
     assert exc.value.exit_code == 5
     page, error = ndjson(capsys.readouterr().out)
     assert page["data"] == [{"id": 1}]

@@ -360,7 +360,7 @@ def test_login_persists_normalized_base_url(monkeypatch, tmp_path):
 def make_ctx(monkeypatch, handler, **kw):
     monkeypatch.setattr(context_mod, "HappyFoxClient", lambda *a, **k: make_client(handler)[0])
     cfg = Config(subdomain="acme", region="us", api_key="k", auth_code="c")
-    return AppContext(config=cfg, page_delay_ms=0, **kw)
+    return AppContext(config=cfg, page_delay_s=0, **kw)
 
 
 def test_ndjson_error_is_one_compact_line(monkeypatch, capsys):

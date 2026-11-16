@@ -206,7 +206,7 @@ def test_page_all_defaults_to_ten_pages_a_tenth_of_a_second_apart(paged_api):
 @pytest.mark.parametrize(
     ("flags", "pages", "delays"),
     [
-        (("--page-limit", "3", "--page-delay", "250"), 3, [0.25, 0.25]),
+        (("--page-limit", "3", "--page-delay", "0.25"), 3, [0.25, 0.25]),
         (("--page-limit", "1"), 1, []),
         (("--page-limit", "2", "--page-delay", "0"), 2, []),
     ],

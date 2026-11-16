@@ -207,7 +207,7 @@ def test_root_value_check_runs_before_config_is_loaded(run_app, monkeypatch):
     ("root", "message"),
     [
         (("--staff-id", "-1"), "'--staff-id': -1 is not in the range"),
-        (("--page-delay", "-1"), "'--page-delay': -1 is not in the range"),
+        (("--page-delay", "-1"), "--page-delay must be a non-negative number of seconds"),
         (("--timeout", "-inf"), "--timeout must be a positive number"),
     ],
 )
@@ -535,13 +535,24 @@ def test_unknown_format_flag_is_named_over_a_valid_environment_format(run_app, f
     )
 
 
-# -- --timeout and --max-retries ----------------------------------------------
+# -- --timeout, --page-delay and --max-retries --------------------------------
 @pytest.mark.parametrize("value", ["0", "-1", "nan", "inf", "-inf"])
 def test_timeout_must_be_a_positive_finite_number(run_app, value):
     code, payload, _ = run_app("--timeout", value, "--dry-run", "system", "statuses")
     assert code == 3
     assert payload == {
         "error": "--timeout must be a positive number of seconds.",
+        "type": "validation",
+        "exit_code": 3,
+    }
+
+
+@pytest.mark.parametrize("value", ["-1", "-0.5", "nan", "inf", "-inf"])
+def test_page_delay_must_be_a_finite_number_of_at_least_0(run_app, value):
+    code, payload, _ = run_app("--page-delay", value, "--dry-run", "system", "statuses")
+    assert code == 3
+    assert payload == {
+        "error": "--page-delay must be a non-negative number of seconds.",
         "type": "validation",
         "exit_code": 3,
     }

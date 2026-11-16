@@ -146,7 +146,7 @@ def _page_handler(request):
 
 def test_paginate_page_all_json_streams_ndjson_and_exits(capsys, monkeypatch):
     captured = _install_client(monkeypatch, _page_handler)
-    ctx = make_ctx(page_all=True, page_limit=10, page_delay_ms=0)
+    ctx = make_ctx(page_all=True, page_limit=10, page_delay_s=0)
     with pytest.raises(typer.Exit) as ei:
         ctx.paginate("tickets/", params={"size": 2})
     assert ei.value.exit_code == 0
@@ -157,7 +157,7 @@ def test_paginate_page_all_json_streams_ndjson_and_exits(capsys, monkeypatch):
 
 def test_paginate_page_all_non_json_returns_flat_list(monkeypatch):
     captured = _install_client(monkeypatch, _page_handler)
-    ctx = make_ctx(page_all=True, page_limit=10, page_delay_ms=0, fmt=OutputFormat.TABLE)
+    ctx = make_ctx(page_all=True, page_limit=10, page_delay_s=0, fmt=OutputFormat.TABLE)
     result = ctx.paginate("tickets/", params={"size": 2})
     assert result == [{"id": 10}, {"id": 11}, {"id": 20}, {"id": 21}]
     assert len(captured) == 2
@@ -230,7 +230,7 @@ def _named_page_handler(request):
 
 def test_paginate_page_all_json_filters_each_ndjson_page(capsys, monkeypatch):
     _install_client(monkeypatch, _named_page_handler)
-    ctx = make_ctx(page_all=True, page_delay_ms=0)
+    ctx = make_ctx(page_all=True, page_delay_s=0)
     with pytest.raises(typer.Exit) as ei:
         ctx.paginate("assets/", filters={"name": "LAP"})
     assert ei.value.exit_code == 0
@@ -241,7 +241,7 @@ def test_paginate_page_all_json_filters_each_ndjson_page(capsys, monkeypatch):
 
 def test_paginate_page_all_non_json_filters_flat_list(monkeypatch):
     _install_client(monkeypatch, _named_page_handler)
-    ctx = make_ctx(page_all=True, page_delay_ms=0, fmt=OutputFormat.TABLE)
+    ctx = make_ctx(page_all=True, page_delay_s=0, fmt=OutputFormat.TABLE)
     assert ctx.paginate("assets/", filters={"name": "LAP"}) == [{"id": 10, "name": "Laptop"}]
 
 
@@ -259,7 +259,7 @@ def test_paginate_dry_run_page_all_never_sends_filters(capsys, monkeypatch):
 
 def test_paginate_filtered_walk_warns_when_truncated(capsys, monkeypatch):
     _install_client(monkeypatch, _named_page_handler)
-    ctx = make_ctx(page_all=True, page_limit=1, page_delay_ms=0)
+    ctx = make_ctx(page_all=True, page_limit=1, page_delay_s=0)
     with pytest.raises(typer.Exit) as ei:
         ctx.paginate("assets/", filters={"name": "LAP"})
     assert ei.value.exit_code == 0
@@ -283,10 +283,10 @@ _EMPTY_INFO = {"page_count": 1, "count": 0}
 )
 def test_paginate_filter_odd_pages_agree_across_formats(capsys, monkeypatch, page, rows):
     _install_client(monkeypatch, lambda r: httpx2.Response(200, json=page))
-    table = make_ctx(page_all=True, page_delay_ms=0, fmt=OutputFormat.TABLE)
+    table = make_ctx(page_all=True, page_delay_s=0, fmt=OutputFormat.TABLE)
     assert table.paginate("assets/", filters={"name": "x"}) == rows
 
-    ctx = make_ctx(page_all=True, page_delay_ms=0)
+    ctx = make_ctx(page_all=True, page_delay_s=0)
     with pytest.raises(typer.Exit) as ei:
         ctx.paginate("assets/", filters={"name": "x"})
     assert ei.value.exit_code == 0
@@ -302,7 +302,7 @@ def test_paginate_filter_odd_pages_agree_across_formats(capsys, monkeypatch, pag
 
 def test_paginate_filtered_walk_api_error_becomes_ndjson_line(capsys, monkeypatch):
     _install_client(monkeypatch, lambda r: httpx2.Response(500, json={"error": "boom"}))
-    ctx = make_ctx(page_all=True, page_delay_ms=0)
+    ctx = make_ctx(page_all=True, page_delay_s=0)
     with pytest.raises(typer.Exit) as ei:
         ctx.paginate("assets/", filters={"name": "x"})
     assert ei.value.exit_code == 1

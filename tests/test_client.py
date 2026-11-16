@@ -362,7 +362,7 @@ def test_on_retry_not_called_for_page_delay():
         return httpx2.Response(200, json={"page_info": {"page_count": 3}, "data": [1]})
 
     client, slept = make_client_recording_sleep(handler, on_retry=lambda *a: seen.append(a))
-    assert len(list(client.paginate("tickets/", page_delay_ms=100))) == 3
+    assert len(list(client.paginate("tickets/", page_delay_s=0.1))) == 3
     assert slept == [0.1, 0.1]
     assert seen == []
 

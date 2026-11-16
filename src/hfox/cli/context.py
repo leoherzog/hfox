@@ -35,7 +35,7 @@ class AppContext:
     dry_run: bool = False
     page_all: bool = False
     page_limit: int = 10
-    page_delay_ms: int = 100
+    page_delay_s: float = 0.1
     quiet: bool = False
     staff_id_override: int | None = None
     staff_override: str | None = None
@@ -315,7 +315,7 @@ class AppContext:
             "params": params,
             "root_key": root_key,
             "page_limit": self.page_limit,
-            "page_delay_ms": self.page_delay_ms,
+            "page_delay_s": self.page_delay_s,
             "on_truncated": _warn_truncated,
         }
         if self.fmt is not OutputFormat.JSON:

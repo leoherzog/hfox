@@ -138,16 +138,19 @@ as a root parse error, a misplaced flag or a config error, never consults `defau
 ### Global flags
 
 The root callback declares, in this order: `--format/-f`, `--dry-run`, `--page-all`,
-`--page-limit`, `--page-delay`, `--staff`, `--staff-id`, `--timeout SECONDS`, `--max-retries`,
-`--quiet`, `--config-dir`, `--no-color`, `--version/-v`. `--quiet` is long-only, because `-q`
-is `--query` on list verbs. `-v` is `--version`; there is no verbose or debug mode.
+`--page-limit`, `--page-delay SECONDS`, `--staff`, `--staff-id`, `--timeout SECONDS`,
+`--max-retries`, `--quiet`, `--config-dir`, `--no-color`, `--version/-v`. `--quiet` is
+long-only, because `-q` is `--query` on list verbs. `-v` is `--version`; there is no verbose
+or debug mode.
 
 `--timeout` (`HFOX_TIMEOUT`) and `--max-retries` (`HFOX_MAX_RETRIES`) are Typer options with
 `envvar=`, not `Config` fields. The callback rejects a timeout that is not finite and above
 0, and `min=0` on `--max-retries` is the only guard against a negative value, which would
-make the client send nothing. `_resolve_format` checks the name through `OutputFormat.parse`
-and raises `ValidationError` for an unknown format naming its source: `--format`,
-`HFOX_FORMAT` or `default_format` in the config file.
+make the client send nothing. `--page-delay` takes float seconds, carried as `page_delay_s`
+into the client, and the callback rejects a value that is not finite and at least 0.
+`_resolve_format` checks the name through `OutputFormat.parse` and raises `ValidationError`
+for an unknown format naming its source: `--format`, `HFOX_FORMAT` or `default_format` in
+the config file.
 It passes the flag through `nonblank_or_none`, so an empty or whitespace-only `--format`
 counts as not given and is never the named source.
 A configured value is always checked, since `load_config` falls back to `json` rather than

@@ -406,7 +406,7 @@ def test_walk_defaults_are_ten_pages_of_fifty_100ms_apart(walk):
 
 def test_paginate_forwards_size_and_page_delay():
     client, requests, sleeps = make_client(pages(3))
-    assert list(client.paginate("tickets/", size=20, page_delay_ms=250)) == [1, 2, 3]
+    assert list(client.paginate("tickets/", size=20, page_delay_s=0.25)) == [1, 2, 3]
     assert [request.url.params["size"] for request in requests] == ["20"] * 3
     assert sleeps == [0.25, 0.25]
 
@@ -638,7 +638,7 @@ def test_get_page_returns_a_body_that_is_not_an_envelope(body):
 # -- the wrong shape through the CLI ---------------------------------------------
 def page_all_ctx(**kwargs):
     config = Config(subdomain="acme", api_key="k", auth_code="c")
-    return AppContext(config=config, page_all=True, page_delay_ms=0, **kwargs)
+    return AppContext(config=config, page_all=True, page_delay_s=0, **kwargs)
 
 
 def one_page_ctx(**kwargs):
