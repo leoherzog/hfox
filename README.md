@@ -302,6 +302,9 @@ A nonzero exit carries that error object except in these cases:
 - `auth status` prints its payload instead, with `check_error` when the check fails.
 - With `--page-all` in JSON, the error is the last NDJSON line.
 - Ctrl-C outside a prompt exits 130 and prints no error object.
+- A failed write to stdout exits 5. After a closed pipe, as with `| head -1`, hfox writes
+  nothing more; any other write error, such as a full disk, prints one line on stderr. A
+  write command may already have been applied.
 
 Usage errors also print the usage hint on stderr, except a misplaced global flag and a global
 option without its value. Bare group invocations (`hfox tickets`) print help and exit `0`.

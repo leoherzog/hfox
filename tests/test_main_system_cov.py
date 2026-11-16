@@ -190,6 +190,47 @@ def test_app_unexpected_exception_is_internal(monkeypatch, capsys):
     assert err == ""
 
 
+def test_app_passes_a_system_exit_through(monkeypatch, capsys):
+    _install_stub_command(monkeypatch, SystemExit(4))
+    with pytest.raises(SystemExit) as ei:
+        app()
+    assert ei.value.code == 4
+    assert capsys.readouterr() == ("", "")
+
+
+def test_app_maps_a_library_broken_pipe_exit_to_5(monkeypatch, capsys):
+    # Typer and Rich raise SystemExit(1) while handling the BrokenPipeError.
+    def fake_command(args=None, prog_name=None, standalone_mode=True):
+        try:
+            raise BrokenPipeError(32, "Broken pipe")
+        except BrokenPipeError:
+            raise SystemExit(1) from None
+
+    monkeypatch.setattr(main_mod.typer.main, "get_command", lambda _cli: fake_command)
+    with pytest.raises(SystemExit) as ei:
+        app()
+    assert ei.value.code == 5
+    assert capsys.readouterr() == ("", "")
+
+
+class _FullStream(io.StringIO):
+    """A stdout whose every write fails like /dev/full and that has no descriptor."""
+
+    def write(self, text):
+        raise OSError(28, "No space left on device")
+
+    def fileno(self):
+        raise io.UnsupportedOperation("fileno")
+
+
+def test_fail_exits_5_when_its_own_write_fails(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdout", _FullStream())
+    with pytest.raises(SystemExit) as ei:
+        main_mod._fail(HfoxError("boom"), False)
+    assert ei.value.code == 5
+    assert capsys.readouterr().err == "error: cannot write output: No space left on device.\n"
+
+
 @pytest.mark.parametrize("argv", [("-q", "system", "statuses"), ("-q",)])
 def test_short_q_is_rejected_at_the_root(argv):
     result = run("--dry-run", *argv)

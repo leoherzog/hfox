@@ -242,6 +242,9 @@ A nonzero exit carries that object except here:
 - `auth status` prints its payload, with `check_error` when the check fails.
 - With `--page-all` in JSON, the error is the last NDJSON line.
 - Ctrl-C outside a prompt exits 130 and prints no error object.
+- A failed write to stdout exits 5, silently after a closed pipe such as `| head -1` and
+  otherwise with one stderr line. A write may already have been applied, so read the
+  resource before sending it again.
 
 Two signals decide whether to retry:
 

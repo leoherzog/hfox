@@ -608,6 +608,12 @@ body's.
   warn the failed count on stderr and exit **1**; "not part of the group" on remove is benign.
 - **`auth status`** prints its payload, not an error object, when it exits 2 for missing
   credentials or when the check fails.
+- **Failed output** exits **5** through `_output_failed`. A `BrokenPipeError` prints
+  nothing; any other `OSError` prints one `error: cannot write output: <reason>.` line on
+  stderr. It then points stdout and stderr at devnull, so the flush at interpreter exit
+  cannot raise. `app()` flushes both streams itself and `_fail` catches a failure of its own
+  write. Typer and Rich exit 1 on a broken pipe, so `_run` maps a `SystemExit` raised while
+  handling a `BrokenPipeError` to `_output_failed`.
 
 The stability policy in `README.md` is the public statement of this contract. Adding a
 command, a key, a `type` slug, a flag or an env var is compatible; removing or renaming a
@@ -637,7 +643,8 @@ command path, positional argument, key, slug, flag or env var is breaking.
   paginated listing, also a test that it requires `--page-all`.
 - CliRunner bypasses `main.app()`; test exit codes that depend on it through `app()`.
 - Permission-mode, symlink and hard-link assertions carry
-  `@pytest.mark.skipif(sys.platform == "win32", ...)`, since CI runs on Windows.
+  `@pytest.mark.skipif(sys.platform == "win32", ...)`, since CI runs on Windows. So does
+  the silent stderr after a closed pipe, since Windows may report one as `EINVAL`.
 - PyYAML is a dev-only dependency for YAML round-trip tests.
 
 ## Scope

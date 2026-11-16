@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import math
 import os
 import sys
@@ -15,7 +16,7 @@ from typer.core import TyperGroup
 
 from .. import __version__
 from ..core.config import CONFIG_FILENAME, load_config
-from ..core.errors import CancelledError, HfoxError, UsageError, ValidationError
+from ..core.errors import CancelledError, ExitCode, HfoxError, UsageError, ValidationError
 from . import assets, auth, contacts, output, system, tickets
 from ._util import nonblank_or_none
 from .context import AppContext, as_hfox_error
@@ -287,25 +288,86 @@ def _resolve_format(flag: str | None, config) -> OutputFormat:
         ) from None
 
 
+def _discard_output() -> None:
+    """Point the stdout and stderr descriptors at devnull, so the flush at exit cannot raise.
+
+    Output a flush can still deliver goes out first.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        with contextlib.suppress(OSError):
+            stream.flush()
+        try:
+            fd = stream.fileno()
+        except (AttributeError, OSError, ValueError):
+            continue
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, fd)
+        os.close(devnull)
+
+
+def _output_failed(exc: OSError) -> NoReturn:
+    """Exit 5 after a failed write; one stderr line names the reason unless a pipe closed."""
+    if not isinstance(exc, BrokenPipeError):
+        with contextlib.suppress(OSError):
+            output.info(f"error: cannot write output: {exc.strerror or exc}.")
+    _discard_output()
+    raise SystemExit(int(ExitCode.OTHER))
+
+
+def _flush_output() -> None:
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except OSError as exc:
+        _output_failed(exc)
+
+
 def _fail(err: HfoxError, ndjson: bool) -> NoReturn:
-    """Print the error JSON on stdout, as one line when `ndjson`, and exit with its code."""
-    with output.ndjson_framing(ndjson):
-        output.render(err.to_dict(), OutputFormat.JSON)
+    """Print the error JSON on stdout, as one line when `ndjson`, and exit with its code.
+
+    A failed write exits 5 through `_output_failed` instead.
+    """
+    try:
+        with output.ndjson_framing(ndjson):
+            output.render(err.to_dict(), OutputFormat.JSON)
+        sys.stdout.flush()
+    except OSError as exc:
+        _output_failed(exc)
     raise SystemExit(int(err.exit_code))
 
 
 def app() -> None:
-    """Entry point: run the CLI with centralized, structured error handling."""
+    """Entry point: run the CLI with centralized, structured error handling.
+
+    Stdout and stderr are flushed here, so a failed write exits 5 rather than failing at
+    interpreter exit.
+    """
     # An unencodable character must not crash output after a write already went through.
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(errors="backslashreplace")
+    try:
+        _run()
+    except OSError as exc:
+        # A write by an error handler in _run, such as click's usage text on stderr.
+        _output_failed(exc)
+    finally:
+        _flush_output()
+
+
+def _run() -> None:
+    """Invoke the root command and turn every outcome into an exit code."""
     command = typer.main.get_command(cli)
     command.ndjson = _early_ndjson(command, sys.argv[1:])
     try:
         # Non-standalone mode returns typer.Exit's code instead of raising it. A fixed prog_name
         # keeps usage, hints and completion on "hfox" for renamed binaries and `python -m hfox`.
         exit_code = command(args=None, prog_name="hfox", standalone_mode=False)
+    except SystemExit as exc:
+        # Typer and Rich exit 1 on a closed pipe, raised while handling the BrokenPipeError.
+        if isinstance(exc.__context__, BrokenPipeError):
+            _output_failed(exc.__context__)
+        raise
     except typer.Abort:
         _fail(CancelledError("Cancelled."), command.ndjson)
     except click_exceptions.NoArgsIsHelpError as exc:

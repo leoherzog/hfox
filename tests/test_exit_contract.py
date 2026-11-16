@@ -1,10 +1,13 @@
 """Exit codes through app() in a subprocess, output rendering, color and staff-id flow."""
 
+import contextlib
 import io
 import json
+import os
 import subprocess
 import sys
 
+import pytest
 from conftest import subprocess_env
 from typer.testing import CliRunner
 
@@ -40,6 +43,29 @@ def run_app(argv, env_extra=None, base_env=None):
         capture_output=True,
         text=True,
     )
+
+
+def run_app_into(argv, *, stdout=subprocess.PIPE, stderr=subprocess.PIPE, base_env=ENV):
+    """Run `app()` in a subprocess with the given stdout and stderr; return CompletedProcess."""
+    return subprocess.run(
+        [sys.executable, "-c", _INVOKER, *argv],
+        env=subprocess_env(**base_env),
+        stdin=subprocess.DEVNULL,
+        stdout=stdout,
+        stderr=stderr,
+        text=True,
+    )
+
+
+@contextlib.contextmanager
+def closed_pipe():
+    """Yield the write end of a pipe whose read end is already closed."""
+    read_end, write_end = os.pipe()
+    os.close(read_end)
+    try:
+        yield write_end
+    finally:
+        os.close(write_end)
 
 
 # -- exit code 3 + JSON error object on stdout ------------------------------
@@ -202,3 +228,57 @@ def test_bare_root_shows_help_and_exits_0():
     proc = run_app([])
     assert proc.returncode == 0
     assert "Usage" in proc.stdout
+
+
+# -- a failed stdout write exits 5 without a traceback -----------------------
+_NO_CREDENTIALS = {"HFOX_SUBDOMAIN": "acme"}
+
+# Every way hfox writes stdout: JSON, NDJSON, error objects, a table, help and the version.
+STDOUT_PATHS = [
+    pytest.param(["--dry-run", "tickets", "list"], ENV, id="json"),
+    pytest.param(["--dry-run", "--page-all", "tickets", "list"], ENV, id="ndjson"),
+    pytest.param(["tickets", "get", "0"], ENV, id="error"),
+    pytest.param(["--page-all", "tickets", "get", "0"], ENV, id="ndjson-error"),
+    pytest.param(["-f", "table", "auth", "status"], _NO_CREDENTIALS, id="table"),
+    pytest.param(["--help"], ENV, id="help"),
+    pytest.param(["tickets"], ENV, id="bare-group"),
+    pytest.param(["--version"], ENV, id="version"),
+]
+
+
+def _no_traceback(stderr):
+    return "Traceback" not in stderr and "Exception ignored" not in stderr
+
+
+@pytest.mark.parametrize(("argv", "env"), STDOUT_PATHS)
+def test_closed_stdout_exits_5_without_a_traceback(argv, env):
+    with closed_pipe() as write_end:
+        proc = run_app_into(argv, stdout=write_end, base_env=env)
+    assert proc.returncode == 5
+    assert _no_traceback(proc.stderr)
+    assert len(proc.stderr.splitlines()) <= 1
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows reports a closed pipe as EINVAL")
+@pytest.mark.parametrize(("argv", "env"), STDOUT_PATHS[:2] + STDOUT_PATHS[5:6])
+def test_closed_stdout_writes_nothing_to_stderr(argv, env):
+    with closed_pipe() as write_end:
+        proc = run_app_into(argv, stdout=write_end, base_env=env)
+    assert proc.returncode == 5
+    assert proc.stderr == ""
+
+
+@pytest.mark.skipif(not os.path.exists("/dev/full"), reason="needs /dev/full")
+@pytest.mark.parametrize(("argv", "env"), STDOUT_PATHS)
+def test_full_stdout_exits_5_with_one_stderr_line(argv, env):
+    with open("/dev/full", "w") as full:
+        proc = run_app_into(argv, stdout=full, base_env=env)
+    assert proc.returncode == 5
+    assert proc.stderr == "error: cannot write output: No space left on device.\n"
+
+
+def test_closed_stderr_exits_5():
+    # The usage text of an unknown flag goes to stderr before the error object.
+    with closed_pipe() as write_end:
+        proc = run_app_into(["tickets", "list", "--bogus"], stderr=write_end)
+    assert proc.returncode == 5
